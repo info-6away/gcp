@@ -84,7 +84,8 @@ export default function GCPApp() {
         onToggleLive={() => setLive(l => !l)}
         goldPrice={goldData.lastPrice}
         goldLoading={goldData.loading}
-        goldError={!!goldData.error}
+        goldMarketStatus={goldData.marketStatus}
+        goldSessionDate={goldData.sessionDate}
       />
       <div className="app-body">
         <Chrome.LeftRail page={page} onNav={setPage} />

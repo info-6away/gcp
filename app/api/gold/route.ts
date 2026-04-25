@@ -1,14 +1,8 @@
 import { NextResponse } from 'next/server';
 
-export const revalidate = 60;
+export const revalidate = 300;
 
-interface YahooQuote {
-  open: (number | null)[];
-  high: (number | null)[];
-  low:  (number | null)[];
-  close: (number | null)[];
-  volume: (number | null)[];
-}
+export type MarketStatus = 'live' | 'closed' | 'error';
 
 export interface GoldCandle {
   t: number;
@@ -19,71 +13,98 @@ export interface GoldCandle {
 }
 
 export interface GoldResponse {
-  candles: GoldCandle[];
-  lastPrice: number;
-  lastTs: number;
-  currency: string;
+  candles:      GoldCandle[];
+  lastPrice:    number | null;
+  lastTs:       number | null;
+  currency:     string;
+  marketStatus: MarketStatus;
+  sessionDate:  string | null;
 }
 
-export async function GET() {
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  Accept: 'application/json',
+};
+
+async function fetchCandles(range: string): Promise<GoldCandle[]> {
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X` +
+    `?interval=1m&range=${range}&includePrePost=false`;
+
+  const res = await fetch(url, { headers: HEADERS, next: { revalidate: 60 } });
+  if (!res.ok) throw new Error(`Yahoo returned ${res.status}`);
+
+  const data   = await res.json();
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error('No chart result');
+
+  const timestamps: number[] = result.timestamp ?? [];
+  const q = result.indicators.quote[0];
+
+  return timestamps
+    .map((t, i) => ({
+      t: t * 1000,
+      o: q.open[i]  ?? 0,
+      h: q.high[i]  ?? 0,
+      l: q.low[i]   ?? 0,
+      c: q.close[i] ?? 0,
+    }))
+    .filter(c => c.o !== 0 && c.c !== 0);
+}
+
+function lastSessionCandles(allCandles: GoldCandle[]): GoldCandle[] {
+  if (!allCandles.length) return [];
+
+  const byDate = new Map<string, GoldCandle[]>();
+  for (const c of allCandles) {
+    const key = new Date(c.t).toISOString().slice(0, 10);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key)!.push(c);
+  }
+
+  const sortedDates = [...byDate.keys()].sort();
+  const lastDate    = sortedDates[sortedDates.length - 1];
+  return byDate.get(lastDate) ?? [];
+}
+
+function formatSessionDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC',
+  });
+}
+
+export async function GET(): Promise<NextResponse> {
   try {
-    const url =
-      'https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X' +
-      '?interval=1m&range=1d&includePrePost=false';
+    let candles = await fetchCandles('1d');
+    let marketStatus: MarketStatus = 'live';
 
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        Accept: 'application/json',
-      },
-      next: { revalidate: 60 },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Yahoo Finance returned ${res.status}`);
+    if (candles.length === 0) {
+      const all = await fetchCandles('5d');
+      candles      = lastSessionCandles(all);
+      marketStatus = 'closed';
     }
 
-    const data = await res.json();
-    const result = data?.chart?.result?.[0];
+    if (!candles.length) throw new Error('No candles after fallback');
 
-    if (!result) {
-      throw new Error('No chart result in Yahoo Finance response');
-    }
-
-    const timestamps: number[] = result.timestamp ?? [];
-    const quotes: YahooQuote   = result.indicators.quote[0];
-    const currency: string     = result.meta?.currency ?? 'USD';
-
-    const candles: GoldCandle[] = timestamps
-      .map((t, i) => ({
-        t: t * 1000,
-        o: quotes.open[i]  ?? 0,
-        h: quotes.high[i]  ?? 0,
-        l: quotes.low[i]   ?? 0,
-        c: quotes.close[i] ?? 0,
-      }))
-      .filter(c => c.o !== 0 && c.c !== 0);
-
-    if (!candles.length) {
-      throw new Error('No valid candles returned');
-    }
-
-    const last = candles[candles.length - 1];
+    const last: GoldCandle = candles[candles.length - 1];
 
     const body: GoldResponse = {
       candles,
-      lastPrice: last.c,
-      lastTs:    last.t,
-      currency,
+      lastPrice:   last.c,
+      lastTs:      last.t,
+      currency:    'USD',
+      marketStatus,
+      sessionDate: formatSessionDate(last.t),
     };
 
     return NextResponse.json(body);
+
   } catch (err) {
     console.error('[/api/gold]', err);
-    return NextResponse.json(
-      { error: String(err), candles: [], lastPrice: null, lastTs: null },
-      { status: 500 }
-    );
+    const fallback: GoldResponse = {
+      candles: [], lastPrice: null, lastTs: null,
+      currency: 'USD', marketStatus: 'error', sessionDate: null,
+    };
+    return NextResponse.json(fallback, { status: 500 });
   }
 }

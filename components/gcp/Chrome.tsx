@@ -37,12 +37,16 @@ interface HeaderProps {
   onNav: (p: 'dashboard' | 'pattern' | 'settings') => void;
   live: boolean;
   onToggleLive: () => void;
-  goldPrice: number | null;
-  goldLoading: boolean;
-  goldError: boolean;
+  goldPrice:        number | null;
+  goldLoading:      boolean;
+  goldMarketStatus: 'live' | 'closed' | 'error';
+  goldSessionDate:  string | null;
 }
 
-function Header({ live, onToggleLive, goldPrice, goldLoading, goldError }: HeaderProps) {
+function Header({
+  live, onToggleLive,
+  goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
+}: HeaderProps) {
   return (
     <header className="app-header">
       <div className="brand">
@@ -60,25 +64,39 @@ function Header({ live, onToggleLive, goldPrice, goldLoading, goldError }: Heade
           <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>XAUUSD</span>
 
           {goldLoading && (
-            <span style={{ color: 'var(--fg-3)' }}>· loading…</span>
+            <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>· loading…</span>
           )}
-          {!goldLoading && goldError && (
-            <span style={{ color: 'var(--red)', fontSize: 10 }}>· feed error</span>
-          )}
-          {!goldLoading && !goldError && goldPrice != null && (
-            <span style={{ color: 'var(--amber)', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+          {!goldLoading && goldMarketStatus !== 'error' && goldPrice != null && (
+            <span style={{
+              color: 'var(--amber)',
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 600,
+            }}>
               · ${goldPrice.toFixed(2)}
             </span>
           )}
 
-          <span style={{
-            fontSize: 9,
-            color: goldError ? 'var(--red)' : 'var(--green)',
-            letterSpacing: '0.08em',
-            marginLeft: 4,
-          }}>
-            {goldError ? '● ERR' : '● LIVE'}
-          </span>
+          {!goldLoading && goldMarketStatus === 'closed' && goldSessionDate && (
+            <span style={{ color: 'var(--fg-3)', fontSize: 10, marginLeft: 2 }}>
+              ({goldSessionDate})
+            </span>
+          )}
+
+          {!goldLoading && (
+            <span style={{
+              fontSize: 9,
+              letterSpacing: '0.08em',
+              marginLeft: 6,
+              color:
+                goldMarketStatus === 'live'   ? 'var(--green)' :
+                goldMarketStatus === 'closed' ? 'var(--amber)' :
+                'var(--red)',
+            }}>
+              {goldMarketStatus === 'live'   ? '● LIVE'    :
+               goldMarketStatus === 'closed' ? '● WEEKEND' :
+               '● ERR'}
+            </span>
+          )}
         </div>
         <div className="tf-group">
           {['1m', '5m', '15m', '1h', '4h', '1D'].map(tf => (

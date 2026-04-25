@@ -1,22 +1,26 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { GoldCandle, GoldResponse } from '@/app/api/gold/route';
+import type { GoldCandle, GoldResponse, MarketStatus } from '@/app/api/gold/route';
 
 export interface GoldState {
-  candles:   GoldCandle[];
-  lastPrice: number | null;
-  lastTs:    number | null;
-  loading:   boolean;
-  error:     string | null;
-  lastFetch: Date | null;
+  candles:      GoldCandle[];
+  lastPrice:    number | null;
+  lastTs:       number | null;
+  marketStatus: MarketStatus;
+  sessionDate:  string | null;
+  loading:      boolean;
+  error:        string | null;
+  lastFetch:    Date | null;
 }
 
-const REFRESH_MS = 60_000;
+const REFRESH_LIVE_MS   = 60_000;
+const REFRESH_CLOSED_MS = 300_000;
 
 export function useGoldData(): GoldState {
   const [state, setState] = useState<GoldState>({
     candles: [], lastPrice: null, lastTs: null,
+    marketStatus: 'live', sessionDate: null,
     loading: true, error: null, lastFetch: null,
   });
 
@@ -25,39 +29,46 @@ export function useGoldData(): GoldState {
       const res  = await fetch('/api/gold');
       const data: GoldResponse & { error?: string } = await res.json();
 
-      if (data.error || !data.candles?.length) {
+      if (data.marketStatus === 'error' || !data.candles?.length) {
         setState(s => ({
-          ...s,
-          loading: false,
-          error: data.error ?? 'Empty response',
+          ...s, loading: false,
+          error: data.error ?? 'No data returned',
+          marketStatus: 'error',
           lastFetch: new Date(),
         }));
         return;
       }
 
       setState({
-        candles:   data.candles,
-        lastPrice: data.lastPrice,
-        lastTs:    data.lastTs,
-        loading:   false,
-        error:     null,
-        lastFetch: new Date(),
+        candles:      data.candles,
+        lastPrice:    data.lastPrice,
+        lastTs:       data.lastTs,
+        marketStatus: data.marketStatus,
+        sessionDate:  data.sessionDate,
+        loading:      false,
+        error:        null,
+        lastFetch:    new Date(),
       });
     } catch (e) {
       setState(s => ({
-        ...s,
-        loading: false,
-        error: String(e),
-        lastFetch: new Date(),
+        ...s, loading: false, error: String(e),
+        marketStatus: 'error', lastFetch: new Date(),
       }));
     }
   }, []);
 
   useEffect(() => {
     fetchGold();
-    const id = setInterval(fetchGold, REFRESH_MS);
-    return () => clearInterval(id);
   }, [fetchGold]);
+
+  useEffect(() => {
+    const interval = state.marketStatus === 'live'
+      ? REFRESH_LIVE_MS
+      : REFRESH_CLOSED_MS;
+
+    const id = setInterval(fetchGold, interval);
+    return () => clearInterval(id);
+  }, [fetchGold, state.marketStatus]);
 
   return state;
 }
