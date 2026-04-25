@@ -99,21 +99,65 @@ function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   return [...base, ...liveDP].map((p, i) => ({ ...p, i }));
 }
 
+function median(arr: number[]): number {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+// Compare overlapping time-window medians to derive a scale factor.
+// The historical JSON was processed with sum_sq × 0.46 (Session 5.5);
+// the live API serves raw netvar_aggregate. Without rescaling, regime
+// classification is wrong on the historical half of the merged series.
+function computeHistoricalScale(historical: DataPoint[], live: GCPPoint[]): number {
+  if (!live.length || !historical.length) return 1;
+  const liveStart = live[0].t;
+  const liveEnd   = live[live.length - 1].t;
+
+  const overlap: number[] = [];
+  for (const p of historical) {
+    if (p.t >= liveStart && p.t <= liveEnd) overlap.push(p.v);
+  }
+  if (overlap.length < 10) return 1;
+
+  const histMed = median(overlap);
+  const liveMed = median(live.map(p => p.v));
+  if (histMed <= 0) return 1;
+
+  const ratio = liveMed / histMed;
+  if (!isFinite(ratio) || ratio <= 0) return 1;
+  return ratio;
+}
+
+function rescaleHistorical(historical: DataPoint[], scale: number): DataPoint[] {
+  if (scale === 1) return historical;
+  return historical.map(p => {
+    const v = p.v * scale;
+    return { ...p, v: +v.toFixed(2), r: regimeFor(v) };
+  });
+}
+
 export function useGCPData(): GCPDataState {
   const [state, setState] = useState<GCPDataState>({
     series: [], liveNetvar: null, liveRegime: null,
     gcpLoading: true, gcpError: null, isLive: false, lastUpdate: null,
   });
 
-  const historicalRef = useRef<DataPoint[]>([]);
-  const livePointsRef = useRef<GCPPoint[]>([]);
-  const fetchingRef   = useRef(false);
-  const fetchingCurrentRef = useRef(false);
+  const historicalRef        = useRef<DataPoint[]>([]);
+  const scaledHistoricalRef  = useRef<DataPoint[]>([]);
+  const scaleRef             = useRef<number | null>(null);
+  const livePointsRef        = useRef<GCPPoint[]>([]);
+  const fetchingRef          = useRef(false);
+  const fetchingCurrentRef   = useRef(false);
 
   useEffect(() => {
     loadHistoricalSeries().then(hist => {
-      historicalRef.current = hist;
-      const merged = mergeSeries(hist, livePointsRef.current);
+      historicalRef.current       = hist;
+      scaledHistoricalRef.current = hist; // identity until scale is computed
+      const merged = mergeSeries(scaledHistoricalRef.current, livePointsRef.current);
       setState(s => ({
         ...s,
         series:     merged,
@@ -150,7 +194,17 @@ export function useGCPData(): GCPDataState {
       });
 
       livePointsRef.current = points;
-      const merged = mergeSeries(historicalRef.current, points);
+
+      if (scaleRef.current === null && historicalRef.current.length) {
+        const scale = computeHistoricalScale(historicalRef.current, points);
+        scaleRef.current = scale;
+        scaledHistoricalRef.current = rescaleHistorical(historicalRef.current, scale);
+        if (scale !== 1) {
+          console.debug(`[GCP] Historical rescaled by x${scale.toFixed(3)}`);
+        }
+      }
+
+      const merged = mergeSeries(scaledHistoricalRef.current, points);
 
       setTimeout(() => {
         setState(s => ({
