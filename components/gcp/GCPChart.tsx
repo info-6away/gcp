@@ -151,10 +151,19 @@ function GCPChart({
         </g>
       ))}
 
-      {patterns.map(p => {
+      {patterns.map((p, idx) => {
         const x1 = xOf(p.start), x2 = xOf(p.end);
         const isSel = selectedPatternId === p.id;
         const color = kindColor(p.kind);
+        const abbr =
+          p.kind === 'Alignment Ladder'    ? 'AL' :
+          p.kind === 'Compression Coil'    ? 'CC' :
+          p.kind === 'Compression Release' ? 'CR' :
+          p.kind === 'Failed Alignment'    ? 'FA' :
+          p.kind === 'Coherence Volcano'   ? 'CV' :
+          p.kind === 'Ignition Drift'      ? 'ID' :
+          p.kind === 'Shock Jump'          ? 'SJ' :
+          (p.kind as string).slice(0, 2).toUpperCase();
         return (
           <g key={p.id} style={{ cursor: 'pointer' }} onClick={e => { e.stopPropagation(); onSelectPattern(p.id); }}>
             <rect x={x1} y={padT} width={x2 - x1} height={innerH}
@@ -162,10 +171,12 @@ function GCPChart({
               stroke={color} strokeOpacity={isSel ? 0.7 : 0.3}
               strokeWidth={1} strokeDasharray={isSel ? '0' : '2 2'} />
             <line x1={x1} x2={x2} y1={padT + 2} y2={padT + 2} stroke={color} strokeWidth={1} strokeOpacity={isSel ? 1 : 0.5} />
-            <text x={(x1 + x2) / 2} y={padT - 6} fill={color} fontSize={9.5} textAnchor="middle"
-              fontFamily="var(--font-mono)" letterSpacing="0.08em" opacity={isSel ? 1 : 0.6}>
-              {p.kind.toUpperCase()}
-            </text>
+            {(x2 - x1) > 55 && (
+              <text x={(x1 + x2) / 2} y={padT - 6 - (idx % 3) * 11} fill={color} fontSize={9} textAnchor="middle"
+                fontFamily="var(--font-mono)" letterSpacing="0.06em" opacity={isSel ? 1 : 0.45}>
+                {abbr}
+              </text>
+            )}
           </g>
         );
       })}

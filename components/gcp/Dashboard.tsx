@@ -30,51 +30,124 @@ function fmtClock(ts: number) {
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-function PSSGauge({ pss }: { pss: number }) {
-  const pct = Math.round(pss * 100);
+function PSSGauge({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(1, value));
+  const score = Math.round(pct * 100);
+  const color =
+    pct >= 0.7 ? 'var(--green)' :
+    pct >= 0.4 ? 'var(--amber)' :
+    'var(--fg-2)';
+  const label =
+    pct >= 0.7 ? 'STRONG' :
+    pct >= 0.4 ? 'MEDIUM' :
+    'WEAK';
+
   return (
-    <div className="gauge-block">
-      <div className="hairline">Pattern Strength Score</div>
-      <div className="gauge-row">
-        <span className="gauge-num">{pct}</span>
-        <span className="gauge-meta">/ 100</span>
-        <span className="gauge-meta" style={{ marginLeft: 'auto' }}>
-          {pss > 0.7 ? 'HIGH' : pss > 0.4 ? 'MEDIUM' : 'LOW'}
-        </span>
+    <div style={{ padding: '12px 0 8px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <span className="hairline">Pattern Strength Score</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{
+            fontSize: 28,
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 600,
+            color,
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {score}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>/ 100</span>
+          <span style={{
+            fontSize: 9,
+            letterSpacing: '0.1em',
+            color,
+            textTransform: 'uppercase',
+            marginLeft: 4,
+          }}>
+            {label}
+          </span>
+        </div>
       </div>
-      <div className="gauge-bar"><div className="gauge-fill" style={{ width: `${pct}%` }} /></div>
+
+      <div style={{
+        position: 'relative',
+        height: 6,
+        background: 'var(--bg-3)',
+        borderRadius: 1,
+        overflow: 'visible',
+      }}>
+        <div style={{
+          position: 'absolute',
+          left: 0, top: 0, bottom: 0,
+          width: `${pct * 100}%`,
+          background: color,
+          borderRadius: 1,
+          transition: 'width 0.3s ease, background 0.3s ease',
+          boxShadow: pct >= 0.7 ? `0 0 8px ${color}` : 'none',
+        }} />
+        {[0.25, 0.5, 0.75].map(t => (
+          <div key={t} style={{
+            position: 'absolute',
+            left: `${t * 100}%`,
+            top: -3,
+            bottom: -3,
+            width: 1,
+            background: 'var(--line-2)',
+          }} />
+        ))}
+      </div>
+
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        marginTop: 5,
+        fontSize: 9,
+        color: 'var(--fg-3)',
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+      }}>
+        <span>WEAK</span>
+        <span>FORMING</span>
+        <span>STRONG</span>
+        <span>EXPLOSIVE</span>
+      </div>
     </div>
   );
 }
 
-function EnergyGrid({ slope, curv, ced }: { slope: number; curv: number; ced: number }) {
-  const cells = [
-    { label: 'Slope', val: slope.toFixed(2) },
-    { label: 'Curvature', val: curv.toFixed(2) },
-    { label: 'CED', val: ced.toFixed(2) },
-    { label: 'Persist', val: '—' },
-  ];
+function EnergyGrid({
+  slope, curv, ced, persistence,
+}: {
+  slope: number;
+  curv: number;
+  ced: number;
+  persistence: { tag: string; label: string; duration: number };
+}) {
   return (
     <div className="metrics-grid">
-      {cells.map(c => (
-        <div className="metric-cell" key={c.label}>
-          <span className="metric-label">{c.label}</span>
-          <span className="metric-val tab">{c.val}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function PersistCard({ tag, label, duration }: { tag: string; label: string; duration: number }) {
-  return (
-    <div className="persist-card">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span className="persist-tag" style={{ color: 'var(--cyan)' }}>{tag}</span>
-        <span style={{ color: 'var(--fg-1)', fontSize: 11 }}>{label}</span>
+      <div className="metric-cell">
+        <span className="metric-label">Slope</span>
+        <span className="metric-val tab">{slope.toFixed(2)}</span>
       </div>
-      <div className="hairline">Duration</div>
-      <div className="tab" style={{ color: 'var(--fg-0)', fontSize: 14, marginTop: 2 }}>{duration} bars</div>
+      <div className="metric-cell">
+        <span className="metric-label">Curvature</span>
+        <span className="metric-val tab">{curv.toFixed(2)}</span>
+      </div>
+      <div className="metric-cell">
+        <span className="metric-label">CED</span>
+        <span className="metric-val tab">{ced.toFixed(2)}</span>
+      </div>
+      <div className="metric-cell">
+        <span className="metric-label">Persist</span>
+        <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', color: 'var(--fg-0)' }}>
+          {persistence.duration}
+          <span style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 4 }}>bars</span>
+        </span>
+        <span style={{ fontSize: 9.5, color: 'var(--fg-2)', letterSpacing: '0.04em' }}>
+          {persistence.tag} · {persistence.label}
+        </span>
+      </div>
     </div>
   );
 }
@@ -131,7 +204,7 @@ export default function Dashboard({
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
 
   const energy = useMemo(() => energyAt(series, cursor), [series, cursor]);
-  const persist = useMemo(() => persistenceAt(series, cursor), [series, cursor]);
+  const persistence = useMemo(() => persistenceAt(series, cursor), [series, cursor]);
 
   const activePattern = useMemo(() => {
     if (selectedPatternId) return patterns.find(p => p.id === selectedPatternId) || null;
@@ -173,9 +246,13 @@ export default function Dashboard({
         </div>
         <div className="panel-body">
           <div className="gauge-wrap">
-            <PSSGauge pss={energy.pss} />
-            <EnergyGrid slope={energy.slope} curv={energy.curv} ced={energy.ced} />
-            <PersistCard tag={persist.tag} label={persist.label} duration={persist.duration} />
+            <PSSGauge value={energy.pss} />
+            <EnergyGrid
+              slope={energy.slope}
+              curv={energy.curv}
+              ced={energy.ced}
+              persistence={persistence}
+            />
           </div>
         </div>
       </section>

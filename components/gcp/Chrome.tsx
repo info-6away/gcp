@@ -121,7 +121,9 @@ function StatusBar({ cursorInfo, series }: StatusBarProps) {
       <div className="sb-left">
         <span className="hairline">Cursor</span>
         <span className="tab">{cursorInfo.time}</span>
-        <span className="tab" style={{ color: 'var(--fg-2)' }}>i={cursorInfo.i}/{series.length}</span>
+        <span style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+          {cursorInfo.i} <span style={{ color: 'var(--fg-4)' }}>/</span> {series.length}
+        </span>
       </div>
       <div className="sb-center">
         <span className="hairline">Net Var</span>
