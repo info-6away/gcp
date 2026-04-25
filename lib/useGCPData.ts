@@ -114,20 +114,30 @@ export function useGCPData(): GCPDataState {
     loadHistoricalSeries().then(hist => {
       historicalRef.current = hist;
       const merged = mergeSeries(hist, livePointsRef.current);
-      setState(s => ({ ...s, series: merged }));
+      setState(s => ({
+        ...s,
+        series:     merged,
+        gcpLoading: hist.length === 0 && s.series.length === 0,
+      }));
     });
   }, []);
 
   const fetchSeries = useCallback(async () => {
     if (fetchingRef.current) return;
-    if (!canFetch(LS_KEY_SERIES)) return;
+    if (!canFetch(LS_KEY_SERIES)) {
+      setState(s => (s.gcpLoading ? { ...s, gcpLoading: false } : s));
+      return;
+    }
 
     fetchingRef.current = true;
     try {
       const data = await gcpFetch('/api/getNetVarAggregate24H') as
         | { aggregates?: RawAggregate[] }
         | null;
-      if (!data) return;
+      if (!data) {
+        setState(s => ({ ...s, gcpLoading: false }));
+        return;
+      }
 
       markFetched(LS_KEY_SERIES);
 
