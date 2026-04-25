@@ -39,12 +39,22 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
 
       const data = await res.json();
 
-      const price     = parseFloat(data.price);
-      const prevClose = parseFloat(data.prev_close_price ?? data.price);
+      const price = typeof data.price === 'string'
+        ? parseFloat(data.price)
+        : Number(data.price);
+
+      const prevClose = data.prev_close_price != null
+        ? (typeof data.prev_close_price === 'string'
+            ? parseFloat(data.prev_close_price)
+            : Number(data.prev_close_price))
+        : price;
+
+      if (!isFinite(price) || price === 0) {
+        throw new Error(`Invalid price: ${JSON.stringify(data)}`);
+      }
+
       const change    = price - prevClose;
       const changePct = prevClose ? (change / prevClose) * 100 : 0;
-
-      if (isNaN(price)) throw new Error('Invalid price in response');
 
       setState({
         price,

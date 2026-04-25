@@ -7,8 +7,8 @@ import type { DataPoint, RegimeId } from '@/types/gcp';
 const GCP2_BEARER = 'Bearer 5|M1bz2cXL3YLdmuArrI2KaySF0Cl8UxtiDznzK7Mk';
 const GCP2_BASE   = 'https://gcp2.net';
 
-const SERIES_POLL_MS  = 30_000;
-const CURRENT_POLL_MS = 60_000;
+const SERIES_POLL_MS  = 60_000;
+const CURRENT_POLL_MS = 120_000;
 
 interface RawAggregate {
   end_epoch:        number;
@@ -31,7 +31,7 @@ export interface GCPDataState {
   lastUpdate: Date | null;
 }
 
-async function gcpFetch(endpoint: string, retries = 2): Promise<unknown> {
+async function gcpFetch(endpoint: string): Promise<unknown> {
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
@@ -39,9 +39,8 @@ async function gcpFetch(endpoint: string, retries = 2): Promise<unknown> {
     },
   });
 
-  if (res.status === 429 && retries > 0) {
-    await new Promise(r => setTimeout(r, 10_000));
-    return gcpFetch(endpoint, retries - 1);
+  if (res.status === 429) {
+    throw new Error('Rate limited — will retry at next poll interval');
   }
 
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);

@@ -118,7 +118,11 @@ export default function GCPApp() {
     time: `${pad(d.getHours())}:${pad(d.getMinutes())}:00`,
     v: cursorS.v.toFixed(1),
     r: cursorS.r,
-    g: formatPrice(cursorS.g, symbol),
+    g: cursorS.gReal && cursorS.g > 0
+      ? formatPrice(cursorS.g, symbol)
+      : goldData.price
+        ? `${formatPrice(goldData.price, symbol)} (live)`
+        : '—',
   };
 
   const handleSelectPatternKind = (kind: string) => {
