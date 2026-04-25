@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import { REGIMES, energyAt, persistenceAt, INTERP } from '@/lib/gcp-data';
 import GCPChartResponsive from './GCPChart';
-import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import { getSymbolMeta } from '@/types/gcp';
 
 interface DashboardProps {
@@ -14,6 +14,7 @@ interface DashboardProps {
   live: boolean;
   onSelectPatternKind: (kind: string) => void;
   symbol: MarketSymbol;
+  timeframe: Timeframe;
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -119,13 +120,15 @@ function PSSGauge({ value }: { value: number }) {
 }
 
 function EnergyGrid({
-  slope, curv, ced, persistence,
+  slope, curv, ced, persistence, timeframe,
 }: {
   slope: number;
   curv: number;
   ced: number;
   persistence: { tag: string; label: string; duration: number };
+  timeframe: Timeframe;
 }) {
+  const unit = timeframe === '1m' ? 'bars' : `× ${timeframe}`;
   return (
     <div className="metrics-grid">
       <div className="metric-cell">
@@ -144,7 +147,7 @@ function EnergyGrid({
         <span className="metric-label">Persist</span>
         <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', color: 'var(--fg-0)' }}>
           {persistence.duration}
-          <span style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 4 }}>bars</span>
+          <span style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 4 }}>{unit}</span>
         </span>
         <span style={{ fontSize: 9.5, color: 'var(--fg-2)', letterSpacing: '0.04em' }}>
           {persistence.tag} · {persistence.label}
@@ -200,7 +203,7 @@ function RegimeLegend() {
 }
 
 export default function Dashboard({
-  series, patterns, cursor, setCursor, onSelectPatternKind, symbol,
+  series, patterns, cursor, setCursor, onSelectPatternKind, symbol, timeframe,
 }: DashboardProps) {
   const [showGold, setShowGold] = useState(true);
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
@@ -220,7 +223,7 @@ export default function Dashboard({
     <div className="dashboard">
       <section className="panel panel-chart">
         <div className="panel-head">
-          <span className="title">{symbol} · Coherence Regime</span>
+          <span className="title">{symbol} · Coherence Regime · {timeframe}</span>
           <div className="chart-tools">
             <button
               className={`tool-btn ${showGold ? 'on' : ''}`}
@@ -265,6 +268,7 @@ export default function Dashboard({
               curv={energy.curv}
               ced={energy.ced}
               persistence={persistence}
+              timeframe={timeframe}
             />
           </div>
         </div>

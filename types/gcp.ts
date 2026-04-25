@@ -1,3 +1,23 @@
+export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
+
+export const TIMEFRAME_BARS: Record<Timeframe, number> = {
+  '1m':  1,
+  '5m':  5,
+  '15m': 15,
+  '1h':  60,
+  '4h':  240,
+  '1D':  1440,
+};
+
+export const TIMEFRAME_LABELS: Timeframe[] = ['1m', '5m', '15m', '1h', '4h', '1D'];
+
+export function barDuration(bars: number, tf: Timeframe): string {
+  const mins = bars * TIMEFRAME_BARS[tf];
+  if (mins < 60)   return `${mins}m`;
+  if (mins < 1440) return `${(mins / 60).toFixed(1).replace('.0', '')}h`;
+  return `${(mins / 1440).toFixed(1).replace('.0', '')}d`;
+}
+
 export type MarketSymbol = 'XAUUSD' | 'BTC';
 
 export interface SymbolMeta {

@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { DataPoint, CursorInfo, MarketSymbol } from '@/types/gcp';
-import { SYMBOLS, formatPrice } from '@/types/gcp';
+import type { DataPoint, CursorInfo, MarketSymbol, Timeframe } from '@/types/gcp';
+import { SYMBOLS, formatPrice, TIMEFRAME_LABELS } from '@/types/gcp';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
 function LogoMark({ size = 22 }: { size?: number }) {
@@ -41,6 +41,8 @@ interface HeaderProps {
   onToggleLive: () => void;
   symbol:            MarketSymbol;
   onSymbolChange:    (s: MarketSymbol) => void;
+  timeframe:         Timeframe;
+  onTimeframeChange: (tf: Timeframe) => void;
   goldPrice:         number | null;
   goldLoading:       boolean;
   goldMarketStatus:  'live' | 'closed' | 'error';
@@ -179,6 +181,7 @@ function SymbolPicker({
 function Header({
   live, onToggleLive,
   symbol, onSymbolChange,
+  timeframe, onTimeframeChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
 }: HeaderProps) {
   return (
@@ -202,8 +205,14 @@ function Header({
           goldSessionDate={goldSessionDate}
         />
         <div className="tf-group">
-          {['1m', '5m', '15m', '1h', '4h', '1D'].map(tf => (
-            <button key={tf} className={`tf-btn ${tf === '1m' ? 'active' : ''}`}>{tf}</button>
+          {TIMEFRAME_LABELS.map(tf => (
+            <button
+              key={tf}
+              className={`tf-btn ${tf === timeframe ? 'active' : ''}`}
+              onClick={() => onTimeframeChange(tf)}
+            >
+              {tf}
+            </button>
           ))}
         </div>
       </div>
@@ -258,9 +267,10 @@ interface StatusBarProps {
   cursorInfo: CursorInfo;
   series: DataPoint[];
   symbol?: MarketSymbol;
+  timeframe?: Timeframe;
 }
 
-function StatusBar({ cursorInfo, series, symbol = 'XAUUSD' }: StatusBarProps) {
+function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusBarProps) {
   return (
     <footer className="status-bar">
       <div className="sb-left">
@@ -269,6 +279,20 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD' }: StatusBarProps) {
         <span style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
           {cursorInfo.i} <span style={{ color: 'var(--fg-4)' }}>/</span> {series.length}
         </span>
+        {timeframe && (
+          <span style={{
+            marginLeft: 8,
+            padding: '1px 6px',
+            background: 'var(--bg-3)',
+            border: '1px solid var(--line-2)',
+            borderRadius: 2,
+            fontSize: 9,
+            color: 'var(--cyan)',
+            letterSpacing: '0.08em',
+          }}>
+            {timeframe}
+          </span>
+        )}
       </div>
       <div className="sb-center">
         <span className="hairline">Net Var</span>

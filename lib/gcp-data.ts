@@ -91,6 +91,32 @@ export function buildSeries(): Dataset {
   return { series, candles };
 }
 
+export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
+  if (barsPerBucket <= 1) return series;
+
+  const out: DataPoint[] = [];
+
+  for (let i = 0; i < series.length; i += barsPerBucket) {
+    const bucket = series.slice(i, i + barsPerBucket);
+    if (!bucket.length) break;
+
+    const avgV = bucket.reduce((sum, p) => sum + p.v, 0) / bucket.length;
+    const last = bucket[bucket.length - 1];
+    const hasReal = bucket.some(p => p.gReal);
+
+    out.push({
+      i:     out.length,
+      t:     last.t,
+      v:     +avgV.toFixed(2),
+      r:     regimeFor(avgV),
+      g:     last.g,
+      gReal: hasReal || undefined,
+    });
+  }
+
+  return out;
+}
+
 export function detectPatterns(series: DataPoint[]): Pattern[] {
   const regs = series.map(s => s.r);
   const patterns: Pattern[] = [];

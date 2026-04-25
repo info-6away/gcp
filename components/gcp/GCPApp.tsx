@@ -1,19 +1,20 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { buildSeries, detectPatterns } from '@/lib/gcp-data';
+import { buildSeries, detectPatterns, resampleSeries } from '@/lib/gcp-data';
 import { useGoldData } from '@/lib/useGoldData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
-import type { CursorInfo, MarketSymbol } from '@/types/gcp';
-import { formatPrice } from '@/types/gcp';
+import type { CursorInfo, MarketSymbol, Timeframe } from '@/types/gcp';
+import { formatPrice, TIMEFRAME_BARS } from '@/types/gcp';
 
 export default function GCPApp() {
   const [page, setPage] = useState<'dashboard' | 'pattern' | 'settings'>('dashboard');
   const [live, setLive] = useState(true);
   const [selectedPatternKind, setSelectedPatternKind] = useState<string | null>(null);
   const [symbol, setSymbol] = useState<MarketSymbol>('XAUUSD');
+  const [timeframe, setTimeframe] = useState<Timeframe>('1m');
 
   const dataset = useMemo(() => buildSeries(), []);
   const [cursor, setCursor] = useState(dataset.series.length - 1);
@@ -43,20 +44,32 @@ export default function GCPApp() {
     return series;
   }, [dataset.series, goldData.candles]);
 
-  const patterns = useMemo(() => detectPatterns(mergedSeries), [mergedSeries]);
+  const displaySeries = useMemo(() => {
+    const bars = TIMEFRAME_BARS[timeframe];
+    return resampleSeries(mergedSeries, bars);
+  }, [mergedSeries, timeframe]);
+
+  const displayPatterns = useMemo(
+    () => detectPatterns(displaySeries),
+    [displaySeries]
+  );
+
+  useEffect(() => {
+    setCursor(displaySeries.length - 1);
+  }, [timeframe, displaySeries.length]);
 
   useEffect(() => {
     if (!live) return;
     const id = setInterval(() => {
       setCursor(c => {
-        const maxI = dataset.series.length - 1;
+        const maxI = displaySeries.length - 1;
         const minI = Math.floor(maxI * 0.25);
-        const next = c + 3;
+        const next = c + 1;
         return next > maxI ? minI : next;
       });
     }, 500);
     return () => clearInterval(id);
-  }, [live, dataset.series.length]);
+  }, [live, displaySeries.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,13 +80,13 @@ export default function GCPApp() {
       if (e.key === 's') setPage('settings');
       if (e.key === ' ') { e.preventDefault(); setLive(l => !l); }
       if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 10));
-      if (e.key === 'ArrowRight') setCursor(c => Math.min(dataset.series.length - 1, c + 10));
+      if (e.key === 'ArrowRight') setCursor(c => Math.min(displaySeries.length - 1, c + 10));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [dataset.series.length]);
+  }, [displaySeries.length]);
 
-  const cursorS = mergedSeries[cursor] || mergedSeries[0];
+  const cursorS = displaySeries[cursor] || displaySeries[0];
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = new Date(cursorS.t);
   const cursorInfo: CursorInfo = {
@@ -98,6 +111,8 @@ export default function GCPApp() {
         onToggleLive={() => setLive(l => !l)}
         symbol={symbol}
         onSymbolChange={setSymbol}
+        timeframe={timeframe}
+        onTimeframeChange={setTimeframe}
         goldPrice={goldData.lastPrice}
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
@@ -108,20 +123,21 @@ export default function GCPApp() {
         <main className="main">
           {page === 'dashboard' && (
             <Dashboard
-              series={mergedSeries}
-              patterns={patterns}
+              series={displaySeries}
+              patterns={displayPatterns}
               cursor={cursor}
               setCursor={setCursor}
               live={live}
               onSelectPatternKind={handleSelectPatternKind}
               symbol={symbol}
+              timeframe={timeframe}
             />
           )}
           {page === 'pattern' && (
             <PatternDetail
               kind={selectedPatternKind || 'Alignment Ladder'}
-              series={mergedSeries}
-              patterns={patterns}
+              series={displaySeries}
+              patterns={displayPatterns}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
             />
@@ -133,7 +149,7 @@ export default function GCPApp() {
           )}
         </main>
       </div>
-      <Chrome.StatusBar cursorInfo={cursorInfo} series={mergedSeries} symbol={symbol} />
+      <Chrome.StatusBar cursorInfo={cursorInfo} series={displaySeries} symbol={symbol} timeframe={timeframe} />
     </div>
   );
 }
