@@ -91,30 +91,86 @@ export function buildSeries(): Dataset {
   return { series, candles };
 }
 
-export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
-  if (barsPerBucket <= 1) return series;
+export function lttbDownsample(series: DataPoint[], threshold: number): DataPoint[] {
+  const n = series.length;
+  if (n <= threshold) return series;
 
-  const out: DataPoint[] = [];
+  const sampled: DataPoint[] = [series[0]];
+  const bucketSize = (n - 2) / (threshold - 2);
 
-  for (let i = 0; i < series.length; i += barsPerBucket) {
-    const bucket = series.slice(i, i + barsPerBucket);
-    if (!bucket.length) break;
+  let a = 0;
 
-    const avgV = bucket.reduce((sum, p) => sum + p.v, 0) / bucket.length;
-    const last = bucket[bucket.length - 1];
-    const hasReal = bucket.some(p => p.gReal);
+  for (let i = 0; i < threshold - 2; i++) {
+    const avgStart = Math.floor((i + 1) * bucketSize) + 1;
+    const avgEnd   = Math.min(Math.floor((i + 2) * bucketSize) + 1, n);
 
-    out.push({
-      i:     out.length,
-      t:     last.t,
-      v:     +avgV.toFixed(2),
-      r:     regimeFor(avgV),
-      g:     last.g,
-      gReal: hasReal || undefined,
-    });
+    let avgV = 0;
+    for (let j = avgStart; j < avgEnd; j++) avgV += series[j].v;
+    avgV /= (avgEnd - avgStart);
+    const avgI = (avgStart + avgEnd - 1) / 2;
+
+    const rangeStart = Math.floor(i * bucketSize) + 1;
+    const rangeEnd   = Math.min(Math.floor((i + 1) * bucketSize) + 1, n);
+
+    const ax = a;
+    const ay = series[a].v;
+
+    let maxArea  = -1;
+    let maxIndex = rangeStart;
+
+    for (let j = rangeStart; j < rangeEnd; j++) {
+      const area = Math.abs(
+        (ax - avgI) * (series[j].v - ay) -
+        (ax - j)    * (avgV - ay)
+      );
+      if (area > maxArea) {
+        maxArea  = area;
+        maxIndex = j;
+      }
+    }
+
+    sampled.push({ ...series[maxIndex], i: sampled.length });
+    a = maxIndex;
   }
 
-  return out;
+  sampled.push({ ...series[n - 1], i: sampled.length });
+  return sampled;
+}
+
+const LTTB_TARGET = 1200;
+
+export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
+  let bucketed = series;
+
+  if (barsPerBucket > 1) {
+    const out: DataPoint[] = [];
+    for (let i = 0; i < series.length; i += barsPerBucket) {
+      const bucket = series.slice(i, i + barsPerBucket);
+      if (!bucket.length) break;
+
+      let maxV = -Infinity;
+      for (const p of bucket) if (p.v > maxV) maxV = p.v;
+
+      const last    = bucket[bucket.length - 1];
+      const hasReal = bucket.some(p => p.gReal);
+
+      out.push({
+        i:     out.length,
+        t:     last.t,
+        v:     +maxV.toFixed(2),
+        r:     regimeFor(maxV),
+        g:     last.g,
+        gReal: hasReal || undefined,
+      });
+    }
+    bucketed = out;
+  }
+
+  if (bucketed.length > LTTB_TARGET) {
+    return lttbDownsample(bucketed, LTTB_TARGET);
+  }
+
+  return bucketed;
 }
 
 export function detectPatterns(series: DataPoint[]): Pattern[] {
