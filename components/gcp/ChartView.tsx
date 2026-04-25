@@ -32,14 +32,29 @@ const COLORS = {
   amber:      '#d4a028',
   green:      '#22c55e',
   red:        '#ef4444',
-  regimes: {
-    A: 'rgba(59,  90, 160, 0.10)',
-    B: 'rgba(50, 130, 180, 0.10)',
-    C: 'rgba(40, 180, 175, 0.10)',
-    D: 'rgba(200, 160,  40, 0.12)',
-    E: 'rgba(210, 100,  40, 0.12)',
-    F: 'rgba(220,  50,  50, 0.14)',
-  } as Record<string, string>,
+};
+
+const REGIME_BG: Record<string, string> = {
+  A: 'rgba(59,90,160,0.13)',
+  B: 'rgba(50,130,180,0.13)',
+  C: 'rgba(40,180,175,0.13)',
+  D: 'rgba(200,160,40,0.16)',
+  E: 'rgba(210,100,40,0.16)',
+  F: 'rgba(220,50,50,0.22)',
+};
+
+const REGIME_LABEL_COLOR: Record<string, string> = {
+  A: '#4a72c4', B: '#4dd9e8', C: '#2db8b4',
+  D: '#d4a028', E: '#d46428', F: '#e24b4a',
+};
+
+const REGIME_STRIP_COLOR: Record<string, string> = {
+  A: 'rgba(74,114,196,0.7)',
+  B: 'rgba(77,217,232,0.7)',
+  C: 'rgba(45,184,180,0.7)',
+  D: 'rgba(212,160,40,0.85)',
+  E: 'rgba(212,100,40,0.85)',
+  F: 'rgba(226,75,74,0.95)',
 };
 
 const KIND_COLOR: Record<string, string> = {
@@ -61,10 +76,6 @@ const KIND_ABBR: Record<string, string> = {
   'Ignition Drift':      'ID',
   'Shock Jump':          'SJ',
 };
-
-function toTVTime(ms: number): Time {
-  return Math.floor(ms / 1000) as Time;
-}
 
 function candlesToTV(candles: Candle[]): CandlestickData[] {
   // Lightweight Charts requires unique, ascending times.
@@ -92,16 +103,82 @@ function seriesToLine(series: DataPoint[]): LineData[] {
   return out.sort((a, b) => (a.time as number) - (b.time as number));
 }
 
-function buildRegimeBands(series: DataPoint[]): HistogramData[] {
-  const seen = new Set<number>();
-  const out: HistogramData[] = [];
-  for (const s of series) {
-    const t = Math.floor(s.t / 1000);
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push({ time: t as Time, value: 320, color: COLORS.regimes[s.r] ?? COLORS.regimes.A });
+function drawRegimeBands(canvas: HTMLCanvasElement, chart: IChartApi, series: DataPoint[]) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!series.length) return;
+
+  const ts = chart.timeScale();
+  const H = canvas.height;
+
+  let i = 0;
+  while (i < series.length) {
+    const regime = series[i].r;
+    let j = i;
+    while (j < series.length && series[j].r === regime) j++;
+
+    const t1 = Math.floor(series[i].t / 1000);
+    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
+    const x1 = ts.timeToCoordinate(t1 as Time);
+    const x2 = ts.timeToCoordinate(t2 as Time);
+
+    if (x1 !== null && x2 !== null && x2 > x1) {
+      ctx.fillStyle = REGIME_BG[regime] ?? 'transparent';
+      ctx.fillRect(x1, 0, x2 - x1, H);
+    }
+    i = j;
   }
-  return out.sort((a, b) => (a.time as number) - (b.time as number));
+
+  i = 0;
+  while (i < series.length) {
+    const regime = series[i].r;
+    let j = i;
+    while (j < series.length && series[j].r === regime) j++;
+
+    const t1 = Math.floor(series[i].t / 1000);
+    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
+    const x1 = ts.timeToCoordinate(t1 as Time);
+    const x2 = ts.timeToCoordinate(t2 as Time);
+
+    if (x1 !== null && x2 !== null && (x2 - x1) > 20) {
+      ctx.fillStyle = REGIME_LABEL_COLOR[regime] ?? '#aaa';
+      ctx.font = '9px IBM Plex Mono, monospace';
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = 0.6;
+      ctx.fillText(regime, (x1 + x2) / 2, 12);
+      ctx.globalAlpha = 1;
+    }
+    i = j;
+  }
+}
+
+function drawRegimeStrip(canvas: HTMLCanvasElement, chart: IChartApi, series: DataPoint[]) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!series.length) return;
+
+  const ts = chart.timeScale();
+  const H = canvas.height;
+
+  let i = 0;
+  while (i < series.length) {
+    const regime = series[i].r;
+    let j = i;
+    while (j < series.length && series[j].r === regime) j++;
+
+    const t1 = Math.floor(series[i].t / 1000);
+    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
+    const x1 = ts.timeToCoordinate(t1 as Time);
+    const x2 = ts.timeToCoordinate(t2 as Time);
+
+    if (x1 !== null && x2 !== null && x2 > x1) {
+      ctx.fillStyle = REGIME_STRIP_COLOR[regime] ?? 'transparent';
+      ctx.fillRect(x1, 0, x2 - x1, H);
+    }
+    i = j;
+  }
 }
 
 interface ChartViewProps {
@@ -119,15 +196,47 @@ export default function ChartView({
   const priceRef = useRef<HTMLDivElement>(null);
   const gcpRef   = useRef<HTMLDivElement>(null);
 
+  const gcpOverlayRef   = useRef<HTMLCanvasElement>(null);
+  const priceOverlayRef = useRef<HTMLCanvasElement>(null);
+
   const priceChart = useRef<IChartApi | null>(null);
   const gcpChart   = useRef<IChartApi | null>(null);
 
   const candleSeries  = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeries  = useRef<ISeriesApi<'Histogram'>   | null>(null);
   const gcpLineSeries = useRef<ISeriesApi<'Line'>        | null>(null);
-  const gcpBandSeries = useRef<ISeriesApi<'Histogram'>   | null>(null);
 
   const markersPlugin = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+
+  // Series snapshot the redraw fn reads from — kept in a ref so callbacks are stable
+  const seriesRef = useRef<DataPoint[]>(series);
+  seriesRef.current = series;
+
+  const redrawOverlays = () => {
+    const gcpInst = gcpChart.current;
+    const gcpCanvas = gcpOverlayRef.current;
+    const gcpHost = gcpRef.current;
+    if (gcpInst && gcpCanvas && gcpHost) {
+      const rect = gcpHost.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        if (gcpCanvas.width !== rect.width)  gcpCanvas.width  = rect.width;
+        if (gcpCanvas.height !== rect.height) gcpCanvas.height = rect.height;
+        drawRegimeBands(gcpCanvas, gcpInst, seriesRef.current);
+      }
+    }
+
+    const priceInst = priceChart.current;
+    const priceCanvas = priceOverlayRef.current;
+    const priceHost = priceRef.current;
+    if (priceInst && priceCanvas && priceHost) {
+      const rect = priceHost.getBoundingClientRect();
+      if (rect.width > 0) {
+        if (priceCanvas.width !== rect.width) priceCanvas.width = rect.width;
+        if (priceCanvas.height !== 8)         priceCanvas.height = 8;
+        drawRegimeStrip(priceCanvas, priceInst, seriesRef.current);
+      }
+    }
+  };
 
   useEffect(() => {
     if (!priceRef.current || !gcpRef.current) return;
@@ -194,16 +303,6 @@ export default function ChartView({
       },
     });
 
-    const bands = gc.addSeries(HistogramSeries, {
-      priceFormat:      { type: 'price', precision: 0, minMove: 1 },
-      priceScaleId:     'bands',
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    gc.priceScale('bands').applyOptions({
-      scaleMargins: { top: 0, bottom: 0 },
-    });
-
     const gl = gc.addSeries(LineSeries, {
       color:                      COLORS.cyan,
       lineWidth:                  2,
@@ -219,21 +318,24 @@ export default function ChartView({
     candleSeries.current  = cs;
     volumeSeries.current  = vs;
     gcpLineSeries.current = gl;
-    gcpBandSeries.current = bands;
 
     let syncing = false;
 
     const syncFromPrice = (range: ReturnType<typeof pc.timeScale>['getVisibleLogicalRange'] extends () => infer R ? R : null) => {
-      if (syncing || !range) return;
-      syncing = true;
-      gc.timeScale().setVisibleLogicalRange(range);
-      syncing = false;
+      if (!syncing && range) {
+        syncing = true;
+        gc.timeScale().setVisibleLogicalRange(range);
+        syncing = false;
+      }
+      redrawOverlays();
     };
     const syncFromGCP = (range: typeof syncFromPrice extends (r: infer R) => unknown ? R : null) => {
-      if (syncing || !range) return;
-      syncing = true;
-      pc.timeScale().setVisibleLogicalRange(range);
-      syncing = false;
+      if (!syncing && range) {
+        syncing = true;
+        pc.timeScale().setVisibleLogicalRange(range);
+        syncing = false;
+      }
+      redrawOverlays();
     };
 
     pc.timeScale().subscribeVisibleLogicalRangeChange(syncFromPrice);
@@ -248,6 +350,7 @@ export default function ChartView({
           gc.applyOptions({ width: Math.max(400, width), height: Math.max(100, height) });
         }
       }
+      redrawOverlays();
     });
     ro.observe(priceRef.current);
     ro.observe(gcpRef.current);
@@ -262,6 +365,7 @@ export default function ChartView({
       gcpChart.current = null;
       markersPlugin.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -292,19 +396,22 @@ export default function ChartView({
     volumeSeries.current.setData(volData);
 
     priceChart.current?.timeScale().fitContent();
+    redrawOverlays();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles]);
 
   useEffect(() => {
-    if (!gcpLineSeries.current || !gcpBandSeries.current) return;
+    if (!gcpLineSeries.current) return;
     if (!series.length) {
       gcpLineSeries.current.setData([]);
-      gcpBandSeries.current.setData([]);
+      redrawOverlays();
       return;
     }
 
     gcpLineSeries.current.setData(seriesToLine(series));
-    gcpBandSeries.current.setData(buildRegimeBands(series));
     gcpChart.current?.timeScale().fitContent();
+    redrawOverlays();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series]);
 
   useEffect(() => {
@@ -375,6 +482,18 @@ export default function ChartView({
 
       <div style={{ flex: '0 0 68%', position: 'relative', minHeight: 0 }}>
         <div ref={priceRef} style={{ width: '100%', height: '100%' }} />
+        <canvas
+          ref={priceOverlayRef}
+          style={{
+            position: 'absolute',
+            bottom: 28,
+            left: 0,
+            width: '100%',
+            height: 8,
+            pointerEvents: 'none',
+            zIndex: 1,
+          }}
+        />
       </div>
 
       <div style={{ height: 2, background: 'var(--line-1)', flexShrink: 0, position: 'relative' }}>
@@ -389,10 +508,20 @@ export default function ChartView({
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div ref={gcpRef} style={{ width: '100%', height: '100%' }} />
+        <canvas
+          ref={gcpOverlayRef}
+          style={{
+            position: 'absolute',
+            top: 0, left: 0,
+            width: '100%', height: '100%',
+            pointerEvents: 'none',
+            zIndex: 1,
+          }}
+        />
 
         <div style={{
           position: 'absolute', bottom: 6, left: 12,
-          display: 'flex', gap: 8, pointerEvents: 'none',
+          display: 'flex', gap: 8, pointerEvents: 'none', zIndex: 2,
         }}>
           {REGIMES.map(r => (
             <span key={r.id} style={{
