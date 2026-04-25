@@ -148,8 +148,9 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
       const bucket = series.slice(i, i + barsPerBucket);
       if (!bucket.length) break;
 
-      let maxV = -Infinity;
-      for (const p of bucket) if (p.v > maxV) maxV = p.v;
+      let sum = 0;
+      for (const p of bucket) sum += p.v;
+      const avgV = sum / bucket.length;
 
       const last    = bucket[bucket.length - 1];
       const hasReal = bucket.some(p => p.gReal);
@@ -157,8 +158,8 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
       out.push({
         i:     out.length,
         t:     last.t,
-        v:     +maxV.toFixed(2),
-        r:     regimeFor(maxV),
+        v:     +avgV.toFixed(2),
+        r:     regimeFor(avgV),
         g:     last.g,
         gReal: hasReal || undefined,
       });
