@@ -1,0 +1,2 @@
+// GCP TypeScript types
+export {};
