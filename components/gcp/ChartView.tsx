@@ -332,14 +332,15 @@ export default function ChartView({
     regimeSeries.current = rSeriesMap;
 
     const vs = pc.addSeries(HistogramSeries, {
-      color:            'rgba(77,217,232,0.3)',
+      color:            'rgba(77,217,232,0.25)',
       priceFormat:      { type: 'volume' },
-      priceScaleId:     '',
+      priceScaleId:     'vol',
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    pc.priceScale('').applyOptions({
+    pc.priceScale('vol').applyOptions({
       scaleMargins: { top: 0.85, bottom: 0 },
+      visible:      false,
     });
 
     const gc = createChart(gcpRef.current, {
@@ -418,7 +419,32 @@ export default function ChartView({
   }, []);
 
   useEffect(() => {
-    if (!regimeSeries.current.size || !volumeSeries.current) return;
+    // Lazy reinit: if the candle series map was wiped (e.g. fast-refresh),
+    // rebuild all six regime series before writing data.
+    if (regimeSeries.current.size === 0 && priceChart.current) {
+      const pc = priceChart.current;
+      const map = new Map<string, ISeriesApi<'Candlestick'>>();
+      REGIME_IDS.forEach(r => {
+        const col = REGIME_CANDLE[r] ?? COLORS.cyan;
+        const s = pc.addSeries(CandlestickSeries, {
+          upColor:         col,
+          downColor:       'transparent',
+          borderUpColor:   col,
+          borderDownColor: col,
+          wickUpColor:     col,
+          wickDownColor:   col,
+        });
+        map.set(r, s);
+      });
+      regimeSeries.current = map;
+    }
+
+    if (regimeSeries.current.size !== 6) {
+      console.warn('[ChartView] regime series not initialized, skipping candle update');
+      return;
+    }
+    if (!volumeSeries.current) return;
+
     if (!candles.length) {
       regimeSeries.current.forEach(s => s.setData([]));
       volumeSeries.current.setData([]);

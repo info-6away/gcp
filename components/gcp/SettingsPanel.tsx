@@ -6,8 +6,10 @@ import type { MarketSymbol, Timeframe } from '@/types/gcp';
 interface SettingsPanelProps {
   gcpLive:          boolean;
   gcpNetvar:        number | null;
+  gcpScale:         number | null;
   goldStatus:       string;
   goldPrice:        number | null;
+  goldSource:       string | null;
   candleLoading:    boolean;
   candleError:      string | null;
   symbol:           MarketSymbol;
@@ -76,7 +78,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         />
         <Row
           label="Gold / BTC Spot Price"
-          sub="gold-api.com — 60s poll — CORS open"
+          sub={`gold-api → twelve-data → yahoo · 60s poll${props.goldSource ? ` · active: ${props.goldSource}` : ''}`}
           value={<><StatusDot ok={props.goldStatus !== 'error'} />{props.goldStatus === 'error' ? 'Error' : props.goldStatus === 'closed' ? 'Closed' : 'Live'}</>}
         />
         <Row
@@ -100,7 +102,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       <Section title="System">
         <Row label="Version"     value={APP_VERSION} />
         <Row label="Model"       value={APP_MODEL} />
-        <Row label="GCP Scale"   value="sum_sq × 0.46 / 60s bucket" />
+        <Row
+          label="GCP Scale"
+          sub="sum_sq × 0.46 per 60s bucket, calibrated to live API"
+          value={`× 0.46 × ${props.gcpScale?.toFixed(3) ?? '…'}`}
+        />
         <Row label="Regime A"    value="0 – 50 NV" />
         <Row label="Regime B"    value="50 – 100 NV" />
         <Row label="Regime C"    value="100 – 140 NV" />

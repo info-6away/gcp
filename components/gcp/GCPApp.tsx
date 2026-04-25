@@ -27,6 +27,7 @@ export default function GCPApp() {
     gcpLoading,
     gcpError,
     isLive: gcpIsLive,
+    scaleFactor: gcpScaleFactor,
   } = useGCPData();
 
   const fallbackSeries = useMemo(() => buildSeries().series, []);
@@ -203,6 +204,7 @@ export default function GCPApp() {
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
         goldSessionDate={null}
+        goldSource={goldData.source}
         candleLoading={candleData.loading}
         candleError={!!candleData.error}
         candleCount={candleData.candles.length}
@@ -249,8 +251,10 @@ export default function GCPApp() {
             <SettingsPanel
               gcpLive={gcpIsLive}
               gcpNetvar={liveNetvar}
+              gcpScale={gcpScaleFactor}
               goldStatus={goldData.marketStatus}
               goldPrice={goldData.price}
+              goldSource={goldData.source}
               candleLoading={candleData.loading}
               candleError={candleData.error}
               symbol={symbol}

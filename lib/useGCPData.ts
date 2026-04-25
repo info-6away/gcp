@@ -22,13 +22,14 @@ interface GCPPoint {
 }
 
 export interface GCPDataState {
-  series:     DataPoint[];
-  liveNetvar: number | null;
-  liveRegime: RegimeId | null;
-  gcpLoading: boolean;
-  gcpError:   string | null;
-  isLive:     boolean;
-  lastUpdate: Date | null;
+  series:      DataPoint[];
+  liveNetvar:  number | null;
+  liveRegime:  RegimeId | null;
+  gcpLoading:  boolean;
+  gcpError:    string | null;
+  isLive:      boolean;
+  lastUpdate:  Date | null;
+  scaleFactor: number | null;
 }
 
 const LS_KEY_SERIES  = 'gcp_last_series_fetch';
@@ -144,6 +145,7 @@ export function useGCPData(): GCPDataState {
   const [state, setState] = useState<GCPDataState>({
     series: [], liveNetvar: null, liveRegime: null,
     gcpLoading: true, gcpError: null, isLive: false, lastUpdate: null,
+    scaleFactor: null,
   });
 
   const historicalRef        = useRef<DataPoint[]>([]);
@@ -209,15 +211,17 @@ export function useGCPData(): GCPDataState {
       }
 
       const merged = mergeSeries(scaledHistoricalRef.current, points);
+      const scale = scaleRef.current;
 
       setTimeout(() => {
         setState(s => ({
           ...s,
-          series:     merged,
-          gcpLoading: false,
-          gcpError:   null,
-          isLive:     true,
-          lastUpdate: new Date(),
+          series:      merged,
+          gcpLoading:  false,
+          gcpError:    null,
+          isLive:      true,
+          lastUpdate:  new Date(),
+          scaleFactor: scale,
         }));
       }, 0);
     } catch (e) {

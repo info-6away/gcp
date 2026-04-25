@@ -29,7 +29,10 @@ function calcOutputsize(timeframe: Timeframe, viewWindow: ViewWindow): number {
     '30d':  43_200,
     'all':  129_600,
   };
-  const needed = Math.ceil(windowMinutes[viewWindow] / minutesPerBar);
+  // 1.2x buffer absorbs market closures and gap days so the overlay
+  // covers the full visible GCP window even when the price feed has
+  // missing bars.
+  const needed = Math.ceil((windowMinutes[viewWindow] / minutesPerBar) * 1.2);
   return Math.min(5000, Math.max(100, needed));
 }
 

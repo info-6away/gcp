@@ -54,6 +54,7 @@ interface HeaderProps {
   goldLoading:       boolean;
   goldMarketStatus:  'live' | 'closed' | 'error';
   goldSessionDate:   string | null;
+  goldSource:        string | null;
   gcpLive:           boolean;
   gcpNetvar:         number | null;
   gcpError:          boolean;
@@ -157,7 +158,7 @@ function Header({
   symbol, onSymbolChange,
   timeframe, onTimeframeChange,
   viewWindow, onViewWindowChange,
-  goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
+  goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
   candleLoading, candleError, candleCount,
 }: HeaderProps) {
@@ -249,24 +250,35 @@ function Header({
             }} />
           </div>
 
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            padding: '4px 10px',
-            borderRight: '1px solid var(--line-1)',
-          }}>
-            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>{symbol}</span>
-            {goldPrice !== null && (
-              <span style={{ color: getSymbolMeta(symbol).color, fontVariantNumeric: 'tabular-nums' }}>
-                {formatPrice(goldPrice, symbol)}
+          <div
+            title={goldSource ? `Price source: ${goldSource}` : 'Price source: pending'}
+            style={{
+              display: 'flex', flexDirection: 'column', gap: 1,
+              padding: '4px 10px',
+              borderRight: '1px solid var(--line-1)',
+              cursor: 'default',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>{symbol}</span>
+              {goldPrice !== null && (
+                <span style={{ color: getSymbolMeta(symbol).color, fontVariantNumeric: 'tabular-nums' }}>
+                  {formatPrice(goldPrice, symbol)}
+                </span>
+              )}
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: goldMarketStatus === 'error' ? 'var(--red)'
+                  : goldMarketStatus === 'closed' ? 'var(--amber)'
+                  : 'var(--green)',
+                flexShrink: 0,
+              }} />
+            </div>
+            {goldSource && (
+              <span style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.06em', textAlign: 'right' }}>
+                {goldSource}
               </span>
             )}
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: goldMarketStatus === 'error' ? 'var(--red)'
-                : goldMarketStatus === 'closed' ? 'var(--amber)'
-                : 'var(--green)',
-              flexShrink: 0,
-            }} />
           </div>
 
           <div
