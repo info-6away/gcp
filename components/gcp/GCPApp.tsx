@@ -20,14 +20,26 @@ export default function GCPApp() {
   const goldData = useGoldData(symbol);
 
   const mergedSeries = useMemo(() => {
-    if (!goldData.candles.length) return dataset.series;
-    const real   = goldData.candles;
-    const series = [...dataset.series];
-    const n      = Math.min(real.length, series.length);
+    if (!goldData.candles.length) {
+      return dataset.series.map(p => ({ ...p, gReal: false as const }));
+    }
+
+    const real = goldData.candles;
+    const series = dataset.series.map(p => ({
+      ...p,
+      gReal: false as boolean | undefined,
+    }));
+
+    const n = Math.min(real.length, series.length);
     for (let i = 0; i < n; i++) {
       const gcpIdx = series.length - n + i;
-      series[gcpIdx] = { ...series[gcpIdx], g: real[i].c, gReal: true };
+      series[gcpIdx] = {
+        ...dataset.series[gcpIdx],
+        g:     real[i].c,
+        gReal: true,
+      };
     }
+
     return series;
   }, [dataset.series, goldData.candles]);
 

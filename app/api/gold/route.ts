@@ -97,13 +97,21 @@ export async function GET(request: Request): Promise<NextResponse> {
       marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
     }
 
+    if (candles.length === 0) {
+      const all    = await fetchCandles(ticker, '5d', '60m');
+      candles      = lastSessionCandles(all);
+      marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
+    }
+
     if (candles.length === 0 && ticker === 'XAUUSD=X') {
-      const all    = await fetchCandles('GC=F', '5d', '5m');
+      const all    = await fetchCandles('GC=F', '5d', '60m');
       candles      = lastSessionCandles(all);
       marketStatus = 'closed';
     }
 
-    if (!candles.length) throw new Error('No candles after fallback');
+    if (!candles.length) throw new Error('All fallbacks exhausted for ' + ticker);
+
+    console.log(`[/api/gold] ${ticker} — got ${candles.length} candles (${marketStatus})`);
 
     const last: GoldCandle = candles[candles.length - 1];
 

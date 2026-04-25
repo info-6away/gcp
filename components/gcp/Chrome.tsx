@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { DataPoint, CursorInfo, MarketSymbol } from '@/types/gcp';
 import { SYMBOLS, formatPrice } from '@/types/gcp';
+import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
 function LogoMark({ size = 22 }: { size?: number }) {
   return (
@@ -187,7 +188,7 @@ function Header({
         <div className="brand-name">
           <span style={{ color: 'var(--fg-0)', fontWeight: 600, letterSpacing: '0.04em' }}>GCP</span>
           <span style={{ color: 'var(--cyan)', fontWeight: 600, letterSpacing: '0.04em' }}> PRO</span>
-          <span style={{ color: 'var(--fg-3)', marginLeft: 10, fontSize: 10, letterSpacing: '0.15em' }}>v1.0</span>
+          <span style={{ color: 'var(--fg-3)', marginLeft: 10, fontSize: 10, letterSpacing: '0.15em' }}>v{APP_VERSION}</span>
         </div>
       </div>
 
@@ -281,7 +282,7 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD' }: StatusBarProps) {
       </div>
       <div className="sb-right">
         <span className="hairline">Model</span>
-        <span>GCP-Pro/v1</span>
+        <span>{APP_MODEL}</span>
       </div>
     </footer>
   );
