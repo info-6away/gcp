@@ -9,11 +9,12 @@ import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
 import SettingsPanel from './SettingsPanel';
-import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
-import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
+import ChartView from './ChartView';
+import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
+import { formatPrice, getSymbolMeta, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
 export default function GCPApp() {
-  const [page, setPage] = useState<'dashboard' | 'pattern' | 'settings'>('dashboard');
+  const [page, setPage] = useState<AppPage>('dashboard');
   const [live, setLive] = useState(true);
   const [selectedPatternKind, setSelectedPatternKind] = useState<string | null>(null);
   const [symbol, setSymbol] = useState<MarketSymbol>('XAUUSD');
@@ -112,6 +113,7 @@ export default function GCPApp() {
       if (target.tagName === 'INPUT' || target.tagName === 'SELECT') return;
       if (e.key === 'd') setPage('dashboard');
       if (e.key === 'p') { setSelectedPatternKind(null); setPage('pattern'); }
+      if (e.key === 'c') setPage('chart');
       if (e.key === 's') setPage('settings');
       if (e.key === ' ') { e.preventDefault(); setLive(l => !l); }
       if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 10));
@@ -140,7 +142,7 @@ export default function GCPApp() {
         : '—',
   };
 
-  const handleNav = (p: 'dashboard' | 'pattern' | 'settings') => {
+  const handleNav = (p: AppPage) => {
     if (p === 'pattern') setSelectedPatternKind(null);
     setPage(p);
   };
@@ -231,6 +233,16 @@ export default function GCPApp() {
               symbol={symbol}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
+            />
+          )}
+          {page === 'chart' && (
+            <ChartView
+              series={displaySeries}
+              patterns={displayPatterns}
+              candles={candleData.candles}
+              symbol={symbol}
+              symbolColor={getSymbolMeta(symbol).color}
+              timeframe={timeframe}
             />
           )}
           {page === 'settings' && (

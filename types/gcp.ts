@@ -1,3 +1,5 @@
+export type AppPage = 'dashboard' | 'pattern' | 'chart' | 'settings';
+
 export interface GCPEntry {
   t: number;
   v: number;

@@ -39,6 +39,7 @@ export interface Candle {
   h: number;
   l: number;
   c: number;
+  v?: number;
 }
 
 export interface CandleState {
@@ -84,15 +85,16 @@ export function useCandleData(
         throw new Error(data.message ?? 'Twelve Data error');
       }
 
-      const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
+      const values: { datetime: string; open: string; high: string; low: string; close: string; volume?: string }[] =
         (data.values ?? []).slice().reverse();
 
-      const candles: Candle[] = values.map(v => ({
-        t: new Date(v.datetime + 'Z').getTime(),
-        o: parseFloat(v.open),
-        h: parseFloat(v.high),
-        l: parseFloat(v.low),
-        c: parseFloat(v.close),
+      const candles: Candle[] = values.map(val => ({
+        t: new Date(val.datetime + 'Z').getTime(),
+        o: parseFloat(val.open),
+        h: parseFloat(val.high),
+        l: parseFloat(val.low),
+        c: parseFloat(val.close),
+        v: val.volume ? parseFloat(val.volume) : undefined,
       }));
 
       setState({ candles, loading: false, error: null, lastFetch: new Date() });

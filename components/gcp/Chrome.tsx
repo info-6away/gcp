@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
+import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
@@ -41,7 +41,7 @@ function LogoMark({ size = 22 }: { size?: number }) {
 
 interface HeaderProps {
   page: string;
-  onNav: (p: 'dashboard' | 'pattern' | 'settings') => void;
+  onNav: (p: AppPage) => void;
   live: boolean;
   onToggleLive: () => void;
   symbol:            MarketSymbol;
@@ -321,7 +321,7 @@ function Header({
 
 interface LeftRailProps {
   page: string;
-  onNav: (p: 'dashboard' | 'pattern' | 'settings') => void;
+  onNav: (p: AppPage) => void;
   lastDataDate?: string | null;
 }
 
@@ -329,6 +329,7 @@ function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
   const items = [
     { id: 'dashboard' as const, label: 'Dashboard', hint: 'D' },
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
+    { id: 'chart'     as const, label: 'Chart',     hint: 'C' },
     { id: 'settings'  as const, label: 'Settings',  hint: 'S' },
   ];
   return (
