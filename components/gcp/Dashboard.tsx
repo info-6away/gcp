@@ -226,7 +226,15 @@ export default function Dashboard({
               className={`tool-btn ${showGold ? 'on' : ''}`}
               onClick={() => setShowGold(s => !s)}
             >
-              GOLD {showGold ? '◉' : '○'}
+              <span style={{
+                width: 8, height: 8,
+                background: symbolMeta.color,
+                display: 'inline-block',
+                borderRadius: 1,
+                marginRight: 5,
+                verticalAlign: 'middle',
+              }} />
+              {symbol} {showGold ? '◉' : '○'}
             </button>
           </div>
         </div>

@@ -28,17 +28,17 @@ const HEADERS = {
   Accept: 'application/json',
 };
 
-async function fetchCandles(ticker: string, range: string): Promise<GoldCandle[]> {
+async function fetchCandles(ticker: string, range: string, interval = '1m'): Promise<GoldCandle[]> {
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}` +
-    `?interval=1m&range=${range}&includePrePost=false`;
+    `?interval=${interval}&range=${range}&includePrePost=false`;
 
   const res = await fetch(url, { headers: HEADERS, next: { revalidate: 60 } });
-  if (!res.ok) throw new Error(`Yahoo returned ${res.status}`);
+  if (!res.ok) throw new Error(`Yahoo returned ${res.status} for ${ticker} ${interval} ${range}`);
 
   const data   = await res.json();
   const result = data?.chart?.result?.[0];
-  if (!result) throw new Error('No chart result');
+  if (!result) return [];
 
   const timestamps: number[] = result.timestamp ?? [];
   const q = result.indicators.quote[0];
@@ -82,13 +82,25 @@ export async function GET(request: Request): Promise<NextResponse> {
   const ticker   = meta.yahooTicker;
 
   try {
-    let candles = await fetchCandles(ticker, '1d');
+    let candles = await fetchCandles(ticker, '1d', '1m');
     let marketStatus: MarketStatus = 'live';
 
     if (candles.length === 0) {
-      const all    = await fetchCandles(ticker, '5d');
+      const all    = await fetchCandles(ticker, '5d', '1m');
       candles      = lastSessionCandles(all);
       marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
+    }
+
+    if (candles.length === 0) {
+      const all    = await fetchCandles(ticker, '5d', '5m');
+      candles      = lastSessionCandles(all);
+      marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
+    }
+
+    if (candles.length === 0 && ticker === 'XAUUSD=X') {
+      const all    = await fetchCandles('GC=F', '5d', '5m');
+      candles      = lastSessionCandles(all);
+      marketStatus = 'closed';
     }
 
     if (!candles.length) throw new Error('No candles after fallback');

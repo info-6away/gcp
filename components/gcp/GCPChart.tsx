@@ -238,10 +238,12 @@ function GCPChart({
           <line x1={xOf(cursor)} x2={xOf(cursor)} y1={padT} y2={H - padB}
             stroke="var(--fg-1)" strokeWidth={1} strokeDasharray="2 3" opacity={0.5} />
           <circle cx={xOf(cursor)} cy={yOf(cursorS.v)} r={3.5} fill="var(--cyan)" stroke="var(--bg-0)" strokeWidth={1.5} />
-          {showGold && <circle cx={xOf(cursor)} cy={gyOf(cursorS.g)} r={3.5} fill={goldColor} stroke="var(--bg-0)" strokeWidth={1.5} />}
+          {showGold && cursorS.gReal && (
+            <circle cx={xOf(cursor)} cy={gyOf(cursorS.g)} r={3.5} fill={goldColor} stroke="var(--bg-0)" strokeWidth={1.5} />
+          )}
           <g>
             <rect x={Math.min(W - padR - 140, xOf(cursor) + 8)} y={padT + 6}
-              width={132} height={showGold ? 56 : 40}
+              width={132} height={showGold && cursorS.gReal ? 56 : 40}
               fill="var(--bg-2)" stroke="var(--line-2)" strokeWidth={1} rx={2} />
             <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 20}
               fill="var(--fg-2)" fontSize={9} fontFamily="var(--font-mono)" letterSpacing="0.08em">
@@ -251,10 +253,16 @@ function GCPChart({
               fill="var(--cyan)" fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
               NV {cursorS.v.toFixed(1)}
             </text>
-            {showGold && (
+            {showGold && cursorS.gReal && (
               <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 50}
                 fill={goldColor} fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
                 {(symbolId ?? 'XAU')} {formatPriceInChart(cursorS.g, symbolId)}
+              </text>
+            )}
+            {showGold && !cursorS.gReal && symbolId && symbolId !== 'XAUUSD' && (
+              <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 50}
+                fill="var(--fg-3)" fontSize={10} fontFamily="var(--font-mono)">
+                {symbolId} — synthetic zone
               </text>
             )}
           </g>
