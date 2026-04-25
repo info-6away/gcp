@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { buildSeries, detectPatterns, resampleSeries } from '@/lib/gcp-data';
 import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
+import { useCandleData } from '@/lib/useCandleData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -39,6 +40,7 @@ export default function GCPApp() {
   }, [baseSeries.length]);
 
   const goldData = useGoldData(symbol);
+  const candleData = useCandleData(symbol);
 
   const mergedSeries = useMemo(() => {
     const series = baseSeries.map(p => ({
@@ -46,7 +48,19 @@ export default function GCPApp() {
       gReal: false as boolean | undefined,
     }));
 
-    if (goldData.price !== null && series.length > 0) {
+    const candles = candleData.candles;
+
+    if (candles.length > 0) {
+      const n = Math.min(candles.length, series.length);
+      for (let i = 0; i < n; i++) {
+        const gcpIdx = series.length - n + i;
+        series[gcpIdx] = {
+          ...baseSeries[gcpIdx],
+          g:     candles[i].c,
+          gReal: true,
+        };
+      }
+    } else if (goldData.price !== null && series.length > 0) {
       const last = series.length - 1;
       series[last] = {
         ...baseSeries[last],
@@ -56,7 +70,7 @@ export default function GCPApp() {
     }
 
     return series;
-  }, [baseSeries, goldData.price]);
+  }, [baseSeries, candleData.candles, goldData.price]);
 
   const windowedSeries = useMemo(() => {
     const mins = VIEW_MINUTES[viewWindow];
@@ -181,6 +195,8 @@ export default function GCPApp() {
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
         goldSessionDate={null}
+        candleLoading={candleData.loading}
+        candleError={!!candleData.error}
         gcpLive={gcpIsLive}
         gcpNetvar={liveNetvar}
         gcpError={!!gcpError}

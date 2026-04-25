@@ -38,7 +38,6 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
       if (!res.ok) throw new Error(`gold-api returned ${res.status}`);
 
       const data = await res.json();
-      console.log('[gold-api]', symbol, apiSymbol, data);
 
       const rawPrice = data.price ?? data.rate ?? data.bid ?? null;
       const rawPrev  = data.prev_close_price ?? data.previousClose ?? rawPrice;

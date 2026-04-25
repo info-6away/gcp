@@ -52,11 +52,14 @@ interface HeaderProps {
   gcpLive:           boolean;
   gcpNetvar:         number | null;
   gcpError:          boolean;
+  candleLoading:     boolean;
+  candleError:       boolean;
 }
 
 function SymbolPicker({
   symbol, onSymbolChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
+  candleLoading, candleError,
 }: {
   symbol:           MarketSymbol;
   onSymbolChange:   (s: MarketSymbol) => void;
@@ -64,6 +67,8 @@ function SymbolPicker({
   goldLoading:      boolean;
   goldMarketStatus: 'live' | 'closed' | 'error';
   goldSessionDate:  string | null;
+  candleLoading:    boolean;
+  candleError:      boolean;
 }) {
   const [open, setOpen] = useState(false);
   const meta = SYMBOLS.find(s => s.id === symbol)!;
@@ -117,6 +122,22 @@ function SymbolPicker({
             {goldMarketStatus === 'live'   ? '● LIVE'    :
              goldMarketStatus === 'closed' ? '● WEEKEND' :
              '● ERR'}
+          </span>
+        )}
+
+        {!candleLoading && !candleError && (
+          <span style={{ fontSize: 9, color: 'var(--fg-3)', marginLeft: 4, letterSpacing: '0.06em' }}>
+            OHLCV
+          </span>
+        )}
+        {candleLoading && (
+          <span style={{ fontSize: 9, color: 'var(--fg-3)', marginLeft: 4 }}>
+            loading candles…
+          </span>
+        )}
+        {!candleLoading && candleError && (
+          <span style={{ fontSize: 9, color: 'var(--amber)', marginLeft: 4 }}>
+            candles unavailable
           </span>
         )}
 
@@ -190,6 +211,7 @@ function Header({
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
   gcpLive, gcpNetvar, gcpError,
+  candleLoading, candleError,
 }: HeaderProps) {
   return (
     <header className="app-header">
@@ -210,6 +232,8 @@ function Header({
           goldLoading={goldLoading}
           goldMarketStatus={goldMarketStatus}
           goldSessionDate={goldSessionDate}
+          candleLoading={candleLoading}
+          candleError={candleError}
         />
         <div className="tf-group">
           {TIMEFRAME_LABELS.map(tf => (
