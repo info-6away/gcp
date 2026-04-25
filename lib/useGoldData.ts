@@ -31,12 +31,16 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
       const data: GoldResponse & { error?: string } = await res.json();
 
       if (data.marketStatus === 'error' || !data.candles?.length) {
-        setState(s => ({
-          ...s, loading: false,
-          error: data.error ?? 'No data returned',
+        setState({
+          candles: [],
+          lastPrice: null,
+          lastTs: null,
           marketStatus: 'error',
+          sessionDate: null,
+          loading: false,
+          error: data.error ?? 'No data returned',
           lastFetch: new Date(),
-        }));
+        });
         return;
       }
 
@@ -51,15 +55,30 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
         lastFetch:    new Date(),
       });
     } catch (e) {
-      setState(s => ({
-        ...s, loading: false, error: String(e),
-        marketStatus: 'error', lastFetch: new Date(),
-      }));
+      setState({
+        candles: [],
+        lastPrice: null,
+        lastTs: null,
+        marketStatus: 'error',
+        sessionDate: null,
+        loading: false,
+        error: String(e),
+        lastFetch: new Date(),
+      });
     }
   }, [symbol]);
 
   useEffect(() => {
-    setState(s => ({ ...s, loading: true, error: null }));
+    setState({
+      candles: [],
+      lastPrice: null,
+      lastTs: null,
+      marketStatus: 'live',
+      sessionDate: null,
+      loading: true,
+      error: null,
+      lastFetch: null,
+    });
     fetchGold();
   }, [fetchGold, symbol]);
 

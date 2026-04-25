@@ -109,6 +109,24 @@ export async function GET(request: Request): Promise<NextResponse> {
       marketStatus = 'closed';
     }
 
+    // Last-resort: daily candles over a month — Yahoo serves these for almost
+    // everything, even on weekends. Better to show a few daily bars than ERR.
+    if (candles.length === 0) {
+      const daily = await fetchCandles(ticker, '1mo', '1d');
+      if (daily.length > 0) {
+        candles      = daily;
+        marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
+      }
+    }
+
+    if (candles.length === 0 && ticker === 'XAUUSD=X') {
+      const daily = await fetchCandles('GC=F', '1mo', '1d');
+      if (daily.length > 0) {
+        candles      = daily;
+        marketStatus = 'closed';
+      }
+    }
+
     if (!candles.length) throw new Error('All fallbacks exhausted for ' + ticker);
 
     console.log(`[/api/gold] ${ticker} — got ${candles.length} candles (${marketStatus})`);
