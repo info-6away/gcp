@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -33,6 +33,18 @@ const COLORS = {
   green:      '#22c55e',
   red:        '#ef4444',
 };
+
+const REGIME_CANDLE: Record<string, string> = {
+  A: '#4a72c4',
+  B: '#4dd9e8',
+  C: '#2db8b4',
+  D: '#d4a028',
+  E: '#d46428',
+  F: '#e24b4a',
+};
+
+const REGIME_IDS = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
+type RegimeKey = (typeof REGIME_IDS)[number];
 
 const REGIME_BG: Record<string, string> = {
   A: 'rgba(59,90,160,0.13)',
@@ -202,11 +214,39 @@ export default function ChartView({
   const priceChart = useRef<IChartApi | null>(null);
   const gcpChart   = useRef<IChartApi | null>(null);
 
-  const candleSeries  = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const regimeSeries  = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
   const volumeSeries  = useRef<ISeriesApi<'Histogram'>   | null>(null);
   const gcpLineSeries = useRef<ISeriesApi<'Line'>        | null>(null);
 
   const markersPlugin = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+
+  const [candleColorMode, setCandleColorMode] = useState<'regime' | 'updown'>('regime');
+
+  const applyColorMode = useCallback((mode: 'regime' | 'updown') => {
+    setCandleColorMode(mode);
+    regimeSeries.current.forEach((s, regime) => {
+      if (mode === 'updown') {
+        s.applyOptions({
+          upColor:         COLORS.green,
+          downColor:       COLORS.red,
+          borderUpColor:   COLORS.green,
+          borderDownColor: COLORS.red,
+          wickUpColor:     COLORS.green,
+          wickDownColor:   COLORS.red,
+        });
+      } else {
+        const col = REGIME_CANDLE[regime] ?? COLORS.cyan;
+        s.applyOptions({
+          upColor:         col,
+          downColor:       'transparent',
+          borderUpColor:   col,
+          borderDownColor: col,
+          wickUpColor:     col,
+          wickDownColor:   col,
+        });
+      }
+    });
+  }, []);
 
   // Series snapshot the redraw fn reads from — kept in a ref so callbacks are stable
   const seriesRef = useRef<DataPoint[]>(series);
@@ -276,14 +316,20 @@ export default function ChartView({
       },
     });
 
-    const cs = pc.addSeries(CandlestickSeries, {
-      upColor:         COLORS.green,
-      downColor:       COLORS.red,
-      borderUpColor:   COLORS.green,
-      borderDownColor: COLORS.red,
-      wickUpColor:     COLORS.green,
-      wickDownColor:   COLORS.red,
+    const rSeriesMap = new Map<string, ISeriesApi<'Candlestick'>>();
+    REGIME_IDS.forEach(r => {
+      const col = REGIME_CANDLE[r] ?? COLORS.cyan;
+      const series = pc.addSeries(CandlestickSeries, {
+        upColor:         col,
+        downColor:       'transparent',
+        borderUpColor:   col,
+        borderDownColor: col,
+        wickUpColor:     col,
+        wickDownColor:   col,
+      });
+      rSeriesMap.set(r, series);
     });
+    regimeSeries.current = rSeriesMap;
 
     const vs = pc.addSeries(HistogramSeries, {
       priceFormat:  { type: 'volume' },
@@ -315,7 +361,6 @@ export default function ChartView({
 
     priceChart.current    = pc;
     gcpChart.current      = gc;
-    candleSeries.current  = cs;
     volumeSeries.current  = vs;
     gcpLineSeries.current = gl;
 
@@ -363,21 +408,55 @@ export default function ChartView({
       gc.remove();
       priceChart.current = null;
       gcpChart.current = null;
+      regimeSeries.current = new Map();
       markersPlugin.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!candleSeries.current || !volumeSeries.current) return;
+    if (!regimeSeries.current.size || !volumeSeries.current) return;
     if (!candles.length) {
-      candleSeries.current.setData([]);
+      regimeSeries.current.forEach(s => s.setData([]));
       volumeSeries.current.setData([]);
       return;
     }
 
-    const tvCandles = candlesToTV(candles);
-    candleSeries.current.setData(tvCandles);
+    const regimeByTs = new Map<number, RegimeKey>();
+    for (const s of series) {
+      regimeByTs.set(Math.floor(s.t / 1000), s.r as RegimeKey);
+    }
+
+    const findRegime = (ts: number): RegimeKey => {
+      const direct = regimeByTs.get(ts);
+      if (direct) return direct;
+      for (let delta = 1; delta <= 60; delta++) {
+        const nearest = regimeByTs.get(ts - delta) ?? regimeByTs.get(ts + delta);
+        if (nearest) return nearest;
+      }
+      return 'B';
+    };
+
+    const byRegime = new Map<string, CandlestickData[]>();
+    REGIME_IDS.forEach(r => byRegime.set(r, []));
+
+    for (const c of candlesToTV(candles)) {
+      const ts = c.time as number;
+      let bucketKey: string;
+      if (candleColorMode === 'updown') {
+        bucketKey = c.close >= c.open ? '_up' : '_down';
+      } else {
+        bucketKey = findRegime(ts);
+      }
+      const bucket = byRegime.get(bucketKey) ?? byRegime.get('B')!;
+      bucket.push(c);
+    }
+
+    regimeSeries.current.forEach((s, regime) => {
+      const data = byRegime.get(regime) ?? [];
+      data.sort((a, b) => (a.time as number) - (b.time as number));
+      try { s.setData(data); } catch { /* time ordering is harmless */ }
+    });
 
     const seenVol = new Set<number>();
     const volData: HistogramData[] = [];
@@ -386,10 +465,12 @@ export default function ChartView({
       const t = Math.floor(c.t / 1000);
       if (seenVol.has(t)) continue;
       seenVol.add(t);
+      const regime = findRegime(t);
+      const baseCol = REGIME_CANDLE[regime] ?? COLORS.cyan;
       volData.push({
         time:  t as Time,
-        value: c.v ?? 100,
-        color: c.c >= c.o ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+        value: c.v ?? 50,
+        color: baseCol + '55',
       });
     }
     volData.sort((a, b) => (a.time as number) - (b.time as number));
@@ -398,7 +479,7 @@ export default function ChartView({
     priceChart.current?.timeScale().fitContent();
     redrawOverlays();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles]);
+  }, [candles, series, candleColorMode]);
 
   useEffect(() => {
     if (!gcpLineSeries.current) return;
@@ -415,7 +496,11 @@ export default function ChartView({
   }, [series]);
 
   useEffect(() => {
-    if (!candleSeries.current) return;
+    const markerHost =
+      regimeSeries.current.get('D') ??
+      regimeSeries.current.values().next().value;
+    if (!markerHost) return;
+
     if (!candles.length || !patterns.length || !series.length) {
       if (markersPlugin.current) {
         markersPlugin.current.setMarkers([]);
@@ -448,7 +533,7 @@ export default function ChartView({
     if (markersPlugin.current) {
       markersPlugin.current.setMarkers(markers);
     } else {
-      markersPlugin.current = createSeriesMarkers<Time>(candleSeries.current, markers);
+      markersPlugin.current = createSeriesMarkers<Time>(markerHost, markers);
     }
   }, [patterns, series, candles]);
 
@@ -474,10 +559,33 @@ export default function ChartView({
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{timeframe} bars</span>
         {showNoCandleMessage && (
-          <span style={{ marginLeft: 'auto', color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
+          <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
             ⚠ No candle data — check OHLCV status in header
           </span>
         )}
+        <span style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.12em',
+            color: 'var(--fg-4)', marginRight: 2,
+          }}>CANDLE</span>
+          <button
+            onClick={() => applyColorMode(candleColorMode === 'regime' ? 'updown' : 'regime')}
+            style={{
+              padding: '2px 8px',
+              fontSize: 9, letterSpacing: '0.08em',
+              fontFamily: 'var(--font-mono)',
+              background: candleColorMode === 'regime' ? 'var(--bg-3)' : 'transparent',
+              border: '1px solid var(--line-2)',
+              borderRadius: 2,
+              color: candleColorMode === 'regime' ? 'var(--cyan)' : 'var(--fg-3)',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            {candleColorMode === 'regime' ? 'BY REGIME' : 'UP / DOWN'}
+          </button>
+        </div>
       </div>
 
       <div style={{ flex: '0 0 68%', position: 'relative', minHeight: 0 }}>
