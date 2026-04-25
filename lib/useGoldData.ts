@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { GoldCandle, GoldResponse, MarketStatus } from '@/app/api/gold/route';
+import type { MarketSymbol } from '@/types/gcp';
 
 export interface GoldState {
   candles:      GoldCandle[];
@@ -17,7 +18,7 @@ export interface GoldState {
 const REFRESH_LIVE_MS   = 60_000;
 const REFRESH_CLOSED_MS = 300_000;
 
-export function useGoldData(): GoldState {
+export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
   const [state, setState] = useState<GoldState>({
     candles: [], lastPrice: null, lastTs: null,
     marketStatus: 'live', sessionDate: null,
@@ -26,7 +27,7 @@ export function useGoldData(): GoldState {
 
   const fetchGold = useCallback(async () => {
     try {
-      const res  = await fetch('/api/gold');
+      const res  = await fetch(`/api/gold?symbol=${symbol}`);
       const data: GoldResponse & { error?: string } = await res.json();
 
       if (data.marketStatus === 'error' || !data.candles?.length) {
@@ -55,11 +56,12 @@ export function useGoldData(): GoldState {
         marketStatus: 'error', lastFetch: new Date(),
       }));
     }
-  }, []);
+  }, [symbol]);
 
   useEffect(() => {
+    setState(s => ({ ...s, loading: true, error: null }));
     fetchGold();
-  }, [fetchGold]);
+  }, [fetchGold, symbol]);
 
   useEffect(() => {
     const interval = state.marketStatus === 'live'

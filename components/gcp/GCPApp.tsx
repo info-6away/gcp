@@ -6,16 +6,18 @@ import { useGoldData } from '@/lib/useGoldData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
-import type { CursorInfo } from '@/types/gcp';
+import type { CursorInfo, MarketSymbol } from '@/types/gcp';
+import { formatPrice } from '@/types/gcp';
 
 export default function GCPApp() {
   const [page, setPage] = useState<'dashboard' | 'pattern' | 'settings'>('dashboard');
   const [live, setLive] = useState(true);
   const [selectedPatternKind, setSelectedPatternKind] = useState<string | null>(null);
+  const [symbol, setSymbol] = useState<MarketSymbol>('XAUUSD');
 
   const dataset = useMemo(() => buildSeries(), []);
   const [cursor, setCursor] = useState(dataset.series.length - 1);
-  const goldData = useGoldData();
+  const goldData = useGoldData(symbol);
 
   const mergedSeries = useMemo(() => {
     if (!goldData.candles.length) return dataset.series;
@@ -67,7 +69,7 @@ export default function GCPApp() {
     time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`,
     v: cursorS.v.toFixed(1),
     r: cursorS.r,
-    g: `$${cursorS.g.toFixed(2)}`,
+    g: formatPrice(cursorS.g, symbol),
   };
 
   const handleSelectPatternKind = (kind: string) => {
@@ -82,6 +84,8 @@ export default function GCPApp() {
         onNav={setPage}
         live={live}
         onToggleLive={() => setLive(l => !l)}
+        symbol={symbol}
+        onSymbolChange={setSymbol}
         goldPrice={goldData.lastPrice}
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
@@ -98,6 +102,7 @@ export default function GCPApp() {
               setCursor={setCursor}
               live={live}
               onSelectPatternKind={handleSelectPatternKind}
+              symbol={symbol}
             />
           )}
           {page === 'pattern' && (
@@ -116,7 +121,7 @@ export default function GCPApp() {
           )}
         </main>
       </div>
-      <Chrome.StatusBar cursorInfo={cursorInfo} series={mergedSeries} />
+      <Chrome.StatusBar cursorInfo={cursorInfo} series={mergedSeries} symbol={symbol} />
     </div>
   );
 }

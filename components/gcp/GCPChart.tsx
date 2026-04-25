@@ -27,13 +27,17 @@ interface GCPChartProps {
   onSelectPattern: (id: string) => void;
   width: number;
   height: number;
+  symbolColor?: string;
+  symbolId?: string;
 }
 
 function GCPChart({
   series, patterns, cursor, setCursor,
   showGold, selectedPatternId, onSelectPattern,
   width: W, height: H,
+  symbolColor, symbolId,
 }: GCPChartProps) {
+  const goldColor = symbolColor ?? 'var(--amber)';
   const padL = 50, padR = 60, padT = 24, padB = 40;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
@@ -163,9 +167,9 @@ function GCPChart({
 
       {showGold && (
         <>
-          <text x={W - padR + 8} y={padT + 10} fill="var(--amber)" fontSize={9.5} fontFamily="var(--font-mono)">${gMax.toFixed(0)}</text>
-          <text x={W - padR + 8} y={H - padB - 2} fill="var(--amber)" fontSize={9.5} fontFamily="var(--font-mono)">${gMin.toFixed(0)}</text>
-          <text x={W - padR + 8} y={padT - 8} fill="var(--fg-3)" fontSize={9} fontFamily="var(--font-mono)" letterSpacing="0.1em">XAUUSD</text>
+          <text x={W - padR + 8} y={padT + 10} fill={goldColor} fontSize={9.5} fontFamily="var(--font-mono)">${gMax.toFixed(0)}</text>
+          <text x={W - padR + 8} y={H - padB - 2} fill={goldColor} fontSize={9.5} fontFamily="var(--font-mono)">${gMin.toFixed(0)}</text>
+          <text x={W - padR + 8} y={padT - 8} fill="var(--fg-3)" fontSize={9} fontFamily="var(--font-mono)" letterSpacing="0.1em">{symbolId ?? 'XAUUSD'}</text>
         </>
       )}
 
@@ -207,10 +211,10 @@ function GCPChart({
       })}
 
       {showGold && goldPathSynthetic && (
-        <path d={goldPathSynthetic} stroke="var(--amber)" strokeWidth={1} fill="none" opacity={0.4} />
+        <path d={goldPathSynthetic} stroke={goldColor} strokeWidth={1} fill="none" opacity={0.4} />
       )}
       {showGold && goldPathReal && (
-        <path d={goldPathReal} stroke="var(--amber)" strokeWidth={1.4} fill="none" opacity={0.9}
+        <path d={goldPathReal} stroke={goldColor} strokeWidth={1.4} fill="none" opacity={0.9}
           style={{ filter: 'drop-shadow(0 0 3px oklch(0.78 0.15 75 / 0.4))' }} />
       )}
 
@@ -222,7 +226,7 @@ function GCPChart({
           <line x1={xOf(cursor)} x2={xOf(cursor)} y1={padT} y2={H - padB}
             stroke="var(--fg-1)" strokeWidth={1} strokeDasharray="2 3" opacity={0.5} />
           <circle cx={xOf(cursor)} cy={yOf(cursorS.v)} r={3.5} fill="var(--cyan)" stroke="var(--bg-0)" strokeWidth={1.5} />
-          {showGold && <circle cx={xOf(cursor)} cy={gyOf(cursorS.g)} r={3.5} fill="var(--amber)" stroke="var(--bg-0)" strokeWidth={1.5} />}
+          {showGold && <circle cx={xOf(cursor)} cy={gyOf(cursorS.g)} r={3.5} fill={goldColor} stroke="var(--bg-0)" strokeWidth={1.5} />}
           <g>
             <rect x={Math.min(W - padR - 140, xOf(cursor) + 8)} y={padT + 6}
               width={132} height={showGold ? 56 : 40}
@@ -237,8 +241,8 @@ function GCPChart({
             </text>
             {showGold && (
               <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 50}
-                fill="var(--amber)" fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
-                XAU ${cursorS.g.toFixed(2)}
+                fill={goldColor} fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
+                {(symbolId ?? 'XAU')} ${cursorS.g.toFixed(2)}
               </text>
             )}
           </g>

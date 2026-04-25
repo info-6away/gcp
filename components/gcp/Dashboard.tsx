@@ -3,7 +3,8 @@
 import { useState, useMemo } from 'react';
 import { REGIMES, energyAt, persistenceAt, INTERP } from '@/lib/gcp-data';
 import GCPChartResponsive from './GCPChart';
-import type { DataPoint, Pattern } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import { getSymbolMeta } from '@/types/gcp';
 
 interface DashboardProps {
   series: DataPoint[];
@@ -12,6 +13,7 @@ interface DashboardProps {
   setCursor: (i: number) => void;
   live: boolean;
   onSelectPatternKind: (kind: string) => void;
+  symbol: MarketSymbol;
 }
 
 const KIND_COLOR: Record<string, string> = {
@@ -198,10 +200,11 @@ function RegimeLegend() {
 }
 
 export default function Dashboard({
-  series, patterns, cursor, setCursor, onSelectPatternKind,
+  series, patterns, cursor, setCursor, onSelectPatternKind, symbol,
 }: DashboardProps) {
   const [showGold, setShowGold] = useState(true);
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
+  const symbolMeta = getSymbolMeta(symbol);
 
   const energy = useMemo(() => energyAt(series, cursor), [series, cursor]);
   const persistence = useMemo(() => persistenceAt(series, cursor), [series, cursor]);
@@ -217,7 +220,7 @@ export default function Dashboard({
     <div className="dashboard">
       <section className="panel panel-chart">
         <div className="panel-head">
-          <span className="title">XAUUSD · Coherence Regime</span>
+          <span className="title">{symbol} · Coherence Regime</span>
           <div className="chart-tools">
             <button
               className={`tool-btn ${showGold ? 'on' : ''}`}
@@ -236,6 +239,8 @@ export default function Dashboard({
             showGold={showGold}
             selectedPatternId={selectedPatternId}
             onSelectPattern={(id) => setSelectedPatternId(id)}
+            symbolColor={symbolMeta.color}
+            symbolId={symbol}
           />
         </div>
       </section>

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getSymbolMeta, type MarketSymbol } from '@/types/gcp';
 
 export const revalidate = 300;
 
@@ -19,6 +20,7 @@ export interface GoldResponse {
   currency:     string;
   marketStatus: MarketStatus;
   sessionDate:  string | null;
+  symbol:       MarketSymbol;
 }
 
 const HEADERS = {
@@ -26,9 +28,9 @@ const HEADERS = {
   Accept: 'application/json',
 };
 
-async function fetchCandles(range: string): Promise<GoldCandle[]> {
+async function fetchCandles(ticker: string, range: string): Promise<GoldCandle[]> {
   const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/XAUUSD=X` +
+    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}` +
     `?interval=1m&range=${range}&includePrePost=false`;
 
   const res = await fetch(url, { headers: HEADERS, next: { revalidate: 60 } });
@@ -73,15 +75,20 @@ function formatSessionDate(ts: number): string {
   });
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
+  const { searchParams } = new URL(request.url);
+  const symbolId = (searchParams.get('symbol') ?? 'XAUUSD') as MarketSymbol;
+  const meta     = getSymbolMeta(symbolId);
+  const ticker   = meta.yahooTicker;
+
   try {
-    let candles = await fetchCandles('1d');
+    let candles = await fetchCandles(ticker, '1d');
     let marketStatus: MarketStatus = 'live';
 
     if (candles.length === 0) {
-      const all = await fetchCandles('5d');
+      const all    = await fetchCandles(ticker, '5d');
       candles      = lastSessionCandles(all);
-      marketStatus = 'closed';
+      marketStatus = symbolId === 'BTC' ? 'live' : 'closed';
     }
 
     if (!candles.length) throw new Error('No candles after fallback');
@@ -95,6 +102,7 @@ export async function GET(): Promise<NextResponse> {
       currency:    'USD',
       marketStatus,
       sessionDate: formatSessionDate(last.t),
+      symbol:      symbolId,
     };
 
     return NextResponse.json(body);
@@ -104,6 +112,7 @@ export async function GET(): Promise<NextResponse> {
     const fallback: GoldResponse = {
       candles: [], lastPrice: null, lastTs: null,
       currency: 'USD', marketStatus: 'error', sessionDate: null,
+      symbol: symbolId,
     };
     return NextResponse.json(fallback, { status: 500 });
   }
