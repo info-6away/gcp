@@ -41,7 +41,7 @@ export default function GCPApp() {
   }, [baseSeries.length]);
 
   const goldData = useGoldData(symbol);
-  const candleData = useCandleData(symbol);
+  const candleData = useCandleData(symbol, timeframe, viewWindow);
 
   const mergedSeries = useMemo(() => {
     const series = baseSeries.map(p => ({
@@ -203,6 +203,7 @@ export default function GCPApp() {
         goldSessionDate={null}
         candleLoading={candleData.loading}
         candleError={!!candleData.error}
+        candleCount={candleData.candles.length}
         gcpLive={gcpIsLive}
         gcpNetvar={liveNetvar}
         gcpError={!!gcpError}

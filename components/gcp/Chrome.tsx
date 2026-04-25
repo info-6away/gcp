@@ -5,20 +5,36 @@ import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow } from 
 import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
+const TF_DESCRIPTIONS: Record<string, string> = {
+  '1m':  'Each bar = 1 minute',
+  '5m':  'Each bar = 5 minutes',
+  '15m': 'Each bar = 15 minutes',
+  '1h':  'Each bar = 1 hour',
+  '4h':  'Each bar = 4 hours',
+  '1D':  'Each bar = 1 day',
+};
+
+const VW_DESCRIPTIONS: Record<string, string> = {
+  '24h': 'Show last 24 hours',
+  '7d':  'Show last 7 days',
+  '30d': 'Show last 30 days',
+  'all': 'Show all available history (Feb–Apr 2026)',
+};
+
 function LogoMark({ size = 22 }: { size?: number }) {
+  const cyan    = '#4dd9e8';
+  const cyanDim = '#2a8a96';
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32">
-      <circle cx={16} cy={16} r={14}
-        fill="none" stroke="var(--cyan)" strokeWidth={1}
-        strokeDasharray="2 3" opacity={0.7} />
+    <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink: 0 }}>
+      <circle cx={16} cy={16} r={13.5}
+        fill="none" stroke={cyan} strokeWidth={0.8}
+        strokeDasharray="2 3" opacity={0.6} />
       <circle cx={16} cy={16} r={9}
-        fill="none" stroke="var(--cyan-dim)" strokeWidth={1}
-        opacity={0.5} />
+        fill="none" stroke={cyanDim} strokeWidth={0.8} opacity={0.45} />
       <path
-        d="M4 16 Q8 10 12 16 Q16 22 20 16 Q24 10 28 16"
-        fill="none" stroke="var(--cyan)" strokeWidth={1.2}
-        opacity={0.9} />
-      <circle cx={16} cy={16} r={2.5} fill="var(--cyan)" />
+        d="M3 16 Q7 9 11 16 Q15 23 19 16 Q23 9 27 16"
+        fill="none" stroke={cyan} strokeWidth={1.3} opacity={0.85} />
+      <circle cx={16} cy={16} r={2.2} fill={cyan} />
     </svg>
   );
 }
@@ -43,6 +59,7 @@ interface HeaderProps {
   gcpError:          boolean;
   candleLoading:     boolean;
   candleError:       boolean;
+  candleCount:       number;
 }
 
 function SymbolPicker({
@@ -142,7 +159,7 @@ function Header({
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
   gcpLive, gcpNetvar, gcpError,
-  candleLoading, candleError,
+  candleLoading, candleError, candleCount,
 }: HeaderProps) {
   return (
     <header className="app-header">
@@ -155,32 +172,50 @@ function Header({
         </div>
       </div>
 
-      <div className="header-center">
+      <div className="header-center" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <SymbolPicker
           symbol={symbol}
           onSymbolChange={onSymbolChange}
         />
-        <div className="tf-group">
-          {TIMEFRAME_LABELS.map(tf => (
-            <button
-              key={tf}
-              className={`tf-btn ${tf === timeframe ? 'active' : ''}`}
-              onClick={() => onTimeframeChange(tf)}
-            >
-              {tf}
-            </button>
-          ))}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+            textTransform: 'uppercase', marginRight: 2,
+          }}>TF</span>
+          <div className="tf-group">
+            {TIMEFRAME_LABELS.map(tf => (
+              <button
+                key={tf}
+                className={`tf-btn ${tf === timeframe ? 'active' : ''}`}
+                onClick={() => onTimeframeChange(tf)}
+                title={TF_DESCRIPTIONS[tf]}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="tf-group" style={{ marginLeft: 8 }}>
-          {VIEW_LABELS.map(w => (
-            <button
-              key={w}
-              className={`tf-btn ${w === viewWindow ? 'active' : ''}`}
-              onClick={() => onViewWindowChange(w)}
-            >
-              {w}
-            </button>
-          ))}
+
+        <div style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+            textTransform: 'uppercase', marginRight: 2,
+          }}>VIEW</span>
+          <div className="tf-group">
+            {VIEW_LABELS.map(w => (
+              <button
+                key={w}
+                className={`tf-btn ${w === viewWindow ? 'active' : ''}`}
+                onClick={() => onViewWindowChange(w)}
+                title={VW_DESCRIPTIONS[w]}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -234,11 +269,22 @@ function Header({
             }} />
           </div>
 
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            padding: '4px 10px',
-          }}>
-            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>OHLCV</span>
+          <div
+            title="OHLCV candle data — Open/High/Low/Close/Volume from Twelve Data. Powers the price overlay on the chart."
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '4px 10px',
+              cursor: 'default',
+            }}
+          >
+            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
+              {candleLoading || candleError ? 'CANDLES' : 'OHLCV'}
+            </span>
+            {!candleLoading && !candleError && candleCount > 0 && (
+              <span style={{ color: 'var(--fg-3)', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
+                {candleCount}
+              </span>
+            )}
             <span style={{
               width: 6, height: 6, borderRadius: '50%',
               background: candleError ? 'var(--red)'
