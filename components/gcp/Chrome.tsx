@@ -49,6 +49,9 @@ interface HeaderProps {
   goldLoading:       boolean;
   goldMarketStatus:  'live' | 'closed' | 'error';
   goldSessionDate:   string | null;
+  gcpLive:           boolean;
+  gcpNetvar:         number | null;
+  gcpError:          boolean;
 }
 
 function SymbolPicker({
@@ -186,6 +189,7 @@ function Header({
   timeframe, onTimeframeChange,
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
+  gcpLive, gcpNetvar, gcpError,
 }: HeaderProps) {
   return (
     <header className="app-header">
@@ -232,6 +236,43 @@ function Header({
       </div>
 
       <div className="header-right">
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '3px 10px',
+          background: 'var(--bg-3)',
+          border: `1px solid ${gcpLive && !gcpError ? 'var(--line-2)' : 'var(--line-1)'}`,
+          borderRadius: 2,
+          fontSize: 10.5,
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: gcpError ? 'var(--red)'
+                      : gcpLive  ? 'var(--cyan)'
+                      : 'var(--fg-3)',
+            boxShadow: gcpLive && !gcpError ? '0 0 6px var(--cyan)' : 'none',
+            animation:  gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
+            display: 'inline-block',
+          }} />
+          <span style={{ color: 'var(--fg-2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            GCP
+          </span>
+          {gcpNetvar !== null && (
+            <span style={{
+              color: 'var(--fg-0)',
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 600,
+            }}>
+              {gcpNetvar.toFixed(1)}
+            </span>
+          )}
+          <span style={{
+            fontSize: 9,
+            color: gcpError ? 'var(--red)' : gcpLive ? 'var(--cyan)' : 'var(--fg-3)',
+            letterSpacing: '0.08em',
+          }}>
+            {gcpError ? '● ERR' : gcpLive ? '● LIVE' : '● —'}
+          </span>
+        </div>
         <button className={`live-toggle ${live ? 'on' : ''}`} onClick={onToggleLive}>
           <span className={live ? 'live-dot' : 'paused-dot'} />
           {live ? 'LIVE' : 'PAUSED'}

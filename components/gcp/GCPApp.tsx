@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { buildSeries, detectPatterns, resampleSeries } from '@/lib/gcp-data';
-import { loadGCPEntries, entriesToSeries } from '@/lib/gcp-loader';
+import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
-import type { CursorInfo, MarketSymbol, Timeframe, GCPEntry, ViewWindow } from '@/types/gcp';
+import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
 export default function GCPApp() {
@@ -18,24 +18,26 @@ export default function GCPApp() {
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
   const [viewWindow, setViewWindow] = useState<ViewWindow>('24h');
 
-  const [gcpEntries, setGcpEntries] = useState<GCPEntry[]>([]);
-  const [gcpLoading, setGcpLoading] = useState(true);
+  const {
+    series: liveBaseSeries,
+    liveNetvar,
+    gcpLoading,
+    gcpError,
+    isLive: gcpIsLive,
+  } = useGCPData();
 
-  useEffect(() => {
-    loadGCPEntries().then(entries => {
-      setGcpEntries(entries);
-      setGcpLoading(false);
-    });
-  }, []);
-
-  const baseSeries = useMemo(() => {
-    if (gcpEntries.length === 0) {
-      return buildSeries().series;
-    }
-    return entriesToSeries(gcpEntries);
-  }, [gcpEntries]);
+  const fallbackSeries = useMemo(() => buildSeries().series, []);
+  const baseSeries = liveBaseSeries.length > 0 ? liveBaseSeries : fallbackSeries;
 
   const [cursor, setCursor] = useState(0);
+  const didInitCursor = useRef(false);
+  useEffect(() => {
+    if (baseSeries.length > 0 && !didInitCursor.current) {
+      setCursor(baseSeries.length - 1);
+      didInitCursor.current = true;
+    }
+  }, [baseSeries.length]);
+
   const goldData = useGoldData(symbol);
 
   const mergedSeries = useMemo(() => {
@@ -131,10 +133,10 @@ export default function GCPApp() {
   };
 
   const lastDataDate = useMemo(() => {
-    if (!gcpEntries.length) return null;
-    return new Date(gcpEntries[gcpEntries.length - 1].t)
+    if (!baseSeries.length) return null;
+    return new Date(baseSeries[baseSeries.length - 1].t)
       .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  }, [gcpEntries]);
+  }, [baseSeries]);
 
   if (gcpLoading) {
     return (
@@ -181,6 +183,9 @@ export default function GCPApp() {
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
         goldSessionDate={goldData.sessionDate}
+        gcpLive={gcpIsLive}
+        gcpNetvar={liveNetvar}
+        gcpError={!!gcpError}
       />
       <div className="app-body">
         <Chrome.LeftRail page={page} onNav={setPage} lastDataDate={lastDataDate} />
