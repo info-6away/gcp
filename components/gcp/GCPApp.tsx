@@ -86,11 +86,15 @@ export default function GCPApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [displaySeries.length]);
 
-  const cursorS = displaySeries[cursor] || displaySeries[0];
+  const effectiveCursor = Math.min(
+    Math.max(0, cursor),
+    Math.max(0, displaySeries.length - 1),
+  );
+  const cursorS = displaySeries[effectiveCursor] || displaySeries[0];
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = new Date(cursorS.t);
   const cursorInfo: CursorInfo = {
-    i: cursor,
+    i: effectiveCursor,
     time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`,
     v: cursorS.v.toFixed(1),
     r: cursorS.r,
@@ -125,7 +129,7 @@ export default function GCPApp() {
             <Dashboard
               series={displaySeries}
               patterns={displayPatterns}
-              cursor={cursor}
+              cursor={effectiveCursor}
               setCursor={setCursor}
               live={live}
               onSelectPatternKind={handleSelectPatternKind}

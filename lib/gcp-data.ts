@@ -182,8 +182,10 @@ export function detectPatterns(series: DataPoint[]): Pattern[] {
 }
 
 export function energyAt(series: DataPoint[], i: number, window = 30): EnergyMetrics {
-  const a = Math.max(0, i - window);
-  const slice = series.slice(a, i + 1);
+  if (!series.length) return { slope: 0, curv: 0, ced: 0, pss: 0 };
+  const idx = Math.max(0, Math.min(i, series.length - 1));
+  const a = Math.max(0, idx - window);
+  const slice = series.slice(a, idx + 1);
   if (slice.length < 3) return { slope: 0, curv: 0, ced: 0, pss: 0 };
   const xs = slice.map(s => s.v);
   const n = xs.length;
@@ -206,10 +208,12 @@ export function energyAt(series: DataPoint[], i: number, window = 30): EnergyMet
 }
 
 export function persistenceAt(series: DataPoint[], i: number): PersistenceInfo {
-  const r = series[i].r;
-  let k = i;
+  if (!series.length) return { tag: '', label: '', duration: 0 };
+  const idx = Math.max(0, Math.min(i, series.length - 1));
+  const r = series[idx].r;
+  let k = idx;
   while (k > 0 && series[k - 1].r === r) k--;
-  const dur = i - k + 1;
+  const dur = idx - k + 1;
   const tag = (r === 'A' || r === 'B') ? 'AB#' : r === 'C' ? 'C#' : r === 'D' ? 'D#' : r === 'E' ? 'E#' : 'F!';
   const label = r === 'A' || r === 'B' ? 'Compression' : r === 'C' ? 'Alignment Hold' : r === 'D' ? 'Synchronization Lock' : r === 'E' ? 'Climax Plateau' : 'Shock Window';
   return { tag, label, duration: dur };
