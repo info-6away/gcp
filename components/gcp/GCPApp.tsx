@@ -110,7 +110,7 @@ export default function GCPApp() {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'SELECT') return;
       if (e.key === 'd') setPage('dashboard');
-      if (e.key === 'p') setPage('pattern');
+      if (e.key === 'p') { setSelectedPatternKind(null); setPage('pattern'); }
       if (e.key === 's') setPage('settings');
       if (e.key === ' ') { e.preventDefault(); setLive(l => !l); }
       if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 10));
@@ -137,6 +137,11 @@ export default function GCPApp() {
       : goldData.price
         ? `${formatPrice(goldData.price, symbol)} (live)`
         : '—',
+  };
+
+  const handleNav = (p: 'dashboard' | 'pattern' | 'settings') => {
+    if (p === 'pattern') setSelectedPatternKind(null);
+    setPage(p);
   };
 
   const handleSelectPatternKind = (kind: string) => {
@@ -182,7 +187,7 @@ export default function GCPApp() {
     <div className="app">
       <Chrome.Header
         page={page}
-        onNav={setPage}
+        onNav={handleNav}
         live={live}
         onToggleLive={() => setLive(l => !l)}
         symbol={symbol}
@@ -202,7 +207,7 @@ export default function GCPApp() {
         gcpError={!!gcpError}
       />
       <div className="app-body">
-        <Chrome.LeftRail page={page} onNav={setPage} lastDataDate={lastDataDate} />
+        <Chrome.LeftRail page={page} onNav={handleNav} lastDataDate={lastDataDate} />
         <main className="main">
           {page === 'dashboard' && (
             <Dashboard
@@ -218,9 +223,10 @@ export default function GCPApp() {
           )}
           {page === 'pattern' && (
             <PatternDetail
-              kind={selectedPatternKind || 'Alignment Ladder'}
+              kind={selectedPatternKind}
               series={displaySeries}
               patterns={displayPatterns}
+              symbol={symbol}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
             />
