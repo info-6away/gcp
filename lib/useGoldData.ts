@@ -38,19 +38,20 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
       if (!res.ok) throw new Error(`gold-api returned ${res.status}`);
 
       const data = await res.json();
+      console.log('[gold-api]', symbol, apiSymbol, data);
 
-      const price = typeof data.price === 'string'
-        ? parseFloat(data.price)
-        : Number(data.price);
+      const rawPrice = data.price ?? data.rate ?? data.bid ?? null;
+      const rawPrev  = data.prev_close_price ?? data.previousClose ?? rawPrice;
 
-      const prevClose = data.prev_close_price != null
-        ? (typeof data.prev_close_price === 'string'
-            ? parseFloat(data.prev_close_price)
-            : Number(data.prev_close_price))
-        : price;
+      if (rawPrice === null || rawPrice === undefined) {
+        throw new Error(`No price field in response: ${JSON.stringify(data)}`);
+      }
 
-      if (!isFinite(price) || price === 0) {
-        throw new Error(`Invalid price: ${JSON.stringify(data)}`);
+      const price     = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice);
+      const prevClose = typeof rawPrev  === 'string' ? parseFloat(rawPrev)  : Number(rawPrev);
+
+      if (!isFinite(price) || price <= 0) {
+        throw new Error(`Invalid price value: ${rawPrice}`);
       }
 
       const change    = price - prevClose;

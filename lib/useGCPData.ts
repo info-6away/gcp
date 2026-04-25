@@ -31,7 +31,17 @@ export interface GCPDataState {
   lastUpdate: Date | null;
 }
 
+const _lastFetchTime: Record<string, number> = {};
+const MIN_FETCH_INTERVAL = 55_000;
+
 async function gcpFetch(endpoint: string): Promise<unknown> {
+  const now = Date.now();
+  const last = _lastFetchTime[endpoint] ?? 0;
+  if (now - last < MIN_FETCH_INTERVAL) {
+    throw new Error('Fetch throttled — too soon since last request');
+  }
+  _lastFetchTime[endpoint] = now;
+
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
@@ -115,14 +125,16 @@ export function useGCPData(): GCPDataState {
       livePointsRef.current = points;
       const merged = mergeSeries(historicalRef.current, points);
 
-      setState(s => ({
-        ...s,
-        series:     merged,
-        gcpLoading: false,
-        gcpError:   null,
-        isLive:     true,
-        lastUpdate: new Date(),
-      }));
+      setTimeout(() => {
+        setState(s => ({
+          ...s,
+          series:     merged,
+          gcpLoading: false,
+          gcpError:   null,
+          isLive:     true,
+          lastUpdate: new Date(),
+        }));
+      }, 0);
     } catch (e) {
       setState(s => ({
         ...s,
