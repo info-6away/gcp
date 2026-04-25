@@ -1,95 +1,84 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import type { GoldCandle, GoldResponse, MarketStatus } from '@/app/api/gold/route';
 import type { MarketSymbol } from '@/types/gcp';
 
+const GOLD_API_SYMBOLS: Record<MarketSymbol, string> = {
+  XAUUSD: 'XAU',
+  BTC:    'BTC',
+};
+
+const GOLD_API_BASE = 'https://api.gold-api.com';
+
 export interface GoldState {
-  candles:      GoldCandle[];
-  lastPrice:    number | null;
-  lastTs:       number | null;
-  marketStatus: MarketStatus;
-  sessionDate:  string | null;
+  price:        number | null;
+  prevPrice:    number | null;
+  change:       number | null;
+  changePct:    number | null;
+  marketStatus: 'live' | 'closed' | 'error';
   loading:      boolean;
   error:        string | null;
   lastFetch:    Date | null;
 }
 
-const REFRESH_LIVE_MS   = 60_000;
-const REFRESH_CLOSED_MS = 300_000;
+const REFRESH_MS = 60_000;
 
 export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
   const [state, setState] = useState<GoldState>({
-    candles: [], lastPrice: null, lastTs: null,
-    marketStatus: 'live', sessionDate: null,
-    loading: true, error: null, lastFetch: null,
+    price: null, prevPrice: null, change: null, changePct: null,
+    marketStatus: 'live', loading: true, error: null, lastFetch: null,
   });
 
   const fetchGold = useCallback(async () => {
-    try {
-      const res  = await fetch(`/api/gold?symbol=${symbol}`);
-      const data: GoldResponse & { error?: string } = await res.json();
+    const apiSymbol = GOLD_API_SYMBOLS[symbol];
+    if (!apiSymbol) return;
 
-      if (data.marketStatus === 'error' || !data.candles?.length) {
-        setState({
-          candles: [],
-          lastPrice: null,
-          lastTs: null,
-          marketStatus: 'error',
-          sessionDate: null,
-          loading: false,
-          error: data.error ?? 'No data returned',
-          lastFetch: new Date(),
-        });
-        return;
-      }
+    try {
+      const res = await fetch(`${GOLD_API_BASE}/price/${apiSymbol}`);
+      if (!res.ok) throw new Error(`gold-api returned ${res.status}`);
+
+      const data = await res.json();
+
+      const price     = parseFloat(data.price);
+      const prevClose = parseFloat(data.prev_close_price ?? data.price);
+      const change    = price - prevClose;
+      const changePct = prevClose ? (change / prevClose) * 100 : 0;
+
+      if (isNaN(price)) throw new Error('Invalid price in response');
 
       setState({
-        candles:      data.candles,
-        lastPrice:    data.lastPrice,
-        lastTs:       data.lastTs,
-        marketStatus: data.marketStatus,
-        sessionDate:  data.sessionDate,
+        price,
+        prevPrice:    prevClose,
+        change:       +change.toFixed(2),
+        changePct:    +changePct.toFixed(2),
+        marketStatus: 'live',
         loading:      false,
         error:        null,
         lastFetch:    new Date(),
       });
     } catch (e) {
       setState({
-        candles: [],
-        lastPrice: null,
-        lastTs: null,
+        price: null, prevPrice: null, change: null, changePct: null,
         marketStatus: 'error',
-        sessionDate: null,
-        loading: false,
-        error: String(e),
-        lastFetch: new Date(),
+        loading:      false,
+        error:        String(e),
+        lastFetch:    new Date(),
       });
     }
   }, [symbol]);
 
   useEffect(() => {
     setState({
-      candles: [],
-      lastPrice: null,
-      lastTs: null,
-      marketStatus: 'live',
-      sessionDate: null,
-      loading: true,
-      error: null,
-      lastFetch: null,
+      price: null, prevPrice: null, change: null, changePct: null,
+      marketStatus: 'live', loading: true, error: null, lastFetch: null,
     });
     fetchGold();
   }, [fetchGold, symbol]);
 
   useEffect(() => {
-    const interval = state.marketStatus === 'live'
-      ? REFRESH_LIVE_MS
-      : REFRESH_CLOSED_MS;
-
-    const id = setInterval(fetchGold, interval);
+    const id = setInterval(fetchGold, REFRESH_MS);
     return () => clearInterval(id);
-  }, [fetchGold, state.marketStatus]);
+  }, [fetchGold]);
 
   return state;
 }

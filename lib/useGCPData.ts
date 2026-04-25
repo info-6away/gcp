@@ -31,13 +31,19 @@ export interface GCPDataState {
   lastUpdate: Date | null;
 }
 
-async function gcpFetch(endpoint: string) {
+async function gcpFetch(endpoint: string, retries = 2): Promise<unknown> {
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
       'Content-Type':  'application/json',
     },
   });
+
+  if (res.status === 429 && retries > 0) {
+    await new Promise(r => setTimeout(r, 10_000));
+    return gcpFetch(endpoint, retries - 1);
+  }
+
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);
   return res.json();
 }
@@ -82,6 +88,8 @@ export function useGCPData(): GCPDataState {
 
   const historicalRef = useRef<DataPoint[]>([]);
   const livePointsRef = useRef<GCPPoint[]>([]);
+  const fetchingRef   = useRef(false);
+  const fetchingCurrentRef = useRef(false);
 
   useEffect(() => {
     loadHistoricalSeries().then(hist => {
@@ -92,8 +100,10 @@ export function useGCPData(): GCPDataState {
   }, []);
 
   const fetchSeries = useCallback(async () => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     try {
-      const data = await gcpFetch('/api/getNetVarAggregate24H');
+      const data = await gcpFetch('/api/getNetVarAggregate24H') as { aggregates?: RawAggregate[] };
       const aggregates: RawAggregate[] = data.aggregates ?? [];
 
       if (!aggregates.length) throw new Error('Empty aggregates');
@@ -121,12 +131,16 @@ export function useGCPData(): GCPDataState {
         gcpError:   String(e),
         isLive:     false,
       }));
+    } finally {
+      fetchingRef.current = false;
     }
   }, []);
 
   const fetchCurrent = useCallback(async () => {
+    if (fetchingCurrentRef.current) return;
+    fetchingCurrentRef.current = true;
     try {
-      const data   = await gcpFetch('/api/getcurrentnetvar');
+      const data   = await gcpFetch('/api/getcurrentnetvar') as { netvar: { netvar: string }[] };
       const netvar = parseFloat(data.netvar[0].netvar);
       if (!isNaN(netvar)) {
         setState(s => ({
@@ -136,14 +150,20 @@ export function useGCPData(): GCPDataState {
         }));
       }
     } catch { /* silent — series is primary */ }
+    finally { fetchingCurrentRef.current = false; }
   }, []);
 
   useEffect(() => {
     fetchSeries();
-    fetchCurrent();
+    const initDelay = setTimeout(fetchCurrent, 5000);
+
     const s = setInterval(fetchSeries,  SERIES_POLL_MS);
     const c = setInterval(fetchCurrent, CURRENT_POLL_MS);
-    return () => { clearInterval(s); clearInterval(c); };
+    return () => {
+      clearTimeout(initDelay);
+      clearInterval(s);
+      clearInterval(c);
+    };
   }, [fetchSeries, fetchCurrent]);
 
   return state;

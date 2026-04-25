@@ -41,28 +41,22 @@ export default function GCPApp() {
   const goldData = useGoldData(symbol);
 
   const mergedSeries = useMemo(() => {
-    if (!goldData.candles.length) {
-      return baseSeries.map(p => ({ ...p, gReal: false as const }));
-    }
-
-    const real = goldData.candles;
     const series = baseSeries.map(p => ({
       ...p,
       gReal: false as boolean | undefined,
     }));
 
-    const n = Math.min(real.length, series.length);
-    for (let i = 0; i < n; i++) {
-      const gcpIdx = series.length - n + i;
-      series[gcpIdx] = {
-        ...baseSeries[gcpIdx],
-        g:     real[i].c,
+    if (goldData.price !== null && series.length > 0) {
+      const last = series.length - 1;
+      series[last] = {
+        ...baseSeries[last],
+        g:     goldData.price,
         gReal: true,
       };
     }
 
     return series;
-  }, [baseSeries, goldData.candles]);
+  }, [baseSeries, goldData.price]);
 
   const windowedSeries = useMemo(() => {
     const mins = VIEW_MINUTES[viewWindow];
@@ -179,10 +173,10 @@ export default function GCPApp() {
         onTimeframeChange={setTimeframe}
         viewWindow={viewWindow}
         onViewWindowChange={setViewWindow}
-        goldPrice={goldData.lastPrice}
+        goldPrice={goldData.price}
         goldLoading={goldData.loading}
         goldMarketStatus={goldData.marketStatus}
-        goldSessionDate={goldData.sessionDate}
+        goldSessionDate={null}
         gcpLive={gcpIsLive}
         gcpNetvar={liveNetvar}
         gcpError={!!gcpError}
