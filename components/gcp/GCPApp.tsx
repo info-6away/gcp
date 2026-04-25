@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { buildSeries, detectPatterns } from '@/lib/gcp-data';
+import { useGoldData } from '@/lib/useGoldData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -14,7 +15,21 @@ export default function GCPApp() {
 
   const dataset = useMemo(() => buildSeries(), []);
   const [cursor, setCursor] = useState(dataset.series.length - 1);
-  const patterns = useMemo(() => detectPatterns(dataset.series), [dataset]);
+  const goldData = useGoldData();
+
+  const mergedSeries = useMemo(() => {
+    if (!goldData.candles.length) return dataset.series;
+    const real   = goldData.candles;
+    const series = [...dataset.series];
+    const n      = Math.min(real.length, series.length);
+    for (let i = 0; i < n; i++) {
+      const gcpIdx = series.length - n + i;
+      series[gcpIdx] = { ...series[gcpIdx], g: real[i].c, gReal: true };
+    }
+    return series;
+  }, [dataset.series, goldData.candles]);
+
+  const patterns = useMemo(() => detectPatterns(mergedSeries), [mergedSeries]);
 
   useEffect(() => {
     if (!live) return;
@@ -44,7 +59,7 @@ export default function GCPApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [dataset.series.length]);
 
-  const cursorS = dataset.series[cursor] || dataset.series[0];
+  const cursorS = mergedSeries[cursor] || mergedSeries[0];
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = new Date(cursorS.t);
   const cursorInfo: CursorInfo = {
@@ -62,13 +77,21 @@ export default function GCPApp() {
 
   return (
     <div className="app">
-      <Chrome.Header page={page} onNav={setPage} live={live} onToggleLive={() => setLive(l => !l)} />
+      <Chrome.Header
+        page={page}
+        onNav={setPage}
+        live={live}
+        onToggleLive={() => setLive(l => !l)}
+        goldPrice={goldData.lastPrice}
+        goldLoading={goldData.loading}
+        goldError={!!goldData.error}
+      />
       <div className="app-body">
         <Chrome.LeftRail page={page} onNav={setPage} />
         <main className="main">
           {page === 'dashboard' && (
             <Dashboard
-              series={dataset.series}
+              series={mergedSeries}
               patterns={patterns}
               cursor={cursor}
               setCursor={setCursor}
@@ -79,7 +102,7 @@ export default function GCPApp() {
           {page === 'pattern' && (
             <PatternDetail
               kind={selectedPatternKind || 'Alignment Ladder'}
-              series={dataset.series}
+              series={mergedSeries}
               patterns={patterns}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
@@ -92,7 +115,7 @@ export default function GCPApp() {
           )}
         </main>
       </div>
-      <Chrome.StatusBar cursorInfo={cursorInfo} series={dataset.series} />
+      <Chrome.StatusBar cursorInfo={cursorInfo} series={mergedSeries} />
     </div>
   );
 }

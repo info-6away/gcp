@@ -70,15 +70,40 @@ function GCPChart({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, W, H]);
 
-  const goldPath = useMemo(() => {
+  const firstRealIdx = useMemo(() => {
+    if (!series.length) return -1;
+    const idx = series.findIndex(s => s.gReal);
+    return idx;
+  }, [series]);
+
+  const goldPathSynthetic = useMemo(() => {
     if (!series.length || !showGold) return '';
+    const end = firstRealIdx >= 0 ? firstRealIdx : series.length - 1;
     const step = Math.max(1, Math.floor(series.length / 1600));
-    return series.reduce((d, s, i) => {
-      if (i % step !== 0) return d;
-      return d + (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ' ' + gyOf(s.g).toFixed(1) + ' ';
-    }, '');
+    let d = '';
+    let started = false;
+    for (let i = 0; i <= end; i++) {
+      if (i % step !== 0 && i !== end) continue;
+      d += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + gyOf(series[i].g).toFixed(1) + ' ';
+      started = true;
+    }
+    return d;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, W, H, showGold]);
+  }, [series, W, H, showGold, firstRealIdx]);
+
+  const goldPathReal = useMemo(() => {
+    if (!series.length || !showGold || firstRealIdx < 0) return '';
+    const step = Math.max(1, Math.floor(series.length / 1600));
+    let d = '';
+    let started = false;
+    for (let i = firstRealIdx; i < series.length; i++) {
+      if (i % step !== 0 && i !== series.length - 1 && i !== firstRealIdx) continue;
+      d += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + gyOf(series[i].g).toFixed(1) + ' ';
+      started = true;
+    }
+    return d;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, W, H, showGold, firstRealIdx]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const handleMove = (e: React.MouseEvent) => {
@@ -181,7 +206,13 @@ function GCPChart({
         );
       })}
 
-      {showGold && goldPath && <path d={goldPath} stroke="var(--amber)" strokeWidth={1.1} fill="none" opacity={0.8} />}
+      {showGold && goldPathSynthetic && (
+        <path d={goldPathSynthetic} stroke="var(--amber)" strokeWidth={1} fill="none" opacity={0.4} />
+      )}
+      {showGold && goldPathReal && (
+        <path d={goldPathReal} stroke="var(--amber)" strokeWidth={1.4} fill="none" opacity={0.9}
+          style={{ filter: 'drop-shadow(0 0 3px oklch(0.78 0.15 75 / 0.4))' }} />
+      )}
 
       <path d={linePath} stroke="var(--cyan)" strokeWidth={1.3} fill="none"
         style={{ filter: 'drop-shadow(0 0 3px oklch(0.78 0.14 210 / 0.5))' }} />

@@ -14,6 +14,7 @@ export interface DataPoint {
   v: number;
   r: RegimeId;
   g: number;
+  gReal?: boolean;
 }
 
 export interface Candle {

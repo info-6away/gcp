@@ -37,9 +37,12 @@ interface HeaderProps {
   onNav: (p: 'dashboard' | 'pattern' | 'settings') => void;
   live: boolean;
   onToggleLive: () => void;
+  goldPrice: number | null;
+  goldLoading: boolean;
+  goldError: boolean;
 }
 
-function Header({ live, onToggleLive }: HeaderProps) {
+function Header({ live, onToggleLive, goldPrice, goldLoading, goldError }: HeaderProps) {
   return (
     <header className="app-header">
       <div className="brand">
@@ -55,7 +58,27 @@ function Header({ live, onToggleLive }: HeaderProps) {
         <div className="symbol-pick">
           <span className="hairline" style={{ color: 'var(--fg-3)' }}>Symbol</span>
           <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>XAUUSD</span>
-          <span style={{ color: 'var(--fg-2)' }}>· Gold Spot</span>
+
+          {goldLoading && (
+            <span style={{ color: 'var(--fg-3)' }}>· loading…</span>
+          )}
+          {!goldLoading && goldError && (
+            <span style={{ color: 'var(--red)', fontSize: 10 }}>· feed error</span>
+          )}
+          {!goldLoading && !goldError && goldPrice != null && (
+            <span style={{ color: 'var(--amber)', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+              · ${goldPrice.toFixed(2)}
+            </span>
+          )}
+
+          <span style={{
+            fontSize: 9,
+            color: goldError ? 'var(--red)' : 'var(--green)',
+            letterSpacing: '0.08em',
+            marginLeft: 4,
+          }}>
+            {goldError ? '● ERR' : '● LIVE'}
+          </span>
         </div>
         <div className="tf-group">
           {['1m', '5m', '15m', '1h', '4h', '1D'].map(tf => (
