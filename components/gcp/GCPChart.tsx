@@ -6,7 +6,7 @@ import type { DataPoint, Pattern } from '@/types/gcp';
 function fmtTime(ts: number) {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function formatPriceInChart(price: number, symbolId?: string): string {

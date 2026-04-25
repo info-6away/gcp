@@ -121,7 +121,7 @@ export default function GCPApp() {
   const d = new Date(cursorS.t);
   const cursorInfo: CursorInfo = {
     i: effectiveCursor,
-    time: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}:00`,
     v: cursorS.v.toFixed(1),
     r: cursorS.r,
     g: formatPrice(cursorS.g, symbol),
