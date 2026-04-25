@@ -2,35 +2,24 @@
 
 import { useState, useEffect } from 'react';
 import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
-import { SYMBOLS, formatPrice, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
+import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
 function LogoMark({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32">
-      <circle cx={16} cy={16} r={14} fill="none" stroke="var(--cyan)" strokeWidth={1} strokeDasharray="2 3" />
-      <circle cx={16} cy={16} r={9}  fill="none" stroke="var(--cyan-dim)" strokeWidth={1} />
-      <circle cx={16} cy={16} r={3}  fill="var(--cyan)" />
+      <circle cx={16} cy={16} r={14}
+        fill="none" stroke="var(--cyan)" strokeWidth={1}
+        strokeDasharray="2 3" opacity={0.7} />
+      <circle cx={16} cy={16} r={9}
+        fill="none" stroke="var(--cyan-dim)" strokeWidth={1}
+        opacity={0.5} />
+      <path
+        d="M4 16 Q8 10 12 16 Q16 22 20 16 Q24 10 28 16"
+        fill="none" stroke="var(--cyan)" strokeWidth={1.2}
+        opacity={0.9} />
+      <circle cx={16} cy={16} r={2.5} fill="var(--cyan)" />
     </svg>
-  );
-}
-
-function Clock() {
-  const [t, setT] = useState<Date | null>(null);
-  useEffect(() => {
-    setT(new Date());
-    const id = setInterval(() => setT(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const utc = t
-    ? `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:${pad(t.getUTCSeconds())}`
-    : '--:--:--';
-  return (
-    <div className="clock tab">
-      <span style={{ color: 'var(--fg-2)' }}>UTC </span>
-      <span>{utc}</span>
-    </div>
   );
 }
 
@@ -58,17 +47,9 @@ interface HeaderProps {
 
 function SymbolPicker({
   symbol, onSymbolChange,
-  goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
-  candleLoading, candleError,
 }: {
-  symbol:           MarketSymbol;
-  onSymbolChange:   (s: MarketSymbol) => void;
-  goldPrice:        number | null;
-  goldLoading:      boolean;
-  goldMarketStatus: 'live' | 'closed' | 'error';
-  goldSessionDate:  string | null;
-  candleLoading:    boolean;
-  candleError:      boolean;
+  symbol:         MarketSymbol;
+  onSymbolChange: (s: MarketSymbol) => void;
 }) {
   const [open, setOpen] = useState(false);
   const meta = SYMBOLS.find(s => s.id === symbol)!;
@@ -90,56 +71,6 @@ function SymbolPicker({
         <span className="hairline" style={{ color: 'var(--fg-3)' }}>Symbol</span>
         <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>{symbol}</span>
         <span style={{ color: 'var(--fg-2)' }}>· {meta.label}</span>
-
-        {goldLoading && (
-          <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>· loading…</span>
-        )}
-        {!goldLoading && goldMarketStatus !== 'error' && goldPrice !== null && (
-          <span style={{
-            color: meta.color,
-            fontVariantNumeric: 'tabular-nums',
-            fontWeight: 600,
-          }}>
-            · {formatPrice(goldPrice, symbol)}
-          </span>
-        )}
-        {!goldLoading && goldMarketStatus === 'closed' && goldSessionDate && (
-          <span style={{ color: 'var(--fg-3)', fontSize: 10, marginLeft: 2 }}>
-            ({goldSessionDate})
-          </span>
-        )}
-
-        {!goldLoading && (
-          <span style={{
-            fontSize: 9,
-            letterSpacing: '0.08em',
-            marginLeft: 6,
-            color:
-              goldMarketStatus === 'live'   ? 'var(--green)' :
-              goldMarketStatus === 'closed' ? 'var(--amber)' :
-              'var(--red)',
-          }}>
-            {goldMarketStatus === 'live'   ? '● LIVE'    :
-             goldMarketStatus === 'closed' ? '● WEEKEND' :
-             '● ERR'}
-          </span>
-        )}
-
-        {!candleLoading && !candleError && (
-          <span style={{ fontSize: 9, color: 'var(--fg-3)', marginLeft: 4, letterSpacing: '0.06em' }}>
-            OHLCV
-          </span>
-        )}
-        {candleLoading && (
-          <span style={{ fontSize: 9, color: 'var(--fg-3)', marginLeft: 4 }}>
-            loading candles…
-          </span>
-        )}
-        {!candleLoading && candleError && (
-          <span style={{ fontSize: 9, color: 'var(--amber)', marginLeft: 4 }}>
-            candles unavailable
-          </span>
-        )}
 
         <svg width={10} height={10} viewBox="0 0 10 10"
           style={{
@@ -228,12 +159,6 @@ function Header({
         <SymbolPicker
           symbol={symbol}
           onSymbolChange={onSymbolChange}
-          goldPrice={goldPrice}
-          goldLoading={goldLoading}
-          goldMarketStatus={goldMarketStatus}
-          goldSessionDate={goldSessionDate}
-          candleLoading={candleLoading}
-          candleError={candleError}
         />
         <div className="tf-group">
           {TIMEFRAME_LABELS.map(tf => (
@@ -259,49 +184,90 @@ function Header({
         </div>
       </div>
 
-      <div className="header-right">
+      <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '3px 10px',
-          background: 'var(--bg-3)',
-          border: `1px solid ${gcpLive && !gcpError ? 'var(--line-2)' : 'var(--line-1)'}`,
-          borderRadius: 2,
-          fontSize: 10.5,
+          display: 'flex', alignItems: 'center', gap: 0,
+          background: 'var(--bg-2)',
+          border: '1px solid var(--line-2)',
+          borderRadius: 3,
+          overflow: 'hidden',
+          fontSize: 10,
+          fontFamily: 'var(--font-mono)',
         }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: gcpError ? 'var(--red)'
-                      : gcpLive  ? 'var(--cyan)'
-                      : 'var(--fg-3)',
-            boxShadow: gcpLive && !gcpError ? '0 0 6px var(--cyan)' : 'none',
-            animation:  gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
-            display: 'inline-block',
-          }} />
-          <span style={{ color: 'var(--fg-2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            GCP
-          </span>
-          {gcpNetvar !== null && (
-            <span style={{
-              color: 'var(--fg-0)',
-              fontVariantNumeric: 'tabular-nums',
-              fontWeight: 600,
-            }}>
-              {gcpNetvar.toFixed(1)}
-            </span>
-          )}
-          <span style={{
-            fontSize: 9,
-            color: gcpError ? 'var(--red)' : gcpLive ? 'var(--cyan)' : 'var(--fg-3)',
-            letterSpacing: '0.08em',
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px',
+            borderRight: '1px solid var(--line-1)',
           }}>
-            {gcpError ? '● ERR' : gcpLive ? '● LIVE' : '● —'}
-          </span>
+            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>GCP</span>
+            {gcpNetvar !== null && (
+              <span style={{ color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
+                {gcpNetvar.toFixed(1)}
+              </span>
+            )}
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: gcpError ? 'var(--red)' : gcpLive ? 'var(--green)' : 'var(--fg-3)',
+              boxShadow: gcpLive && !gcpError ? '0 0 5px var(--green)' : 'none',
+              animation: gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
+              flexShrink: 0,
+            }} />
+          </div>
+
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px',
+            borderRight: '1px solid var(--line-1)',
+          }}>
+            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>{symbol}</span>
+            {goldPrice !== null && (
+              <span style={{ color: getSymbolMeta(symbol).color, fontVariantNumeric: 'tabular-nums' }}>
+                {formatPrice(goldPrice, symbol)}
+              </span>
+            )}
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: goldMarketStatus === 'error' ? 'var(--red)'
+                : goldMarketStatus === 'closed' ? 'var(--amber)'
+                : 'var(--green)',
+              flexShrink: 0,
+            }} />
+          </div>
+
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px',
+          }}>
+            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>OHLCV</span>
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: candleError ? 'var(--red)'
+                : candleLoading ? 'var(--fg-3)'
+                : 'var(--green)',
+              flexShrink: 0,
+            }} />
+          </div>
         </div>
-        <button className={`live-toggle ${live ? 'on' : ''}`} onClick={onToggleLive}>
-          <span className={live ? 'live-dot' : 'paused-dot'} />
-          {live ? 'LIVE' : 'PAUSED'}
+
+        <div className="divider-v" style={{ height: 20 }} />
+
+        <button
+          className={`live-toggle ${live ? 'on' : ''}`}
+          onClick={onToggleLive}
+          title={live ? 'Pause auto-scroll' : 'Resume live auto-scroll'}
+          style={{ minWidth: 32, justifyContent: 'center' }}
+        >
+          {live ? (
+            <svg width={14} height={14} viewBox="0 0 14 14">
+              <rect x={3} y={3} width={3} height={8} fill="currentColor" rx={0.5} />
+              <rect x={8} y={3} width={3} height={8} fill="currentColor" rx={0.5} />
+            </svg>
+          ) : (
+            <svg width={14} height={14} viewBox="0 0 14 14">
+              <polygon points="4,3 11,7 4,11" fill="currentColor" />
+            </svg>
+          )}
         </button>
-        <Clock />
       </div>
     </header>
   );
@@ -351,6 +317,17 @@ interface StatusBarProps {
 }
 
 function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusBarProps) {
+  const [utcTime, setUtcTime] = useState('');
+  useEffect(() => {
+    const tick = () => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, '0');
+      setUtcTime(`${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
   return (
     <footer className="status-bar">
       <div className="sb-left">
@@ -384,7 +361,12 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
         <span className="hairline">{symbol}</span>
         <span className="tab">{cursorInfo.g}</span>
       </div>
-      <div className="sb-right">
+      <div className="sb-right" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+          <span style={{ color: 'var(--fg-4)', marginRight: 4 }}>UTC</span>
+          <span className="tab" style={{ color: 'var(--fg-1)' }}>{utcTime}</span>
+        </div>
+        <div className="divider-v" style={{ height: 12 }} />
         <span className="hairline">Model</span>
         <span>{APP_MODEL}</span>
       </div>

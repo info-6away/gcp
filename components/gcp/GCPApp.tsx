@@ -8,6 +8,7 @@ import { useCandleData } from '@/lib/useCandleData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
+import SettingsPanel from './SettingsPanel';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
@@ -232,9 +233,18 @@ export default function GCPApp() {
             />
           )}
           {page === 'settings' && (
-            <div className="settings-shell" style={{ color: 'var(--fg-2)' }}>
-              Settings panel — coming soon
-            </div>
+            <SettingsPanel
+              gcpLive={gcpIsLive}
+              gcpNetvar={liveNetvar}
+              goldStatus={goldData.marketStatus}
+              goldPrice={goldData.price}
+              candleLoading={candleData.loading}
+              candleError={candleData.error}
+              symbol={symbol}
+              timeframe={timeframe}
+              seriesLength={displaySeries.length}
+              historicalPoints={baseSeries.length}
+            />
           )}
         </main>
       </div>
