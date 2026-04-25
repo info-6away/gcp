@@ -86,8 +86,8 @@ export default function GCPApp() {
   }, [windowedSeries, timeframe]);
 
   const displayPatterns = useMemo(
-    () => detectPatterns(displaySeries),
-    [displaySeries]
+    () => detectPatterns(displaySeries, TIMEFRAME_BARS[timeframe]),
+    [displaySeries, timeframe]
   );
 
   useEffect(() => {

@@ -152,6 +152,8 @@ export function useGCPData(): GCPDataState {
   const livePointsRef        = useRef<GCPPoint[]>([]);
   const fetchingRef          = useRef(false);
   const fetchingCurrentRef   = useRef(false);
+  const mountedSeriesRef     = useRef(false);
+  const mountedCurrentRef    = useRef(false);
 
   useEffect(() => {
     loadHistoricalSeries().then(hist => {
@@ -168,7 +170,9 @@ export function useGCPData(): GCPDataState {
 
   const fetchSeries = useCallback(async () => {
     if (fetchingRef.current) return;
-    if (!canFetch(LS_KEY_SERIES)) {
+    const isFirstMount = !mountedSeriesRef.current;
+    mountedSeriesRef.current = true;
+    if (!isFirstMount && !canFetch(LS_KEY_SERIES)) {
       setState(s => (s.gcpLoading ? { ...s, gcpLoading: false } : s));
       return;
     }
@@ -230,7 +234,9 @@ export function useGCPData(): GCPDataState {
 
   const fetchCurrent = useCallback(async () => {
     if (fetchingCurrentRef.current) return;
-    if (!canFetch(LS_KEY_CURRENT)) return;
+    const isFirstMount = !mountedCurrentRef.current;
+    mountedCurrentRef.current = true;
+    if (!isFirstMount && !canFetch(LS_KEY_CURRENT)) return;
 
     fetchingCurrentRef.current = true;
     try {

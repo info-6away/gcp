@@ -148,9 +148,13 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
       const bucket = series.slice(i, i + barsPerBucket);
       if (!bucket.length) break;
 
-      let sum = 0;
-      for (const p of bucket) sum += p.v;
-      const avgV = sum / bucket.length;
+      let maxV = -Infinity;
+      for (const p of bucket) if (p.v > maxV) maxV = p.v;
+
+      // MEDIAN for regime classification — keeps a single transient
+      // spike from pinning the whole bucket to F.
+      const sortedV = bucket.map(p => p.v).sort((a, b) => a - b);
+      const vMedian = sortedV[Math.floor(sortedV.length / 2)];
 
       const last    = bucket[bucket.length - 1];
       const hasReal = bucket.some(p => p.gReal);
@@ -158,8 +162,8 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
       out.push({
         i:     out.length,
         t:     last.t,
-        v:     +avgV.toFixed(2),
-        r:     regimeFor(avgV),
+        v:     +maxV.toFixed(2),       // MAX keeps spikes visible on the line
+        r:     regimeFor(vMedian),     // MEDIAN gives the dominant regime
         g:     last.g,
         gReal: hasReal || undefined,
       });
@@ -174,9 +178,41 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
   return bucketed;
 }
 
-export function detectPatterns(series: DataPoint[]): Pattern[] {
+export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[] {
   const regs = series.map(s => s.r);
   const patterns: Pattern[] = [];
+
+  // Threshold defaults are tuned for 1m. Scale them down for coarser TFs
+  // so the same regime sequences become detectable at e.g. 15m or 4h.
+  const scale = (n: number, min: number) => Math.max(min, Math.round(n / barsPerMinute));
+
+  const MIN_COMPRESSION = scale(80, 5);
+
+  const AL_WINDOW    = scale(300, 20);
+  const AL_LOOP_END  = scale(250, 15);
+  const AL_MAX_SPAN  = scale(280, 20);
+  const AL_MIN_AB    = scale(60, 4);
+  const AL_TAIL      = scale(40, 3);
+
+  const FA_WINDOW    = scale(240, 18);
+  const FA_LOOP_END  = scale(200, 15);
+  const FA_AB_END    = scale(80, 6);
+  const FA_C_START   = scale(60, 4);
+  const FA_C_END     = scale(160, 12);
+  const FA_B_START   = scale(120, 9);
+  const FA_B_END     = scale(200, 15);
+  const FA_A_START   = scale(160, 12);
+  const FA_A_END     = scale(240, 18);
+  const FA_SPAN      = scale(220, 16);
+
+  const SH_BUFFER    = scale(20, 2);
+
+  const CV_HALF      = scale(40, 3);
+  const CV_LOOP_END  = scale(80, 6);
+  const CV_MIN_A     = scale(25, 2);
+  const CV_PRE_PAD   = scale(20, 2);
+  const CV_POST_PAD  = scale(60, 4);
+  const CV_SKIP      = scale(80, 6);
 
   function runs(pred: (r: RegimeId) => boolean): [number, number][] {
     const out: [number, number][] = [];
@@ -189,48 +225,48 @@ export function detectPatterns(series: DataPoint[]): Pattern[] {
     return out;
   }
 
-  const compressions = runs(r => r === 'A' || r === 'B').filter(([a, b]) => b - a >= 80);
+  const compressions = runs(r => r === 'A' || r === 'B').filter(([a, b]) => b - a >= MIN_COMPRESSION);
   for (const [a, b] of compressions) {
-    patterns.push({ id: `cc-${a}`, kind: 'Compression Coil', start: a, end: b, glyph: 'AB#', strength: 0.55 + Math.min(0.3, (b - a) / 400) });
+    patterns.push({ id: `cc-${a}`, kind: 'Compression Coil', start: a, end: b, glyph: 'AB#', strength: 0.55 + Math.min(0.3, (b - a) / Math.max(1, 400 / barsPerMinute)) });
   }
 
-  for (let i = 0; i < regs.length - 250; i++) {
-    const w = regs.slice(i, i + 300);
+  for (let i = 0; i < regs.length - AL_LOOP_END; i++) {
+    const w = regs.slice(i, i + AL_WINDOW);
     const idxAB = w.findIndex(r => r === 'A' || r === 'B');
     let abEnd = idxAB;
     while (abEnd < w.length && (w[abEnd] === 'A' || w[abEnd] === 'B')) abEnd++;
     const idxC = w.indexOf('C', abEnd);
     const idxD = idxC >= 0 ? w.indexOf('D', idxC) : -1;
-    if (idxAB >= 0 && idxC > 0 && idxD > 0 && (idxD - idxAB) < 280 && abEnd - idxAB > 60) {
-      patterns.push({ id: `al-${i + idxAB}`, kind: 'Alignment Ladder', start: i + idxAB, end: i + idxD + 40, glyph: 'AB# → B↑ → C → D#', strength: 0.82 });
-      i += idxD + 40;
+    if (idxAB >= 0 && idxC > 0 && idxD > 0 && (idxD - idxAB) < AL_MAX_SPAN && abEnd - idxAB > AL_MIN_AB) {
+      patterns.push({ id: `al-${i + idxAB}`, kind: 'Alignment Ladder', start: i + idxAB, end: i + idxD + AL_TAIL, glyph: 'AB# → B↑ → C → D#', strength: 0.82 });
+      i += idxD + AL_TAIL;
     }
   }
 
-  for (let i = 0; i < regs.length - 200; i++) {
-    const w = regs.slice(i, i + 240);
-    const hasAB = w.slice(0, 80).some(r => r === 'A' || r === 'B');
-    const hasC  = w.slice(60, 160).includes('C');
-    const backB = w.slice(120, 200).includes('B');
-    const backA = w.slice(160, 240).includes('A');
+  for (let i = 0; i < regs.length - FA_LOOP_END; i++) {
+    const w = regs.slice(i, i + FA_WINDOW);
+    const hasAB = w.slice(0, FA_AB_END).some(r => r === 'A' || r === 'B');
+    const hasC  = w.slice(FA_C_START, FA_C_END).includes('C');
+    const backB = w.slice(FA_B_START, FA_B_END).includes('B');
+    const backA = w.slice(FA_A_START, FA_A_END).includes('A');
     if (hasAB && hasC && backB && backA) {
-      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + 220, glyph: 'AB# → B → C → B → A', strength: 0.28 });
-      i += 220;
+      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + FA_SPAN, glyph: 'AB# → B → C → B → A', strength: 0.28 });
+      i += FA_SPAN;
     }
   }
 
   const fruns = runs(r => r === 'F');
   for (const [a, b] of fruns) {
-    patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - 20), end: b + 20, glyph: 'B → F', strength: 0.95 });
+    patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER, glyph: 'B → F', strength: 0.95 });
   }
 
-  for (let i = 40; i < regs.length - 80; i++) {
-    const left  = regs.slice(i - 40, i).filter(r => r === 'A').length;
-    const peak  = regs.slice(i, i + 40);
-    const right = regs.slice(i + 40, i + 80).filter(r => r === 'A').length;
-    if (left > 25 && right > 25 && peak.includes('C') && !peak.includes('D')) {
-      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - 20, end: i + 60, glyph: 'A → B → C → B → A', strength: 0.38 });
-      i += 80;
+  for (let i = CV_HALF; i < regs.length - CV_LOOP_END; i++) {
+    const left  = regs.slice(i - CV_HALF, i).filter(r => r === 'A').length;
+    const peak  = regs.slice(i, i + CV_HALF);
+    const right = regs.slice(i + CV_HALF, i + CV_LOOP_END).filter(r => r === 'A').length;
+    if (left > CV_MIN_A && right > CV_MIN_A && peak.includes('C') && !peak.includes('D')) {
+      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - CV_PRE_PAD, end: i + CV_POST_PAD, glyph: 'A → B → C → B → A', strength: 0.38 });
+      i += CV_SKIP;
     }
   }
 

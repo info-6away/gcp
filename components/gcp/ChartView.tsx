@@ -332,10 +332,13 @@ export default function ChartView({
     regimeSeries.current = rSeriesMap;
 
     const vs = pc.addSeries(HistogramSeries, {
-      priceFormat:  { type: 'volume' },
-      priceScaleId: 'volume',
+      color:            'rgba(77,217,232,0.3)',
+      priceFormat:      { type: 'volume' },
+      priceScaleId:     '',
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
-    pc.priceScale('volume').applyOptions({
+    pc.priceScale('').applyOptions({
       scaleMargins: { top: 0.85, bottom: 0 },
     });
 
@@ -585,6 +588,20 @@ export default function ChartView({
           >
             {candleColorMode === 'regime' ? 'BY REGIME' : 'UP / DOWN'}
           </button>
+          {candleColorMode === 'regime' && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
+              {REGIME_IDS.map(r => (
+                <span key={r} style={{
+                  fontSize: 9,
+                  fontFamily: 'var(--font-mono)',
+                  color: REGIME_CANDLE[r] ?? '#aaa',
+                  letterSpacing: '0.04em',
+                }}>
+                  {r}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
