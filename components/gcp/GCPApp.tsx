@@ -16,7 +16,7 @@ export default function GCPApp() {
   const [live, setLive] = useState(true);
   const [selectedPatternKind, setSelectedPatternKind] = useState<string | null>(null);
   const [symbol, setSymbol] = useState<MarketSymbol>('XAUUSD');
-  const [timeframe, setTimeframe] = useState<Timeframe>('1m');
+  const [timeframe, setTimeframe] = useState<Timeframe>('15m');
   const [viewWindow, setViewWindow] = useState<ViewWindow>('24h');
 
   const {

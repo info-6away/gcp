@@ -31,17 +31,26 @@ export interface GCPDataState {
   lastUpdate: Date | null;
 }
 
-const _lastFetchTime: Record<string, number> = {};
-const MIN_FETCH_INTERVAL = 55_000;
+const LS_KEY_SERIES  = 'gcp_last_series_fetch';
+const LS_KEY_CURRENT = 'gcp_last_current_fetch';
+const MIN_INTERVAL   = 55_000;
 
-async function gcpFetch(endpoint: string): Promise<unknown> {
-  const now = Date.now();
-  const last = _lastFetchTime[endpoint] ?? 0;
-  if (now - last < MIN_FETCH_INTERVAL) {
-    throw new Error('Fetch throttled — too soon since last request');
+function canFetch(lsKey: string): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const last = parseInt(window.localStorage.getItem(lsKey) ?? '0', 10);
+    return Date.now() - last > MIN_INTERVAL;
+  } catch {
+    return true;
   }
-  _lastFetchTime[endpoint] = now;
+}
 
+function markFetched(lsKey: string): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(lsKey, String(Date.now())); } catch {}
+}
+
+async function gcpFetch(endpoint: string): Promise<unknown | null> {
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
@@ -50,7 +59,8 @@ async function gcpFetch(endpoint: string): Promise<unknown> {
   });
 
   if (res.status === 429) {
-    throw new Error('Rate limited — will retry at next poll interval');
+    console.debug('[GCP] Rate limited, will retry at next interval');
+    return null;
   }
 
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);
@@ -110,11 +120,18 @@ export function useGCPData(): GCPDataState {
 
   const fetchSeries = useCallback(async () => {
     if (fetchingRef.current) return;
+    if (!canFetch(LS_KEY_SERIES)) return;
+
     fetchingRef.current = true;
     try {
-      const data = await gcpFetch('/api/getNetVarAggregate24H') as { aggregates?: RawAggregate[] };
-      const aggregates: RawAggregate[] = data.aggregates ?? [];
+      const data = await gcpFetch('/api/getNetVarAggregate24H') as
+        | { aggregates?: RawAggregate[] }
+        | null;
+      if (!data) return;
 
+      markFetched(LS_KEY_SERIES);
+
+      const aggregates: RawAggregate[] = data.aggregates ?? [];
       if (!aggregates.length) throw new Error('Empty aggregates');
 
       const points: GCPPoint[] = aggregates.map(pt => {
@@ -149,9 +166,17 @@ export function useGCPData(): GCPDataState {
 
   const fetchCurrent = useCallback(async () => {
     if (fetchingCurrentRef.current) return;
+    if (!canFetch(LS_KEY_CURRENT)) return;
+
     fetchingCurrentRef.current = true;
     try {
-      const data   = await gcpFetch('/api/getcurrentnetvar') as { netvar: { netvar: string }[] };
+      const data = await gcpFetch('/api/getcurrentnetvar') as
+        | { netvar: { netvar: string }[] }
+        | null;
+      if (!data) return;
+
+      markFetched(LS_KEY_CURRENT);
+
       const netvar = parseFloat(data.netvar[0].netvar);
       if (!isNaN(netvar)) {
         setState(s => ({
