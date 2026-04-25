@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { DataPoint, CursorInfo, MarketSymbol, Timeframe } from '@/types/gcp';
-import { SYMBOLS, formatPrice, TIMEFRAME_LABELS } from '@/types/gcp';
+import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow } from '@/types/gcp';
+import { SYMBOLS, formatPrice, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 
 function LogoMark({ size = 22 }: { size?: number }) {
@@ -41,9 +41,11 @@ interface HeaderProps {
   onToggleLive: () => void;
   symbol:            MarketSymbol;
   onSymbolChange:    (s: MarketSymbol) => void;
-  timeframe:         Timeframe;
-  onTimeframeChange: (tf: Timeframe) => void;
-  goldPrice:         number | null;
+  timeframe:          Timeframe;
+  onTimeframeChange:  (tf: Timeframe) => void;
+  viewWindow:         ViewWindow;
+  onViewWindowChange: (w: ViewWindow) => void;
+  goldPrice:          number | null;
   goldLoading:       boolean;
   goldMarketStatus:  'live' | 'closed' | 'error';
   goldSessionDate:   string | null;
@@ -182,6 +184,7 @@ function Header({
   live, onToggleLive,
   symbol, onSymbolChange,
   timeframe, onTimeframeChange,
+  viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate,
 }: HeaderProps) {
   return (
@@ -215,6 +218,17 @@ function Header({
             </button>
           ))}
         </div>
+        <div className="tf-group" style={{ marginLeft: 8 }}>
+          {VIEW_LABELS.map(w => (
+            <button
+              key={w}
+              className={`tf-btn ${w === viewWindow ? 'active' : ''}`}
+              onClick={() => onViewWindowChange(w)}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="header-right">
@@ -231,9 +245,10 @@ function Header({
 interface LeftRailProps {
   page: string;
   onNav: (p: 'dashboard' | 'pattern' | 'settings') => void;
+  lastDataDate?: string | null;
 }
 
-function LeftRail({ page, onNav }: LeftRailProps) {
+function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
   const items = [
     { id: 'dashboard' as const, label: 'Dashboard', hint: 'D' },
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
@@ -257,7 +272,7 @@ function LeftRail({ page, onNav }: LeftRailProps) {
       <div className="rail-spacer" />
       <div className="rail-foot">
         <div className="hairline">Session</div>
-        <div style={{ color: 'var(--fg-1)', fontSize: 11 }}>24 Apr 2026</div>
+        <div style={{ color: 'var(--fg-1)', fontSize: 11 }}>{lastDataDate ?? '—'}</div>
       </div>
     </nav>
   );

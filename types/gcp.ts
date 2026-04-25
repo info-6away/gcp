@@ -1,3 +1,19 @@
+export interface GCPEntry {
+  t: number;
+  v: number;
+}
+
+export type ViewWindow = '24h' | '7d' | '30d' | 'all';
+
+export const VIEW_MINUTES: Record<ViewWindow, number> = {
+  '24h':  1_440,
+  '7d':   10_080,
+  '30d':  43_200,
+  'all':  Number.POSITIVE_INFINITY,
+};
+
+export const VIEW_LABELS: ViewWindow[] = ['24h', '7d', '30d', 'all'];
+
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
 
 export const TIMEFRAME_BARS: Record<Timeframe, number> = {
