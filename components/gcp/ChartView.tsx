@@ -4,7 +4,6 @@ import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
-  HistogramSeries,
   LineSeries,
   CrosshairMode,
   LineStyle,
@@ -14,7 +13,6 @@ import {
   type ISeriesApi,
   type Time,
   type CandlestickData,
-  type HistogramData,
   type LineData,
   type SeriesMarker,
   type ISeriesMarkersPluginApi,
@@ -49,14 +47,6 @@ const C = {
   cyan:    '#4dd9e8',
   border:  '#1c2026',
   red:     '#e24b4a',
-  regime: {
-    A: 'rgba(59,90,160,0.4)',
-    B: 'rgba(50,130,180,0.4)',
-    C: 'rgba(40,180,175,0.4)',
-    D: 'rgba(200,160,40,0.55)',
-    E: 'rgba(210,100,40,0.55)',
-    F: 'rgba(220,50,50,0.65)',
-  } as Record<string, string>,
   candle: {
     A: '#4a72c4',
     B: '#4dd9e8',
@@ -127,7 +117,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const chartRef     = useRef<IChartApi | null>(null);
 
   const candleSeriesRef = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
-  const regimeStripRef  = useRef<ISeriesApi<'Histogram'> | null>(null);
   const gcpLineRef      = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef      = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
@@ -144,11 +133,22 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const earliestTsRef = useRef<number | null>(null);
   const isInitRef     = useRef(true);
 
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number; y: number; price: number | null; time: number | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [ctxMenu]);
+
   const chartGCPSeries = useMemo(() => {
     if (!series.length) return series;
     if (!candles.length) {
-      const fallback = series.slice(-1440);
-      return fallback.length > 800 ? lttbDownsample(fallback, 800) : fallback;
+      // 1440 points = 24h at 1m, renders fine natively
+      return series.slice(-1440);
     }
     const earliest = candles[0].t;
     const latest   = candles[candles.length - 1].t;
@@ -156,7 +156,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     const filtered = series
       .filter(p => p.t >= earliest - buffer)
       .sort((a, b) => a.t - b.t);
-    return filtered.length > 800 ? lttbDownsample(filtered, 800) : filtered;
+    // Only downsample when truly necessary — aggressive LTTB at 800 destroys
+    // the GCP spikes that make this chart meaningful.
+    return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
   }, [series, candles]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
@@ -212,15 +214,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     });
     candleSeriesRef.current = csMap;
 
-    // Pane 1: regime color strip
-    const strip = chart.addSeries(HistogramSeries, {
-      priceFormat:      { type: 'volume' },
-      lastValueVisible: false,
-      priceLineVisible: false,
-    }, 1);
-    regimeStripRef.current = strip;
-
-    // Pane 2: GCP NetVar line
+    // Pane 1: GCP NetVar line
     const gcpLine = chart.addSeries(LineSeries, {
       color:                      C.cyan,
       lineWidth:                  2,
@@ -229,17 +223,15 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       crosshairMarkerVisible:     true,
       crosshairMarkerRadius:      4,
       crosshairMarkerBorderColor: C.bg,
-    }, 2);
+    }, 1);
     gcpLineRef.current = gcpLine;
 
-    // Set pane height ratios. Best-effort — works on lightweight-charts 5.x
-    // panes() returns IPane[]; setStretchFactor controls relative size.
+    // 70/30 split between candles (top) and GCP line (bottom).
     try {
       const panes = chart.panes();
-      if (panes.length >= 3) {
+      if (panes.length >= 2) {
         panes[0].setStretchFactor(70);
-        panes[1].setStretchFactor(8);
-        panes[2].setStretchFactor(22);
+        panes[1].setStretchFactor(30);
       }
     } catch { /* older versions silently ignore */ }
 
@@ -258,7 +250,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       ro.disconnect();
       chart.remove();
       chartRef.current        = null;
-      regimeStripRef.current  = null;
       gcpLineRef.current      = null;
       candleSeriesRef.current = new Map();
       markersRef.current      = null;
@@ -266,15 +257,13 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     };
   }, []);
 
-  // ── GCP line + regime strip updates ────────────────────────────────────────
+  // ── GCP line updates ───────────────────────────────────────────────────────
   useEffect(() => {
-    const line  = gcpLineRef.current;
-    const strip = regimeStripRef.current;
-    if (!line || !strip) return;
+    const line = gcpLineRef.current;
+    if (!line) return;
 
     if (!chartGCPSeries.length) {
       line.setData([]);
-      strip.setData([]);
       return;
     }
 
@@ -283,13 +272,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       value: p.v,
     }));
     line.setData(lineData);
-
-    const stripData: HistogramData[] = chartGCPSeries.map(p => ({
-      time:  toTime(p.t),
-      value: 1,
-      color: C.regime[p.r] ?? C.regime.A,
-    }));
-    strip.setData(stripData);
   }, [chartGCPSeries]);
 
   // ── Split candles by regime + apply to series ──────────────────────────────
@@ -524,23 +506,25 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>dashboard {timeframe}</span>
 
-        <div style={{ display: 'flex', gap: 2, marginLeft: 8 }}>
+        <select
+          value={chartTF}
+          onChange={e => { isInitRef.current = true; setChartTF(e.target.value as ChartTF); }}
+          style={{
+            background: 'var(--bg-2)',
+            border: '1px solid var(--line-2)',
+            borderRadius: 2,
+            color: 'var(--fg-1)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            padding: '2px 6px',
+            cursor: 'pointer',
+            marginLeft: 6,
+          }}
+        >
           {(['5m','15m','1h','4h','1D'] as ChartTF[]).map(tf => (
-            <button key={tf}
-              onClick={() => { isInitRef.current = true; setChartTF(tf); }}
-              style={{
-                padding: '2px 7px', fontSize: 9, letterSpacing: '0.08em',
-                fontFamily: 'var(--font-mono)',
-                background: chartTF === tf ? 'var(--bg-3)' : 'transparent',
-                border: `1px solid ${chartTF === tf ? 'var(--line-2)' : 'transparent'}`,
-                borderRadius: 2,
-                color: chartTF === tf ? 'var(--fg-0)' : 'var(--fg-3)',
-                cursor: 'pointer',
-              }}>
-              {tf}
-            </button>
+            <option key={tf} value={tf}>{tf}</option>
           ))}
-        </div>
+        </select>
 
         <div style={{ flex: 1 }} />
 
@@ -584,7 +568,30 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         )}
       </div>
 
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div
+        ref={containerRef}
+        style={{ flex: 1, minHeight: 0, position: 'relative' }}
+        onContextMenu={e => {
+          e.preventDefault();
+          const chart = chartRef.current;
+          if (!chart) return;
+          const rect  = e.currentTarget.getBoundingClientRect();
+          let priceVal: number | null = null;
+          try {
+            // coordinateToPrice lives on the series API in lightweight-charts v5
+            const anySeries = candleSeriesRef.current.values().next().value;
+            const p = anySeries?.coordinateToPrice(e.clientY - rect.top);
+            priceVal = (p as number | null) ?? null;
+          } catch { /* not on price pane */ }
+          let tsVal: number | null = null;
+          try {
+            const ts = chart.timeScale().coordinateToTime(e.clientX - rect.left);
+            tsVal = ts != null ? (ts as number) * 1000 : null;
+          } catch { /* off-axis */ }
+          setCtxMenu({ x: e.clientX, y: e.clientY, price: priceVal, time: tsVal });
+        }}
+        onClick={() => setCtxMenu(null)}
+      >
         {isLoading && (
           <div style={{
             position: 'absolute', inset: 0,
@@ -594,6 +601,99 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             letterSpacing: '0.1em',
           }}>
             LOADING {symbol} {chartTF}…
+          </div>
+        )}
+
+        {ctxMenu && (
+          <div
+            style={{
+              position: 'fixed',
+              left: ctxMenu.x, top: ctxMenu.y,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--line-2)',
+              borderRadius: 4,
+              zIndex: 1000,
+              minWidth: 180,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              overflow: 'hidden',
+            }}
+            onClick={e => e.stopPropagation()}
+            onContextMenu={e => e.preventDefault()}
+          >
+            {(ctxMenu.price != null || ctxMenu.time != null) && (
+              <div style={{ padding: '7px 12px', borderBottom: '1px solid var(--line-1)', fontSize: 10, color: 'var(--fg-2)' }}>
+                {ctxMenu.price != null && (
+                  <div>Price <span style={{ color: 'var(--fg-0)', float: 'right' }}>
+                    {symbol === 'BTC'
+                      ? `$${Math.round(ctxMenu.price).toLocaleString()}`
+                      : `$${ctxMenu.price.toFixed(2)}`}
+                  </span></div>
+                )}
+                {ctxMenu.time != null && (
+                  <div>Time <span style={{ color: 'var(--fg-0)', float: 'right' }}>
+                    {new Date(ctxMenu.time).toLocaleTimeString()}
+                  </span></div>
+                )}
+              </div>
+            )}
+
+            {[
+              { label: 'Fit all data',  fn: () => chartRef.current?.timeScale().fitContent() },
+              { label: 'Go to live',    fn: () => chartRef.current?.timeScale().scrollToRealTime() },
+              { label: '─────────────', fn: null as null | (() => void | Promise<void>) },
+              {
+                label: colorMode === 'regime' ? '● Up/Down mode' : '● Regime mode',
+                fn: () => setColorMode(m => m === 'regime' ? 'updown' : 'regime'),
+              },
+              {
+                label: 'Load more history ←',
+                fn: async () => {
+                  if (!earliestTsRef.current || isLoadingMore) return;
+                  setIsLoadingMore(true);
+                  try {
+                    const older = await fetchCandlesBefore(symbol, chartTF, 500, earliestTsRef.current - 60_000);
+                    if (older.length) {
+                      const seen = new Set<number>();
+                      const merged: Candle[] = [];
+                      for (const c of [...older, ...allCandlesRef.current]) {
+                        if (seen.has(c.t)) continue;
+                        seen.add(c.t);
+                        merged.push(c);
+                      }
+                      merged.sort((a, b) => a.t - b.t);
+                      allCandlesRef.current = merged;
+                      earliestTsRef.current = merged[0].t;
+                      setCandles([...merged]);
+                    } else {
+                      setHasMoreLeft(false);
+                    }
+                  } finally {
+                    setIsLoadingMore(false);
+                  }
+                },
+              },
+            ].map((item, i) =>
+              item.fn === null ? (
+                <div key={i} style={{ padding: '2px 12px', color: 'var(--fg-4)', fontSize: 9 }}>
+                  {item.label}
+                </div>
+              ) : (
+                <button key={i}
+                  onClick={() => { item.fn?.(); setCtxMenu(null); }}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '8px 12px', background: 'transparent',
+                    border: 'none', color: 'var(--fg-1)',
+                    fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  {item.label}
+                </button>
+              )
+            )}
           </div>
         )}
       </div>

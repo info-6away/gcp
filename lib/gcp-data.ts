@@ -137,7 +137,7 @@ export function lttbDownsample(series: DataPoint[], threshold: number): DataPoin
   return sampled;
 }
 
-const LTTB_TARGET = 1200;
+const LTTB_TARGET = 2000;
 
 export interface ProcessedSeries {
   display:  DataPoint[];

@@ -143,9 +143,7 @@ let _historicalLoaded   = false;
 let _historicalLoading  = false;
 let _intervalsInstalled = false;
 let _fetchingSeries     = false;
-let _fetchingCurrent    = false;
 let _lastSeriesFetch    = 0;
-let _lastCurrentFetch   = 0;
 
 async function _loadHistoricalOnce(): Promise<void> {
   if (_historicalLoaded || _historicalLoading) return;
@@ -198,6 +196,9 @@ async function _runFetchSeries(): Promise<void> {
 
     const merged = mergeSeries(_scaledHistorical, points);
     const scale  = _scale;
+    // The last point of the 24h series IS the current value — no need
+    // to hit /api/getcurrentnetvar separately.
+    const last   = points[points.length - 1];
 
     setTimeout(() => {
       _setState(s => ({
@@ -208,6 +209,8 @@ async function _runFetchSeries(): Promise<void> {
         isLive:      true,
         lastUpdate:  new Date(),
         scaleFactor: scale,
+        liveNetvar:  last ? last.v : s.liveNetvar,
+        liveRegime:  last ? last.r : s.liveRegime,
       }));
     }, 0);
   } catch (e) {
@@ -222,29 +225,6 @@ async function _runFetchSeries(): Promise<void> {
   }
 }
 
-async function _runFetchCurrent(): Promise<void> {
-  if (_fetchingCurrent) return;
-  if (Date.now() - _lastCurrentFetch < MIN_FETCH_GAP && _lastCurrentFetch !== 0) return;
-  _fetchingCurrent = true;
-  try {
-    const data = await gcpFetch('/api/getcurrentnetvar') as
-      | { netvar: { netvar: string }[] }
-      | null;
-    if (!data) return;
-    _lastCurrentFetch = Date.now();
-
-    const netvar = parseFloat(data.netvar[0].netvar);
-    if (!isNaN(netvar)) {
-      _setState(s => ({
-        ...s,
-        liveNetvar: +netvar.toFixed(1),
-        liveRegime: regimeFor(netvar),
-      }));
-    }
-  } catch { /* silent — series is primary */ }
-  finally { _fetchingCurrent = false; }
-}
-
 async function _pollLoop(): Promise<void> {
   // Brief startup delay — lets StrictMode finish double-mounting and the
   // historical JSON load before we hit the live API.
@@ -254,14 +234,8 @@ async function _pollLoop(): Promise<void> {
   await _runFetchSeries();
 
   while (_intervalsInstalled && _listeners.size > 0) {
-    await new Promise(r => setTimeout(r, 15_000));
+    await new Promise(r => setTimeout(r, 120_000));
     if (!_intervalsInstalled) break;
-
-    await _runFetchCurrent();
-
-    await new Promise(r => setTimeout(r, 105_000));
-    if (!_intervalsInstalled) break;
-
     await _runFetchSeries();
   }
 }
