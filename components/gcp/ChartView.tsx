@@ -206,6 +206,8 @@ interface ChartViewProps {
   symbolColor: string;
 }
 
+const CANDLES_PER_PAGE = 500;
+
 export default function ChartView({
   series, patterns, symbol,
 }: ChartViewProps) {
@@ -214,56 +216,94 @@ export default function ChartView({
   const [candles, setCandlesState] = useState<Candle[]>([]);
   const [candleLoading, setCandleLoading] = useState(true);
   const [candleError, setCandleError] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreLeft, setHasMoreLeft] = useState(true);
 
-  const fetchChartCandles = useCallback(async () => {
+  const allCandlesRef = useRef<Candle[]>([]);
+  const isFetchingMoreRef = useRef(false);
+  const isInitialLoadRef = useRef(true);
+
+  const fetchCandles = useCallback(async (before?: number): Promise<Candle[]> => {
     const tdSymbol = TD_SYMBOLS[symbol];
-    if (!tdSymbol || !TD_KEY) {
-      setCandleLoading(false);
-      setCandleError('No API key configured');
-      return;
+    if (!tdSymbol || !TD_KEY) throw new Error('No symbol or API key');
+
+    const interval = TD_INTERVALS_CHART[chartTF];
+    let url = `${TD_BASE}/time_series`
+      + `?symbol=${encodeURIComponent(tdSymbol)}`
+      + `&interval=${interval}`
+      + `&outputsize=${CANDLES_PER_PAGE}`
+      + `&apikey=${TD_KEY}`;
+
+    if (before) {
+      const endDate = new Date(before).toISOString().replace('T', ' ').slice(0, 19);
+      url += `&end_date=${encodeURIComponent(endDate)}`;
     }
-    const interval   = TD_INTERVALS_CHART[chartTF];
-    const outputsize = CHART_OUTPUT_SIZE[chartTF];
 
-    try {
-      const url = `${TD_BASE}/time_series`
-        + `?symbol=${encodeURIComponent(tdSymbol)}`
-        + `&interval=${interval}`
-        + `&outputsize=${outputsize}`
-        + `&apikey=${TD_KEY}`;
-      const res  = await fetch(url);
-      if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
-      const data = await res.json();
-      if (data.status === 'error') throw new Error(data.message ?? 'TD error');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
+    const data = await res.json();
+    if (data.status === 'error') throw new Error(data.message ?? 'TD error');
 
-      const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
-        (data.values ?? []).slice().reverse();
+    const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
+      data.values ?? [];
+    if (!values.length) return [];
 
-      const newCandles: Candle[] = values.map(v => ({
-        t: new Date(v.datetime + 'Z').getTime(),
-        o: parseFloat(v.open),
-        h: parseFloat(v.high),
-        l: parseFloat(v.low),
-        c: parseFloat(v.close),
-      }));
-
-      setCandlesState(newCandles);
-      setCandleLoading(false);
-      setCandleError(null);
-    } catch (e) {
-      console.warn('[ChartView] candle fetch error:', e);
-      setCandleError(String(e));
-      setCandleLoading(false);
-    }
+    return values.slice().reverse().map(v => ({
+      t: new Date(v.datetime + 'Z').getTime(),
+      o: parseFloat(v.open),
+      h: parseFloat(v.high),
+      l: parseFloat(v.low),
+      c: parseFloat(v.close),
+    }));
   }, [symbol, chartTF]);
 
+  // Initial load + reset on symbol/TF change.
   useEffect(() => {
+    let cancelled = false;
     setCandleLoading(true);
+    setCandleError(null);
+    setHasMoreLeft(true);
+    setIsLoadingMore(false);
+    isFetchingMoreRef.current = false;
+    isInitialLoadRef.current = true;
+    allCandlesRef.current = [];
     setCandlesState([]);
-    fetchChartCandles();
-    const id = setInterval(fetchChartCandles, 60_000);
+
+    fetchCandles()
+      .then(initial => {
+        if (cancelled) return;
+        allCandlesRef.current = initial;
+        setCandlesState(initial);
+        setCandleLoading(false);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        console.warn('[ChartView] initial candle fetch error:', e);
+        setCandleError(String(e));
+        setCandleLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [fetchCandles]);
+
+  // Right-side live refresh — append new candles every 60s.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      if (!allCandlesRef.current.length) return;
+      try {
+        const latest = await fetchCandles();
+        if (!latest.length) return;
+
+        const lastTs  = allCandlesRef.current[allCandlesRef.current.length - 1].t;
+        const newOnes = latest.filter(c => c.t > lastTs);
+        if (!newOnes.length) return;
+
+        allCandlesRef.current = [...allCandlesRef.current, ...newOnes];
+        setCandlesState([...allCandlesRef.current]);
+      } catch { /* silent */ }
+    }, 60_000);
     return () => clearInterval(id);
-  }, [fetchChartCandles]);
+  }, [fetchCandles]);
   const priceRef = useRef<HTMLDivElement>(null);
   const gcpRef   = useRef<HTMLDivElement>(null);
 
@@ -280,6 +320,57 @@ export default function ChartView({
 
   const [candleColorMode, setCandleColorMode] = useState<'regime' | 'updown'>('regime');
   const [seriesReady, setSeriesReady] = useState(false);
+
+  // Lazy-load older candles when the user scrolls near the left edge.
+  useEffect(() => {
+    if (!seriesReady) return;
+    const pc = priceChart.current;
+    if (!pc) return;
+
+    const handleRangeChange = async (range: { from: number; to: number } | null) => {
+      if (!range) return;
+      if (isFetchingMoreRef.current) return;
+      if (!hasMoreLeft) return;
+      if (range.from > 10) return; // still plenty of history visible
+
+      const earliest = allCandlesRef.current[0]?.t;
+      if (!earliest) return;
+
+      isFetchingMoreRef.current = true;
+      setIsLoadingMore(true);
+      try {
+        const before = earliest - 60_000;
+        const older  = await fetchCandles(before);
+        if (!older.length) {
+          setHasMoreLeft(false);
+          return;
+        }
+
+        const seen = new Set<number>();
+        const merged: Candle[] = [];
+        for (const c of [...older, ...allCandlesRef.current]) {
+          if (seen.has(c.t)) continue;
+          seen.add(c.t);
+          merged.push(c);
+        }
+        merged.sort((a, b) => a.t - b.t);
+
+        allCandlesRef.current = merged;
+        setCandlesState(merged);
+      } catch (e) {
+        console.warn('[ChartView] lazy load error:', e);
+      } finally {
+        isFetchingMoreRef.current = false;
+        setIsLoadingMore(false);
+      }
+    };
+
+    pc.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    return () => {
+      pc.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesReady, fetchCandles, hasMoreLeft]);
 
   const applyColorMode = useCallback((mode: 'regime' | 'updown') => {
     setCandleColorMode(mode);
@@ -567,8 +658,14 @@ export default function ChartView({
     });
 
     requestAnimationFrame(() => {
-      priceChart.current?.timeScale().fitContent();
-      priceChart.current?.priceScale('right').applyOptions({ autoScale: true });
+      // Only fit-to-content on the initial load. Lazy-load prepends would
+      // otherwise yank the visible range back to the full history every
+      // time the user scrolls left.
+      if (isInitialLoadRef.current) {
+        priceChart.current?.timeScale().fitContent();
+        priceChart.current?.priceScale('right').applyOptions({ autoScale: true });
+        isInitialLoadRef.current = false;
+      }
       redrawOverlays();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -681,6 +778,19 @@ export default function ChartView({
         {showNoCandleMessage && !candleLoading && !candleError && (
           <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
             ⚠ No candle data
+          </span>
+        )}
+        {isLoadingMore && (
+          <span style={{
+            fontSize: 9, color: 'var(--cyan)', letterSpacing: '0.08em',
+            animation: 'livepulse 1s ease-in-out infinite',
+          }}>
+            ← loading more
+          </span>
+        )}
+        {!hasMoreLeft && !candleLoading && (
+          <span style={{ fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em' }}>
+            ← history limit
           </span>
         )}
         <span style={{ flex: 1 }} />
