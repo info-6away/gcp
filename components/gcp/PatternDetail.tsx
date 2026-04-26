@@ -330,7 +330,12 @@ export default function PatternDetail({
             </svg>
             DASHBOARD
           </button>
-          <div className="hairline">Pattern Library</div>
+          <div>
+            <div className="hairline">Pattern Library</div>
+            <div style={{ fontSize: 9, color: 'var(--fg-4)', marginTop: 2, letterSpacing: '0.04em' }}>
+              Detected on the active timeframe + view window · changing VIEW filters display
+            </div>
+          </div>
           <div style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
             {patterns.length} total detections across {Object.keys(byKind).length} types
           </div>

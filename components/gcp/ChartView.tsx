@@ -5,7 +5,6 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
-  HistogramSeries,
   CrosshairMode,
   LineStyle,
   createSeriesMarkers,
@@ -13,7 +12,6 @@ import {
   type ISeriesApi,
   type Time,
   type CandlestickData,
-  type HistogramData,
   type LineData,
   type SeriesMarker,
   type ISeriesMarkersPluginApi,
@@ -53,11 +51,6 @@ const REGIME_BG: Record<string, string> = {
   D: 'rgba(200,160,40,0.16)',
   E: 'rgba(210,100,40,0.16)',
   F: 'rgba(220,50,50,0.22)',
-};
-
-const REGIME_LABEL_COLOR: Record<string, string> = {
-  A: '#4a72c4', B: '#4dd9e8', C: '#2db8b4',
-  D: '#d4a028', E: '#d46428', F: '#e24b4a',
 };
 
 const REGIME_STRIP_COLOR: Record<string, string> = {
@@ -141,28 +134,6 @@ function drawRegimeBands(canvas: HTMLCanvasElement, chart: IChartApi, series: Da
     }
     i = j;
   }
-
-  i = 0;
-  while (i < series.length) {
-    const regime = series[i].r;
-    let j = i;
-    while (j < series.length && series[j].r === regime) j++;
-
-    const t1 = Math.floor(series[i].t / 1000);
-    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
-    const x1 = ts.timeToCoordinate(t1 as Time);
-    const x2 = ts.timeToCoordinate(t2 as Time);
-
-    if (x1 !== null && x2 !== null && (x2 - x1) > 20) {
-      ctx.fillStyle = REGIME_LABEL_COLOR[regime] ?? '#aaa';
-      ctx.font = '9px IBM Plex Mono, monospace';
-      ctx.textAlign = 'center';
-      ctx.globalAlpha = 0.6;
-      ctx.fillText(regime, (x1 + x2) / 2, 12);
-      ctx.globalAlpha = 1;
-    }
-    i = j;
-  }
 }
 
 function drawRegimeStrip(canvas: HTMLCanvasElement, chart: IChartApi, series: DataPoint[]) {
@@ -215,12 +186,12 @@ export default function ChartView({
   const gcpChart   = useRef<IChartApi | null>(null);
 
   const regimeSeries  = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
-  const volumeSeries  = useRef<ISeriesApi<'Histogram'>   | null>(null);
   const gcpLineSeries = useRef<ISeriesApi<'Line'>        | null>(null);
 
   const markersPlugin = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const [candleColorMode, setCandleColorMode] = useState<'regime' | 'updown'>('regime');
+  const [seriesReady, setSeriesReady] = useState(false);
 
   const applyColorMode = useCallback((mode: 'regime' | 'updown') => {
     setCandleColorMode(mode);
@@ -331,18 +302,6 @@ export default function ChartView({
     });
     regimeSeries.current = rSeriesMap;
 
-    const vs = pc.addSeries(HistogramSeries, {
-      color:            'rgba(77,217,232,0.25)',
-      priceFormat:      { type: 'volume' },
-      priceScaleId:     'vol',
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-    pc.priceScale('vol').applyOptions({
-      scaleMargins: { top: 0.85, bottom: 0 },
-      visible:      false,
-    });
-
     const gc = createChart(gcpRef.current, {
       ...sharedOptions,
       width:  gcpRef.current.clientWidth,
@@ -365,8 +324,8 @@ export default function ChartView({
 
     priceChart.current    = pc;
     gcpChart.current      = gc;
-    volumeSeries.current  = vs;
     gcpLineSeries.current = gl;
+    setSeriesReady(true);
 
     let syncing = false;
 
@@ -419,6 +378,12 @@ export default function ChartView({
   }, []);
 
   useEffect(() => {
+    if (seriesReady && regimeSeries.current.size === 6) {
+      applyColorMode(candleColorMode);
+    }
+  }, [seriesReady, candleColorMode, applyColorMode]);
+
+  useEffect(() => {
     // Lazy reinit: if the candle series map was wiped (e.g. fast-refresh),
     // rebuild all six regime series before writing data.
     if (regimeSeries.current.size === 0 && priceChart.current) {
@@ -443,11 +408,9 @@ export default function ChartView({
       console.warn('[ChartView] regime series not initialized, skipping candle update');
       return;
     }
-    if (!volumeSeries.current) return;
 
     if (!candles.length) {
       regimeSeries.current.forEach(s => s.setData([]));
-      volumeSeries.current.setData([]);
       return;
     }
 
@@ -486,24 +449,6 @@ export default function ChartView({
       data.sort((a, b) => (a.time as number) - (b.time as number));
       try { s.setData(data); } catch { /* time ordering is harmless */ }
     });
-
-    const seenVol = new Set<number>();
-    const volData: HistogramData[] = [];
-    for (const c of candles) {
-      if (!(c.o > 0)) continue;
-      const t = Math.floor(c.t / 1000);
-      if (seenVol.has(t)) continue;
-      seenVol.add(t);
-      const regime = findRegime(t);
-      const baseCol = REGIME_CANDLE[regime] ?? COLORS.cyan;
-      volData.push({
-        time:  t as Time,
-        value: c.v ?? 50,
-        color: baseCol + '55',
-      });
-    }
-    volData.sort((a, b) => (a.time as number) - (b.time as number));
-    volumeSeries.current.setData(volData);
 
     priceChart.current?.timeScale().fitContent();
     redrawOverlays();

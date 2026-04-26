@@ -95,9 +95,13 @@ function livePointsToSeries(points: GCPPoint[], startIndex: number): DataPoint[]
 function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   if (!live.length) return historical;
   const liveStart = live[0].t;
-  const base      = historical.filter(p => p.t < liveStart);
-  const liveDP    = livePointsToSeries(live, base.length);
-  return [...base, ...liveDP].map((p, i) => ({ ...p, i }));
+  // 2h buffer drops historical points right at the boundary so the SVG
+  // path doesn't "lift" between the last historical and first live sample.
+  const base   = historical.filter(p => p.t < liveStart - 7_200_000);
+  const liveDP = livePointsToSeries(live, base.length);
+  return [...base, ...liveDP]
+    .sort((a, b) => a.t - b.t)
+    .map((p, i) => ({ ...p, i }));
 }
 
 function median(arr: number[]): number {
@@ -114,22 +118,24 @@ function median(arr: number[]): number {
 // the live API serves raw netvar_aggregate. Without rescaling, regime
 // classification is wrong on the historical half of the merged series.
 function computeHistoricalScale(historical: DataPoint[], live: GCPPoint[]): number {
-  if (!live.length || !historical.length) return 1;
-  const liveStart = live[0].t;
-  const liveEnd   = live[live.length - 1].t;
+  if (!historical.length || !live.length) return 1;
 
-  const overlap: number[] = [];
-  for (const p of historical) {
-    if (p.t >= liveStart && p.t <= liveEnd) overlap.push(p.v);
-  }
-  if (overlap.length < 10) return 1;
-
-  const histMed = median(overlap);
+  // Global medians — the historical JSON ends before the live window starts,
+  // so a strict time-overlap comparison falls back to scale=1. Comparing
+  // global medians gives a usable approximation of how the two scales differ.
+  const histMed = median(historical.map(p => p.v));
   const liveMed = median(live.map(p => p.v));
-  if (histMed <= 0) return 1;
+  if (histMed <= 0 || liveMed <= 0) return 1;
 
   const ratio = liveMed / histMed;
-  if (!isFinite(ratio) || ratio <= 0) return 1;
+  if (!isFinite(ratio) || ratio < 0.2 || ratio > 10) {
+    console.warn('[GCP] Implausible scale ratio:', ratio, '— using 1.0');
+    return 1;
+  }
+  console.debug(
+    `[GCP] Historical rescaled by x${ratio.toFixed(3)} ` +
+    `(histMed=${histMed.toFixed(1)}, liveMed=${liveMed.toFixed(1)})`,
+  );
   return ratio;
 }
 

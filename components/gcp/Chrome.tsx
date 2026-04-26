@@ -413,6 +413,9 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
       <div className="sb-center">
         <span className="hairline">Net Var</span>
         <span className="tab">{cursorInfo.v}</span>
+        <span title="Updates from the live GCP feed every 60s" style={{
+          fontSize: 9, color: 'var(--green)', letterSpacing: '0.08em', marginLeft: 2,
+        }}>↻</span>
         <span className="sep" />
         <span className="hairline">Regime</span>
         <span className="tab" style={{ color: `var(--r-${cursorInfo.r.toLowerCase()})` }}>{cursorInfo.r}</span>
