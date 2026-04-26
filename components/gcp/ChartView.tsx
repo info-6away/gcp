@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -18,7 +18,7 @@ import {
   type ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
-import { lttbDownsample } from '@/lib/gcp-data';
+import { lttbDownsample, detectPatterns } from '@/lib/gcp-data';
 
 const TD_BASE = 'https://api.twelvedata.com';
 const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
@@ -48,20 +48,11 @@ const C = {
   cyan:    '#4dd9e8',
   border:  '#1c2026',
   red:     '#e24b4a',
-  candle: {
-    A: '#4a72c4',
-    B: '#4dd9e8',
-    C: '#2db8b4',
-    D: '#d4a028',
-    E: '#d46428',
-    F: '#e24b4a',
-  } as Record<string, string>,
+  green:   '#22c55e',
+  redCdl:  '#ef4444',
 };
 
-const REGIME_IDS = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
-
 interface Candle { t: number; o: number; h: number; l: number; c: number; }
-type ColorMode = 'regime' | 'updown';
 
 function toTime(ms: number): Time {
   return Math.floor(ms / 1000) as Time;
@@ -117,12 +108,11 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
 
-  const candleSeriesRef = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const gcpLineRef      = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef      = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
-  const [chartTF,       setChartTF]       = useState<ChartTF>('1h');
-  const [colorMode,     setColorMode]     = useState<ColorMode>('regime');
+  const [chartTF,       setChartTF]       = useState<ChartTF>('5m');
   const [candles,       setCandles]       = useState<Candle[]>([]);
   const [isLoading,     setIsLoading]     = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -136,12 +126,12 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const isInitRef     = useRef(true);
   const prevSymbolRef = useRef<MarketSymbol>(symbol);
 
-  // Wipe every series immediately when the symbol changes so the old
-  // ticker's data doesn't briefly bleed onto the new symbol's axes.
+  // Wipe series immediately when the symbol changes so the old ticker's
+  // data doesn't briefly bleed onto the new symbol's axes.
   useEffect(() => {
     if (prevSymbolRef.current === symbol) return;
     prevSymbolRef.current = symbol;
-    candleSeriesRef.current.forEach(s => { try { s.setData([]); } catch { /* */ } });
+    try { candleSeriesRef.current?.setData([]); } catch { /* */ }
     try { gcpLineRef.current?.setData([]); } catch { /* */ }
     isInitRef.current = true;
   }, [symbol]);
@@ -210,21 +200,16 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
 
     chartRef.current = chart;
 
-    // Pane 0: six regime candle series
-    const csMap = new Map<string, ISeriesApi<'Candlestick'>>();
-    REGIME_IDS.forEach(r => {
-      const col = C.candle[r];
-      const cs = chart.addSeries(CandlestickSeries, {
-        upColor:         col,
-        downColor:       'transparent',
-        borderUpColor:   col,
-        borderDownColor: col,
-        wickUpColor:     col,
-        wickDownColor:   col,
-      }, 0);
-      csMap.set(r, cs);
-    });
-    candleSeriesRef.current = csMap;
+    // Pane 0: single candle series, standard green/red.
+    const cs = chart.addSeries(CandlestickSeries, {
+      upColor:         C.green,
+      downColor:       C.redCdl,
+      borderUpColor:   C.green,
+      borderDownColor: C.redCdl,
+      wickUpColor:     C.green,
+      wickDownColor:   C.redCdl,
+    }, 0);
+    candleSeriesRef.current = cs;
 
     // Pane 1: GCP NetVar line
     const gcpLine = chart.addSeries(LineSeries, {
@@ -263,7 +248,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       chart.remove();
       chartRef.current        = null;
       gcpLineRef.current      = null;
-      candleSeriesRef.current = new Map();
+      candleSeriesRef.current = null;
       markersRef.current      = null;
       setChartReady(false);
     };
@@ -286,77 +271,24 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     line.setData(lineData);
   }, [chartGCPSeries]);
 
-  // ── Split candles by regime + apply to series ──────────────────────────────
-  const updateCandleSeries = useCallback((candleList: Candle[]) => {
-    if (!candleSeriesRef.current.size) return;
+  // ── Apply candles to the single series ─────────────────────────────────────
+  useEffect(() => {
+    if (!chartReady) return;
+    const cs = candleSeriesRef.current;
+    if (!cs || !candles.length) return;
 
-    // Build regime lookup from the FULL series (not just the windowed
-    // chartGCPSeries) so candles that extend beyond the current GCP window
-    // still resolve to a regime.
-    const regimeByTs = new Map<number, string>();
-    series.forEach(p => regimeByTs.set(Math.floor(p.t / 1000), p.r));
-
-    const byRegime = new Map<string, CandlestickData[]>();
-    REGIME_IDS.forEach(r => byRegime.set(r, []));
-
-    for (const c of candleList) {
-      const ts = Math.floor(c.t / 1000);
-      let regime: string | undefined = regimeByTs.get(ts);
-      if (!regime) {
-        // Widened fallback: ±300 s in 60 s steps so 5 m / 15 m candles still
-        // hit a GCP point even when their bar timestamps don't align.
-        for (let d = 60; d <= 300; d += 60) {
-          regime = regimeByTs.get(ts - d) ?? regimeByTs.get(ts + d);
-          if (regime) break;
-        }
-        regime = regime ?? 'B';
-      }
-
-      const bucketKey = colorMode === 'updown'
-        ? (c.c >= c.o ? 'A' : 'F') // map up → A series, down → F series
-        : regime;
-
-      const bucket = byRegime.get(bucketKey) ?? byRegime.get('B')!;
-      bucket.push({
+    const data: CandlestickData[] = candles
+      .slice()
+      .sort((a, b) => a.t - b.t)
+      .map(c => ({
         time:  toTime(c.t),
         open:  c.o,
         high:  c.h,
         low:   c.l,
         close: c.c,
-      });
-    }
+      }));
 
-    candleSeriesRef.current.forEach((cs, regime) => {
-      if (colorMode === 'updown') {
-        // Use only A (green) and F (red) buckets in updown mode
-        const isUp = regime === 'A';
-        const isDn = regime === 'F';
-        const col  = isUp ? '#22c55e' : isDn ? '#ef4444' : 'transparent';
-        cs.applyOptions({
-          upColor:         col,
-          downColor:       col,
-          borderUpColor:   col,
-          borderDownColor: col,
-          wickUpColor:     col,
-          wickDownColor:   col,
-        });
-      } else {
-        const col = C.candle[regime] ?? C.cyan;
-        cs.applyOptions({
-          upColor:         col,
-          downColor:       'transparent',
-          borderUpColor:   col,
-          borderDownColor: col,
-          wickUpColor:     col,
-          wickDownColor:   col,
-        });
-      }
-
-      const data = (byRegime.get(regime) ?? [])
-        .slice()
-        .sort((a, b) => (a.time as number) - (b.time as number));
-      try { cs.setData(data); } catch { /* time ordering harmless */ }
-    });
+    try { cs.setData(data); } catch { /* time ordering harmless */ }
 
     if (isInitRef.current) {
       requestAnimationFrame(() => {
@@ -365,12 +297,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       });
       isInitRef.current = false;
     }
-  }, [series, colorMode]);
-
-  useEffect(() => {
-    if (!chartReady) return;
-    updateCandleSeries(candles);
-  }, [chartReady, candles, updateCandleSeries]);
+  }, [chartReady, candles]);
 
   // ── Initial candle fetch + reset on symbol/TF change ───────────────────────
   useEffect(() => {
@@ -467,12 +394,21 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return () => clearInterval(id);
   }, [symbol, chartTF]);
 
+  // ── Chart-local pattern detection on the chart's own GCP series ────────────
+  // The `patterns` prop is windowed to the Dashboard's VIEW; the Chart tab
+  // should detect on its own visible GCP slice so users see all patterns
+  // for the candle range they're scrolled to.
+  const chartPatterns = useMemo(() => {
+    if (!chartGCPSeries.length) return [] as Pattern[];
+    return detectPatterns(chartGCPSeries, 1);
+  }, [chartGCPSeries]);
+
   // ── Pattern markers on the GCP line (bottom pane) ──────────────────────────
   useEffect(() => {
     const gcpLine = gcpLineRef.current;
     if (!gcpLine) return;
 
-    if (!patterns.length || !chartGCPSeries.length) {
+    if (!chartPatterns.length || !chartGCPSeries.length) {
       markersRef.current?.setMarkers([]);
       return;
     }
@@ -487,8 +423,8 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       'Ignition Drift':      '#888780',
     };
 
-    const markers: SeriesMarker<Time>[] = patterns
-      .filter(p => p.tStart > 0 && p.tEnd > 0)
+    const markers: SeriesMarker<Time>[] = chartPatterns
+      .filter(p => p.tStart > 0)
       .map(p => {
         const closest = chartGCPSeries.reduce((best, pt) =>
           Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
@@ -497,8 +433,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
           time:     toTime(closest.t),
           position: 'aboveBar' as const,
           color:    MARKER_COLORS[p.kind] ?? C.text,
-          shape:    'arrowDown' as const,
+          shape:    'circle' as const,
           text:     p.kind.split(' ').map(w => w[0]).join(''),
+          size:     1,
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
@@ -508,7 +445,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     } else {
       markersRef.current = createSeriesMarkers<Time>(gcpLine, markers);
     }
-  }, [patterns, chartGCPSeries]);
+  }, [chartPatterns, chartGCPSeries]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -525,7 +462,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-2)' }}>OHLCV + GCP Coherence</span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
-        <span style={{ color: 'var(--fg-3)' }}>dashboard {timeframe}</span>
+        <span style={{ color: 'var(--fg-3)' }}>{chartTF} bars</span>
 
         <select
           value={chartTF}
@@ -560,32 +497,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
           </span>
         )}
 
-        <button
-          title="Candle color = GCP coherence regime at that bar (A=Silence → F=Shock), not price direction"
-          onClick={() => setColorMode(m => m === 'regime' ? 'updown' : 'regime')}
-          style={{
-            padding: '2px 8px', fontSize: 9, letterSpacing: '0.08em',
-            fontFamily: 'var(--font-mono)',
-            background: colorMode === 'regime' ? 'var(--bg-3)' : 'transparent',
-            border: '1px solid var(--line-2)', borderRadius: 2,
-            color: colorMode === 'regime' ? 'var(--cyan)' : 'var(--fg-3)',
-            cursor: 'pointer',
-          }}>
-          {colorMode === 'regime' ? 'BY GCP REGIME' : 'BY PRICE DIR'}
-        </button>
-
-        {colorMode === 'regime' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.08em' }}>
-              GCP REGIME →
-            </span>
-            {REGIME_IDS.map(r => (
-              <span key={r} style={{ fontSize: 9, color: C.candle[r], fontFamily: 'var(--font-mono)' }}>
-                {r}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
       <div
@@ -599,8 +510,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
           let priceVal: number | null = null;
           try {
             // coordinateToPrice lives on the series API in lightweight-charts v5
-            const anySeries = candleSeriesRef.current.values().next().value;
-            const p = anySeries?.coordinateToPrice(e.clientY - rect.top);
+            const p = candleSeriesRef.current?.coordinateToPrice(e.clientY - rect.top);
             priceVal = (p as number | null) ?? null;
           } catch { /* not on price pane */ }
           let tsVal: number | null = null;
@@ -690,10 +600,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
               { label: 'Fit all data',  fn: () => chartRef.current?.timeScale().fitContent() },
               { label: 'Go to live',    fn: () => chartRef.current?.timeScale().scrollToRealTime() },
               { label: '─────────────', fn: null as null | (() => void | Promise<void>) },
-              {
-                label: colorMode === 'regime' ? '● Up/Down mode' : '● Regime mode',
-                fn: () => setColorMode(m => m === 'regime' ? 'updown' : 'regime'),
-              },
               {
                 label: 'Load more history ←',
                 fn: async () => {

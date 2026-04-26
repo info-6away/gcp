@@ -168,7 +168,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           />
           <Row
             label="Historical GCP"
-            sub="Feb 1 – Apr 24 2026 · local JSON"
+            sub="Jan 1 – Apr 24 2026 · local JSON"
             value={`${props.historicalPoints.toLocaleString()} min`}
           />
         </Section>
