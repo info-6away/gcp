@@ -140,12 +140,14 @@ export function lttbDownsample(series: DataPoint[], threshold: number): DataPoin
 const LTTB_TARGET = 1200;
 
 export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
-  let bucketed = series;
+  // Ascending order is required by both LTTB and Lightweight Charts.
+  const sorted = [...series].sort((a, b) => a.t - b.t);
+  let bucketed = sorted;
 
   if (barsPerBucket > 1) {
     const out: DataPoint[] = [];
-    for (let i = 0; i < series.length; i += barsPerBucket) {
-      const bucket = series.slice(i, i + barsPerBucket);
+    for (let i = 0; i < sorted.length; i += barsPerBucket) {
+      const bucket = sorted.slice(i, i + barsPerBucket);
       if (!bucket.length) break;
 
       let maxV = -Infinity;

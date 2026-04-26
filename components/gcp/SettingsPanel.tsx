@@ -100,6 +100,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       </Section>
 
       <Section title="System">
+        <Row
+          label="Net Variance (NV)"
+          sub="GCP2 network coherence score — higher = more synchronized global attention"
+          value="0 – 320+ NV"
+        />
+        <Row
+          label="Status bar NV"
+          sub="Updates every 60s from live API · matches cursor in history mode"
+          value="Live ↻"
+        />
         <Row label="Version"     value={APP_VERSION} />
         <Row label="Model"       value={APP_MODEL} />
         <Row

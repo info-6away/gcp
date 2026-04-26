@@ -18,7 +18,6 @@ import {
 } from 'lightweight-charts';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import type { Candle } from '@/lib/useCandleData';
-import { REGIMES } from '@/lib/gcp-data';
 
 const COLORS = {
   bg:         '#0a0b0d',
@@ -445,13 +444,21 @@ export default function ChartView({
     }
 
     regimeSeries.current.forEach((s, regime) => {
-      const data = byRegime.get(regime) ?? [];
-      data.sort((a, b) => (a.time as number) - (b.time as number));
-      try { s.setData(data); } catch { /* time ordering is harmless */ }
+      const data = (byRegime.get(regime) ?? [])
+        .slice()
+        .sort((a, b) => (a.time as number) - (b.time as number));
+      try {
+        s.setData(data);
+      } catch (e) {
+        console.warn('[ChartView] setData error for regime', regime, e);
+      }
     });
 
-    priceChart.current?.timeScale().fitContent();
-    redrawOverlays();
+    requestAnimationFrame(() => {
+      priceChart.current?.timeScale().fitContent();
+      priceChart.current?.priceScale('right').applyOptions({ autoScale: true });
+      redrawOverlays();
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, series, candleColorMode]);
 
@@ -614,21 +621,6 @@ export default function ChartView({
             zIndex: 1,
           }}
         />
-
-        <div style={{
-          position: 'absolute', bottom: 6, left: 12,
-          display: 'flex', gap: 8, pointerEvents: 'none', zIndex: 2,
-        }}>
-          {REGIMES.map(r => (
-            <span key={r.id} style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
-              color: r.color, letterSpacing: '0.06em',
-              textShadow: '0 0 8px rgba(0,0,0,0.8)',
-            }}>
-              {r.id}
-            </span>
-          ))}
-        </div>
       </div>
     </div>
   );

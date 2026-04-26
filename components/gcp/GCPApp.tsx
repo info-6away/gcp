@@ -77,8 +77,8 @@ export default function GCPApp() {
 
   const windowedSeries = useMemo(() => {
     const mins = VIEW_MINUTES[viewWindow];
-    if (!Number.isFinite(mins)) return mergedSeries;
-    return mergedSeries.slice(-mins);
+    const sliced = !Number.isFinite(mins) ? mergedSeries : mergedSeries.slice(-mins);
+    return [...sliced].sort((a, b) => a.t - b.t);
   }, [mergedSeries, viewWindow]);
 
   const displaySeries = useMemo(() => {

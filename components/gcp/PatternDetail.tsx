@@ -332,8 +332,12 @@ export default function PatternDetail({
           </button>
           <div>
             <div className="hairline">Pattern Library</div>
-            <div style={{ fontSize: 9, color: 'var(--fg-4)', marginTop: 2, letterSpacing: '0.04em' }}>
-              Detected on the active timeframe + view window · changing VIEW filters display
+            <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 3, lineHeight: 1.5 }}>
+              <span style={{ color: 'var(--fg-2)' }}>TF</span> sets bar resolution
+              &nbsp;·&nbsp;
+              <span style={{ color: 'var(--fg-2)' }}>VIEW</span> sets time window
+              &nbsp;·&nbsp;
+              patterns re-detect on every change
             </div>
           </div>
           <div style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>

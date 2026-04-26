@@ -411,11 +411,16 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
         )}
       </div>
       <div className="sb-center">
-        <span className="hairline">Net Var</span>
-        <span className="tab">{cursorInfo.v}</span>
-        <span title="Updates from the live GCP feed every 60s" style={{
-          fontSize: 9, color: 'var(--green)', letterSpacing: '0.08em', marginLeft: 2,
-        }}>↻</span>
+        <span
+          title="Net Variance — the GCP2 network coherence score. Higher values = more synchronized global attention. Updates every 60 seconds from the live HeartMath GCP2 API."
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'help' }}
+        >
+          <span className="hairline">Net Var</span>
+          <span className="tab">{cursorInfo.v}</span>
+          <span style={{
+            fontSize: 9, color: 'var(--green)', letterSpacing: '0.08em',
+          }}>↻</span>
+        </span>
         <span className="sep" />
         <span className="hairline">Regime</span>
         <span className="tab" style={{ color: `var(--r-${cursorInfo.r.toLowerCase()})` }}>{cursorInfo.r}</span>
