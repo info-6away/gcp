@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import type { DataPoint, Pattern } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
 
@@ -85,7 +85,20 @@ function NVSparkline({ series }: { series: DataPoint[] }) {
   );
 }
 
-function NVCard({ series, liveNV }: { series: DataPoint[]; liveNV: number | null }) {
+function formatSymbolPrice(symbol: MarketSymbol, price: number): string {
+  if (symbol === 'BTC')    return `$${Math.round(price).toLocaleString()}`;
+  if (symbol === 'XAGUSD') return `$${price.toFixed(3)}`;
+  return `$${price.toFixed(2)}`;
+}
+
+function NVCard({
+  series, liveNV, symbol, symbolPrice,
+}: {
+  series:      DataPoint[];
+  liveNV:      number | null;
+  symbol:      MarketSymbol;
+  symbolPrice: number | null;
+}) {
   const prev = series.length > 24 ? series[series.length - 24] : null;
   const delta = liveNV != null && prev ? liveNV - prev.v : null;
 
@@ -108,6 +121,21 @@ function NVCard({ series, liveNV }: { series: DataPoint[]; liveNV: number | null
       )}
       <NVSparkline series={series} />
       <div style={{ fontSize: 7, color: 'var(--fg-4)', marginTop: 3 }}>last 15 readings</div>
+
+      {symbolPrice != null && (
+        <div style={{
+          marginTop: 8,
+          paddingTop: 8,
+          borderTop: '1px solid var(--line-0)',
+          display: 'flex', justifyContent: 'space-between',
+          fontSize: 9, color: 'var(--fg-3)',
+        }}>
+          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.06em' }}>{symbol}</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {formatSymbolPrice(symbol, symbolPrice)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -280,12 +308,16 @@ function NewsRow({ item }: { item: NewsItem }) {
 }
 
 interface DashboardProps {
-  gcpData:  GCPDataState;
-  series:   DataPoint[];
-  patterns: Pattern[];
+  gcpData:     GCPDataState;
+  series:      DataPoint[];
+  patterns:    Pattern[];
+  symbol:      MarketSymbol;
+  symbolPrice: number | null;
 }
 
-export default function Dashboard({ gcpData, series, patterns }: DashboardProps) {
+export default function Dashboard({
+  gcpData, series, patterns, symbol, symbolPrice,
+}: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
   const latestPattern = patterns[patterns.length - 1] ?? null;
 
@@ -303,7 +335,12 @@ export default function Dashboard({ gcpData, series, patterns }: DashboardProps)
           borderBottom: '1px solid var(--line-0)',
           flexShrink: 0,
         }}>
-          <NVCard series={series} liveNV={gcpData.liveNetvar} />
+          <NVCard
+            series={series}
+            liveNV={gcpData.liveNetvar}
+            symbol={symbol}
+            symbolPrice={symbolPrice}
+          />
           <RegimeCard regime={gcpData.liveRegime} />
           <PatternCard patterns={patterns} series={series} />
         </div>

@@ -183,6 +183,8 @@ export default function GCPApp() {
               gcpData={gcpData}
               series={baseSeries}
               patterns={displayPatterns}
+              symbol={symbol}
+              symbolPrice={goldData.price}
             />
           )}
           {page === 'pattern' && (

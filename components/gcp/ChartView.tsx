@@ -29,14 +29,14 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
 };
 
-type ChartTF = '5m' | '15m' | '1h' | '4h' | '1D';
+type ChartTF = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
 
 const TD_INTERVALS: Record<ChartTF, string> = {
-  '5m': '5min', '15m': '15min', '1h': '1h', '4h': '4h', '1D': '1day',
+  '1m': '1min', '5m': '5min', '15m': '15min', '1h': '1h', '4h': '4h', '1D': '1day',
 };
 
 const INIT_SIZE: Record<ChartTF, number> = {
-  '5m': 500, '15m': 500, '1h': 500, '4h': 300, '1D': 180,
+  '1m': 500, '5m': 500, '15m': 500, '1h': 500, '4h': 300, '1D': 180,
 };
 
 const C = {
@@ -533,7 +533,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             marginLeft: 6,
           }}
         >
-          {(['5m','15m','1h','4h','1D'] as ChartTF[]).map(tf => (
+          {(['1m','5m','15m','1h','4h','1D'] as ChartTF[]).map(tf => (
             <option key={tf} value={tf}>{tf}</option>
           ))}
         </select>

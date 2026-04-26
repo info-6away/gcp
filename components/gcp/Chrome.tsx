@@ -235,25 +235,27 @@ function Header({
           fontSize: 10,
           fontFamily: 'var(--font-mono)',
         }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            padding: '4px 10px',
-            borderRight: '1px solid var(--line-1)',
-          }}>
-            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>GCP</span>
-            {gcpNetvar !== null && (
-              <span style={{ color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
-                {gcpNetvar.toFixed(1)}
-              </span>
-            )}
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: gcpError ? 'var(--red)' : gcpLive ? 'var(--green)' : 'var(--fg-3)',
-              boxShadow: gcpLive && !gcpError ? '0 0 5px var(--green)' : 'none',
-              animation: gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
-              flexShrink: 0,
-            }} />
-          </div>
+          {page !== 'dashboard' && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '4px 10px',
+              borderRight: '1px solid var(--line-1)',
+            }}>
+              <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>GCP</span>
+              {gcpNetvar !== null && (
+                <span style={{ color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
+                  {gcpNetvar.toFixed(1)}
+                </span>
+              )}
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: gcpError ? 'var(--red)' : gcpLive ? 'var(--green)' : 'var(--fg-3)',
+                boxShadow: gcpLive && !gcpError ? '0 0 5px var(--green)' : 'none',
+                animation: gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
+                flexShrink: 0,
+              }} />
+            </div>
+          )}
 
           <div
             title={goldSource ? `Price source: ${goldSource}` : 'Price source: pending'}
