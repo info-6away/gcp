@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { buildSeries, detectPatterns, processSeries } from '@/lib/gcp-data';
 import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
+import { usePSSAlert } from '@/lib/usePSSAlert';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -11,6 +12,20 @@ import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
+
+const PREFS_LS_KEY = 'gcpro-settings';
+
+function readPssAlertsPref(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const raw = window.localStorage.getItem(PREFS_LS_KEY);
+    if (!raw) return true;
+    const obj = JSON.parse(raw);
+    return obj.pssAlerts ?? true;
+  } catch {
+    return true;
+  }
+}
 
 export default function GCPApp() {
   const [page, setPage] = useState<AppPage>('dashboard');
@@ -67,6 +82,30 @@ export default function GCPApp() {
   useEffect(() => {
     setCursor(displaySeries.length - 1);
   }, [timeframe, displaySeries.length]);
+
+  // PSS Alert: browser notification when a new high-PSS pattern arrives.
+  const [alertEnabled, setAlertEnabled] = useState<boolean>(true);
+  useEffect(() => {
+    setAlertEnabled(readPssAlertsPref());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PREFS_LS_KEY) setAlertEnabled(readPssAlertsPref());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const [pssFlash, setPssFlash] = useState(false);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { testAlert } = usePSSAlert(
+    displayPatterns,
+    displaySeries,
+    alertEnabled,
+    () => {
+      setPssFlash(true);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setPssFlash(false), 3_000);
+    },
+  );
 
   useEffect(() => {
     if (!live) return;
@@ -185,6 +224,7 @@ export default function GCPApp() {
               patterns={displayPatterns}
               symbol={symbol}
               symbolPrice={goldData.price}
+              pssFlash={pssFlash}
             />
           )}
           {page === 'pattern' && (
@@ -218,6 +258,7 @@ export default function GCPApp() {
               timeframe={timeframe}
               seriesLength={displaySeries.length}
               historicalPoints={baseSeries.length}
+              onTestAlert={testAlert}
             />
           )}
         </main>

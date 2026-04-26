@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 import { PageHeader } from '@/components/gcp/Chrome';
+import { PSS_THRESHOLD } from '@/lib/usePSSAlert';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 
 interface SettingsPanelProps {
@@ -16,6 +17,7 @@ interface SettingsPanelProps {
   timeframe:        Timeframe;
   seriesLength:     number;
   historicalPoints: number;
+  onTestAlert:      () => void;
 }
 
 const PREFS_LS_KEY = 'gcpro-settings';
@@ -24,12 +26,14 @@ interface Prefs {
   showRegimeBands:    boolean;
   showPatternMarkers: boolean;
   showNewsFeed:       boolean;
+  pssAlerts:          boolean;
 }
 
 const DEFAULT_PREFS: Prefs = {
   showRegimeBands:    true,
   showPatternMarkers: true,
   showNewsFeed:       true,
+  pssAlerts:          true,
 };
 
 function loadPrefs(): Prefs {
@@ -192,6 +196,38 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             value={prefs.showNewsFeed}
             onChange={v => setPref('showNewsFeed', v)}
           />
+          <ToggleRow
+            label="PSS Alerts"
+            sub={`Browser notification when PSS crosses ${PSS_THRESHOLD} — works in background tabs`}
+            value={prefs.pssAlerts}
+            onChange={v => setPref('pssAlerts', v)}
+          />
+          {prefs.pssAlerts && (
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', padding: '8px 0',
+              borderBottom: '1px solid var(--line-0)',
+            }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Test notification</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                  Sends a sample alert to verify permissions are set
+                </div>
+              </div>
+              <button
+                onClick={props.onTestAlert}
+                style={{
+                  padding: '4px 12px', fontSize: 9, letterSpacing: '0.08em',
+                  fontFamily: 'var(--font-mono)',
+                  background: 'transparent',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 2, color: 'var(--fg-2)', cursor: 'pointer',
+                }}
+              >
+                SEND TEST
+              </button>
+            </div>
+          )}
         </Section>
 
         <Section title="Current Session">

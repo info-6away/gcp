@@ -84,6 +84,11 @@ button { font-family: inherit; font-size: inherit; color: inherit; background: n
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }
 }
+@keyframes pssPulse {
+  0%   { background-color: var(--bg-1); }
+  50%  { background-color: rgba(212, 160, 40, 0.18); }
+  100% { background-color: var(--bg-1); }
+}
 .live-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--green);

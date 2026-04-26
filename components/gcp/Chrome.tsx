@@ -359,6 +359,7 @@ interface StatusBarProps {
 
 function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusBarProps) {
   const [utcTime, setUtcTime] = useState('');
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>('unsupported');
   useEffect(() => {
     const tick = () => {
       const d = new Date();
@@ -368,6 +369,12 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    setNotifPerm(Notification.permission);
+    const poll = setInterval(() => setNotifPerm(Notification.permission), 5_000);
+    return () => clearInterval(poll);
   }, []);
   return (
     <footer className="status-bar">
@@ -411,6 +418,22 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
         <span className="tab">{cursorInfo.g}</span>
       </div>
       <div className="sb-right" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {notifPerm === 'granted' && (
+          <span
+            title="PSS Alerts enabled — browser notifications will fire on high-PSS patterns"
+            style={{ fontSize: 8, color: 'var(--green)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}
+          >
+            ALERTS ON
+          </span>
+        )}
+        {notifPerm === 'denied' && (
+          <span
+            title="Notifications blocked — enable them in your browser settings to receive PSS alerts"
+            style={{ fontSize: 8, color: 'var(--red)', letterSpacing: '0.08em', fontFamily: 'var(--font-mono)' }}
+          >
+            ALERTS OFF
+          </span>
+        )}
         <div style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
           <span style={{ color: 'var(--fg-4)', marginRight: 4 }}>UTC</span>
           <span className="tab" style={{ color: 'var(--fg-1)' }}>{utcTime}</span>

@@ -187,12 +187,21 @@ function RegimeCard({ regime }: { regime: string | null }) {
   );
 }
 
-function PatternCard({ patterns, series }: { patterns: Pattern[]; series: DataPoint[] }) {
+function PatternCard({ patterns, series, flash }: { patterns: Pattern[]; series: DataPoint[]; flash: boolean }) {
   const latest = patterns[patterns.length - 1] ?? null;
+
+  const flashStyle: React.CSSProperties = flash ? {
+    outline:    '1px solid #d4a028',
+    animation:  'pssPulse 0.5s ease-in-out 3',
+    transition: 'outline 0.3s ease',
+  } : {
+    outline:    '1px solid transparent',
+    transition: 'outline 0.3s ease',
+  };
 
   if (!latest) {
     return (
-      <div style={{ background: 'var(--bg-1)', padding: 16 }}>
+      <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
         <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
           ACTIVE PATTERN · PSS
         </div>
@@ -207,7 +216,7 @@ function PatternCard({ patterns, series }: { patterns: Pattern[]; series: DataPo
   const tier   = pss >= 80 ? 'STRONG' : pss >= 60 ? 'FORMING' : 'WEAK';
 
   return (
-    <div style={{ background: 'var(--bg-1)', padding: 16 }}>
+    <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
       <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
         ACTIVE PATTERN · PSS
       </div>
@@ -313,10 +322,11 @@ interface DashboardProps {
   patterns:    Pattern[];
   symbol:      MarketSymbol;
   symbolPrice: number | null;
+  pssFlash?:   boolean;
 }
 
 export default function Dashboard({
-  gcpData, series, patterns, symbol, symbolPrice,
+  gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
   const latestPattern = patterns[patterns.length - 1] ?? null;
@@ -342,7 +352,7 @@ export default function Dashboard({
             symbolPrice={symbolPrice}
           />
           <RegimeCard regime={gcpData.liveRegime} />
-          <PatternCard patterns={patterns} series={series} />
+          <PatternCard patterns={patterns} series={series} flash={pssFlash} />
         </div>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
