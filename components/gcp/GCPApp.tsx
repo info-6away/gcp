@@ -10,7 +10,7 @@ import PatternDetail from './PatternDetail';
 import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
-import { formatPrice, getSymbolMeta, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
+import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
 export default function GCPApp() {
   const [page, setPage] = useState<AppPage>('dashboard');
@@ -209,7 +209,7 @@ export default function GCPApp() {
               series={baseSeries}
               patterns={displayPatterns}
               symbol={symbol}
-              symbolColor={getSymbolMeta(symbol).color}
+              timeframe={timeframe}
             />
           )}
           {page === 'settings' && (

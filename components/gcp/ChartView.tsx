@@ -1,31 +1,26 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
+  HistogramSeries,
   LineSeries,
   CrosshairMode,
   LineStyle,
+  ColorType,
   createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
   type Time,
   type CandlestickData,
+  type HistogramData,
   type LineData,
   type SeriesMarker,
   type ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
-import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import { lttbDownsample } from '@/lib/gcp-data';
-
-interface Candle {
-  t: number;
-  o: number;
-  h: number;
-  l: number;
-  c: number;
-}
 
 const TD_BASE = 'https://api.twelvedata.com';
 const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
@@ -37,310 +32,396 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
 
 type ChartTF = '5m' | '15m' | '1h' | '4h' | '1D';
 
-const CHART_TF_LIST: ChartTF[] = ['5m', '15m', '1h', '4h', '1D'];
-
-const TD_INTERVALS_CHART: Record<ChartTF, string> = {
-  '5m':  '5min',
-  '15m': '15min',
-  '1h':  '1h',
-  '4h':  '4h',
-  '1D':  '1day',
+const TD_INTERVALS: Record<ChartTF, string> = {
+  '5m': '5min', '15m': '15min', '1h': '1h', '4h': '4h', '1D': '1day',
 };
 
-const CHART_OUTPUT_SIZE: Record<ChartTF, number> = {
-  '5m':  2016,
-  '15m': 672,
-  '1h':  168,
-  '4h':  84,   // 14 days × 6 — gives room to zoom out
-  '1D':  30,   // 30 daily candles for monthly context
+const INIT_SIZE: Record<ChartTF, number> = {
+  '5m': 500, '15m': 500, '1h': 500, '4h': 300, '1D': 180,
 };
 
-const COLORS = {
-  bg:         '#0a0b0d',
-  bgPanel:    '#0f1114',
-  line:       '#1c2026',
-  text:       '#6b7280',
-  textBright: '#aeb4bf',
-  cyan:       '#4dd9e8',
-  amber:      '#d4a028',
-  green:      '#22c55e',
-  red:        '#ef4444',
-};
-
-const REGIME_CANDLE: Record<string, string> = {
-  A: '#4a72c4',
-  B: '#4dd9e8',
-  C: '#2db8b4',
-  D: '#d4a028',
-  E: '#d46428',
-  F: '#e24b4a',
+const C = {
+  bg:      '#07080a',
+  bgPanel: '#0f1114',
+  grid:    '#15181d',
+  text:    '#6b7280',
+  textBr:  '#aeb4bf',
+  cyan:    '#4dd9e8',
+  border:  '#1c2026',
+  red:     '#e24b4a',
+  regime: {
+    A: 'rgba(59,90,160,0.4)',
+    B: 'rgba(50,130,180,0.4)',
+    C: 'rgba(40,180,175,0.4)',
+    D: 'rgba(200,160,40,0.55)',
+    E: 'rgba(210,100,40,0.55)',
+    F: 'rgba(220,50,50,0.65)',
+  } as Record<string, string>,
+  candle: {
+    A: '#4a72c4',
+    B: '#4dd9e8',
+    C: '#2db8b4',
+    D: '#d4a028',
+    E: '#d46428',
+    F: '#e24b4a',
+  } as Record<string, string>,
 };
 
 const REGIME_IDS = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
-type RegimeKey = (typeof REGIME_IDS)[number];
 
-const REGIME_BG: Record<string, string> = {
-  A: 'rgba(59,90,160,0.13)',
-  B: 'rgba(50,130,180,0.13)',
-  C: 'rgba(40,180,175,0.13)',
-  D: 'rgba(200,160,40,0.16)',
-  E: 'rgba(210,100,40,0.16)',
-  F: 'rgba(220,50,50,0.22)',
-};
+interface Candle { t: number; o: number; h: number; l: number; c: number; }
+type ColorMode = 'regime' | 'updown';
 
-const REGIME_STRIP_COLOR: Record<string, string> = {
-  A: 'rgba(74,114,196,0.7)',
-  B: 'rgba(77,217,232,0.7)',
-  C: 'rgba(45,184,180,0.7)',
-  D: 'rgba(212,160,40,0.85)',
-  E: 'rgba(212,100,40,0.85)',
-  F: 'rgba(226,75,74,0.95)',
-};
+function toTime(ms: number): Time {
+  return Math.floor(ms / 1000) as Time;
+}
 
-const KIND_COLOR: Record<string, string> = {
-  'Alignment Ladder':   '#4dd9e8',
-  'Shock Jump':         '#ef4444',
-  'Failed Alignment':   '#d946ef',
-  'Coherence Volcano':  '#f59e0b',
-  'Compression Coil':   '#6b7280',
-  'Compression Release':'#2a8a96',
-  'Ignition Drift':     '#6b7280',
-};
+async function fetchCandlesBefore(
+  symbol: MarketSymbol,
+  tf: ChartTF,
+  outputsize: number,
+  before?: number,
+): Promise<Candle[]> {
+  const sym = TD_SYMBOLS[symbol];
+  if (!sym || !TD_KEY) throw new Error('No symbol or API key');
 
-const KIND_ABBR: Record<string, string> = {
-  'Alignment Ladder':    'AL',
-  'Compression Coil':    'CC',
-  'Compression Release': 'CR',
-  'Failed Alignment':    'FA',
-  'Coherence Volcano':   'CV',
-  'Ignition Drift':      'ID',
-  'Shock Jump':          'SJ',
-};
+  let url = `${TD_BASE}/time_series`
+    + `?symbol=${encodeURIComponent(sym)}`
+    + `&interval=${TD_INTERVALS[tf]}`
+    + `&outputsize=${outputsize}`
+    + `&apikey=${TD_KEY}`;
 
-function candlesToTV(candles: Candle[]): CandlestickData[] {
-  // Lightweight Charts requires unique, ascending times.
-  const seen = new Set<number>();
-  const out: CandlestickData[] = [];
-  for (const c of candles) {
-    if (!(c.o > 0 && c.c > 0)) continue;
-    const t = Math.floor(c.t / 1000);
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push({ time: t as Time, open: c.o, high: c.h, low: c.l, close: c.c });
+  if (before) {
+    const d = new Date(before).toISOString().replace('T', ' ').slice(0, 19);
+    url += `&end_date=${encodeURIComponent(d)}`;
   }
-  return out.sort((a, b) => (a.time as number) - (b.time as number));
-}
 
-function seriesToLine(series: DataPoint[]): LineData[] {
-  const seen = new Set<number>();
-  const out: LineData[] = [];
-  for (const s of series) {
-    const t = Math.floor(s.t / 1000);
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push({ time: t as Time, value: s.v });
-  }
-  return out.sort((a, b) => (a.time as number) - (b.time as number));
-}
+  const res  = await fetch(url);
+  if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
+  const data = await res.json();
+  if (data.status === 'error') throw new Error(data.message ?? 'TD error');
 
-function drawRegimeBands(canvas: HTMLCanvasElement, chart: IChartApi, series: DataPoint[]) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!series.length) return;
-
-  const ts = chart.timeScale();
-  const H = canvas.height;
-
-  let i = 0;
-  while (i < series.length) {
-    const regime = series[i].r;
-    let j = i;
-    while (j < series.length && series[j].r === regime) j++;
-
-    const t1 = Math.floor(series[i].t / 1000);
-    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
-    const x1 = ts.timeToCoordinate(t1 as Time);
-    const x2 = ts.timeToCoordinate(t2 as Time);
-
-    if (x1 !== null && x2 !== null && x2 > x1) {
-      ctx.fillStyle = REGIME_BG[regime] ?? 'transparent';
-      ctx.fillRect(x1, 0, x2 - x1, H);
-    }
-    i = j;
-  }
-}
-
-function drawRegimeStrip(canvas: HTMLCanvasElement, chart: IChartApi, series: DataPoint[]) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!series.length) return;
-
-  const ts = chart.timeScale();
-  const H = canvas.height;
-
-  let i = 0;
-  while (i < series.length) {
-    const regime = series[i].r;
-    let j = i;
-    while (j < series.length && series[j].r === regime) j++;
-
-    const t1 = Math.floor(series[i].t / 1000);
-    const t2 = Math.floor(series[Math.min(j, series.length - 1)].t / 1000);
-    const x1 = ts.timeToCoordinate(t1 as Time);
-    const x2 = ts.timeToCoordinate(t2 as Time);
-
-    if (x1 !== null && x2 !== null && x2 > x1) {
-      ctx.fillStyle = REGIME_STRIP_COLOR[regime] ?? 'transparent';
-      ctx.fillRect(x1, 0, x2 - x1, H);
-    }
-    i = j;
-  }
-}
-
-interface ChartViewProps {
-  series:      DataPoint[];
-  patterns:    Pattern[];
-  symbol:      MarketSymbol;
-  symbolColor: string;
-}
-
-const CANDLES_PER_PAGE = 500;
-
-export default function ChartView({
-  series, patterns, symbol,
-}: ChartViewProps) {
-  const [chartTF, setChartTF] = useState<ChartTF>('1h');
-
-  const [candles, setCandlesState] = useState<Candle[]>([]);
-  const [candleLoading, setCandleLoading] = useState(true);
-  const [candleError, setCandleError] = useState<string | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMoreLeft, setHasMoreLeft] = useState(true);
-
-  const allCandlesRef = useRef<Candle[]>([]);
-  const isFetchingMoreRef = useRef(false);
-  const isInitialLoadRef = useRef(true);
-
-  const fetchCandles = useCallback(async (before?: number): Promise<Candle[]> => {
-    const tdSymbol = TD_SYMBOLS[symbol];
-    if (!tdSymbol || !TD_KEY) throw new Error('No symbol or API key');
-
-    const interval = TD_INTERVALS_CHART[chartTF];
-    let url = `${TD_BASE}/time_series`
-      + `?symbol=${encodeURIComponent(tdSymbol)}`
-      + `&interval=${interval}`
-      + `&outputsize=${CANDLES_PER_PAGE}`
-      + `&apikey=${TD_KEY}`;
-
-    if (before) {
-      const endDate = new Date(before).toISOString().replace('T', ' ').slice(0, 19);
-      url += `&end_date=${encodeURIComponent(endDate)}`;
-    }
-
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
-    const data = await res.json();
-    if (data.status === 'error') throw new Error(data.message ?? 'TD error');
-
-    const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
-      data.values ?? [];
-    if (!values.length) return [];
-
-    return values.slice().reverse().map(v => ({
+  const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
+    data.values ?? [];
+  return values
+    .slice()
+    .reverse()
+    .map(v => ({
       t: new Date(v.datetime + 'Z').getTime(),
       o: parseFloat(v.open),
       h: parseFloat(v.high),
       l: parseFloat(v.low),
       c: parseFloat(v.close),
     }));
-  }, [symbol, chartTF]);
+}
 
-  // Initial load + reset on symbol/TF change.
+interface ChartViewProps {
+  series:    DataPoint[];
+  patterns:  Pattern[];
+  symbol:    MarketSymbol;
+  timeframe: Timeframe;
+}
+
+export default function ChartView({ series, patterns, symbol, timeframe }: ChartViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef     = useRef<IChartApi | null>(null);
+
+  const candleSeriesRef = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
+  const regimeStripRef  = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const gcpLineRef      = useRef<ISeriesApi<'Line'> | null>(null);
+  const markersRef      = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+
+  const [chartTF,       setChartTF]       = useState<ChartTF>('1h');
+  const [colorMode,     setColorMode]     = useState<ColorMode>('regime');
+  const [candles,       setCandles]       = useState<Candle[]>([]);
+  const [isLoading,     setIsLoading]     = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreLeft,   setHasMoreLeft]   = useState(true);
+  const [error,         setError]         = useState<string | null>(null);
+  const [chartReady,    setChartReady]    = useState(false);
+
+  const allCandlesRef = useRef<Candle[]>([]);
+  const earliestTsRef = useRef<number | null>(null);
+  const isInitRef     = useRef(true);
+
+  const chartGCPSeries = useMemo(() => {
+    if (!series.length) return series;
+    if (!candles.length) {
+      const fallback = series.slice(-1440);
+      return fallback.length > 800 ? lttbDownsample(fallback, 800) : fallback;
+    }
+    const earliest = candles[0].t;
+    const latest   = candles[candles.length - 1].t;
+    const buffer   = (latest - earliest) * 0.05;
+    const filtered = series
+      .filter(p => p.t >= earliest - buffer)
+      .sort((a, b) => a.t - b.t);
+    return filtered.length > 800 ? lttbDownsample(filtered, 800) : filtered;
+  }, [series, candles]);
+
+  // ── Create chart + 3 panes (once) ──────────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: C.bg },
+        textColor:  C.text,
+        fontFamily: "'IBM Plex Mono', monospace",
+        fontSize:   11,
+      },
+      grid: {
+        vertLines: { color: C.grid, style: LineStyle.Dashed },
+        horzLines: { color: C.grid, style: LineStyle.Dashed },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: C.textBr, width: 1, style: LineStyle.Dashed, labelBackgroundColor: C.bgPanel },
+        horzLine: { color: C.textBr, width: 1, style: LineStyle.Dashed, labelBackgroundColor: C.bgPanel },
+      },
+      timeScale: {
+        borderColor:    C.border,
+        timeVisible:    true,
+        secondsVisible: false,
+        tickMarkFormatter: (t: number) => {
+          const d = new Date(t * 1000);
+          const p = (n: number) => String(n).padStart(2, '0');
+          return `${p(d.getHours())}:${p(d.getMinutes())}`;
+        },
+      },
+      rightPriceScale: { borderColor: C.border },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale:  { mouseWheel: true, pinch: true },
+    });
+
+    chartRef.current = chart;
+
+    // Pane 0: six regime candle series
+    const csMap = new Map<string, ISeriesApi<'Candlestick'>>();
+    REGIME_IDS.forEach(r => {
+      const col = C.candle[r];
+      const cs = chart.addSeries(CandlestickSeries, {
+        upColor:         col,
+        downColor:       'transparent',
+        borderUpColor:   col,
+        borderDownColor: col,
+        wickUpColor:     col,
+        wickDownColor:   col,
+      }, 0);
+      csMap.set(r, cs);
+    });
+    candleSeriesRef.current = csMap;
+
+    // Pane 1: regime color strip
+    const strip = chart.addSeries(HistogramSeries, {
+      priceFormat:      { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    }, 1);
+    regimeStripRef.current = strip;
+
+    // Pane 2: GCP NetVar line
+    const gcpLine = chart.addSeries(LineSeries, {
+      color:                      C.cyan,
+      lineWidth:                  2,
+      lastValueVisible:           true,
+      priceLineVisible:           false,
+      crosshairMarkerVisible:     true,
+      crosshairMarkerRadius:      4,
+      crosshairMarkerBorderColor: C.bg,
+    }, 2);
+    gcpLineRef.current = gcpLine;
+
+    // Set pane height ratios. Best-effort — works on lightweight-charts 5.x
+    // panes() returns IPane[]; setStretchFactor controls relative size.
+    try {
+      const panes = chart.panes();
+      if (panes.length >= 3) {
+        panes[0].setStretchFactor(70);
+        panes[1].setStretchFactor(8);
+        panes[2].setStretchFactor(22);
+      }
+    } catch { /* older versions silently ignore */ }
+
+    const ro = new ResizeObserver(entries => {
+      const r = entries[0].contentRect;
+      chart.applyOptions({
+        width:  Math.max(400, r.width),
+        height: Math.max(300, r.height),
+      });
+    });
+    ro.observe(containerRef.current);
+
+    setChartReady(true);
+
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current        = null;
+      regimeStripRef.current  = null;
+      gcpLineRef.current      = null;
+      candleSeriesRef.current = new Map();
+      markersRef.current      = null;
+      setChartReady(false);
+    };
+  }, []);
+
+  // ── GCP line + regime strip updates ────────────────────────────────────────
+  useEffect(() => {
+    const line  = gcpLineRef.current;
+    const strip = regimeStripRef.current;
+    if (!line || !strip) return;
+
+    if (!chartGCPSeries.length) {
+      line.setData([]);
+      strip.setData([]);
+      return;
+    }
+
+    const lineData: LineData[] = chartGCPSeries.map(p => ({
+      time:  toTime(p.t),
+      value: p.v,
+    }));
+    line.setData(lineData);
+
+    const stripData: HistogramData[] = chartGCPSeries.map(p => ({
+      time:  toTime(p.t),
+      value: 1,
+      color: C.regime[p.r] ?? C.regime.A,
+    }));
+    strip.setData(stripData);
+  }, [chartGCPSeries]);
+
+  // ── Split candles by regime + apply to series ──────────────────────────────
+  const updateCandleSeries = useCallback((candleList: Candle[]) => {
+    if (!candleSeriesRef.current.size) return;
+
+    const regimeByTs = new Map<number, string>();
+    chartGCPSeries.forEach(p => regimeByTs.set(Math.floor(p.t / 1000), p.r));
+
+    const byRegime = new Map<string, CandlestickData[]>();
+    REGIME_IDS.forEach(r => byRegime.set(r, []));
+
+    for (const c of candleList) {
+      const ts = Math.floor(c.t / 1000);
+      let regime: string | undefined = regimeByTs.get(ts);
+      if (!regime) {
+        for (let d = 1; d <= 60; d++) {
+          regime = regimeByTs.get(ts - d) ?? regimeByTs.get(ts + d);
+          if (regime) break;
+        }
+        regime = regime ?? 'B';
+      }
+
+      const bucketKey = colorMode === 'updown'
+        ? (c.c >= c.o ? 'A' : 'F') // map up → A series, down → F series
+        : regime;
+
+      const bucket = byRegime.get(bucketKey) ?? byRegime.get('B')!;
+      bucket.push({
+        time:  toTime(c.t),
+        open:  c.o,
+        high:  c.h,
+        low:   c.l,
+        close: c.c,
+      });
+    }
+
+    candleSeriesRef.current.forEach((cs, regime) => {
+      if (colorMode === 'updown') {
+        // Use only A (green) and F (red) buckets in updown mode
+        const isUp = regime === 'A';
+        const isDn = regime === 'F';
+        const col  = isUp ? '#22c55e' : isDn ? '#ef4444' : 'transparent';
+        cs.applyOptions({
+          upColor:         col,
+          downColor:       col,
+          borderUpColor:   col,
+          borderDownColor: col,
+          wickUpColor:     col,
+          wickDownColor:   col,
+        });
+      } else {
+        const col = C.candle[regime] ?? C.cyan;
+        cs.applyOptions({
+          upColor:         col,
+          downColor:       'transparent',
+          borderUpColor:   col,
+          borderDownColor: col,
+          wickUpColor:     col,
+          wickDownColor:   col,
+        });
+      }
+
+      const data = (byRegime.get(regime) ?? [])
+        .slice()
+        .sort((a, b) => (a.time as number) - (b.time as number));
+      try { cs.setData(data); } catch { /* time ordering harmless */ }
+    });
+
+    if (isInitRef.current) {
+      requestAnimationFrame(() => {
+        chartRef.current?.timeScale().fitContent();
+        chartRef.current?.priceScale('right').applyOptions({ autoScale: true });
+      });
+      isInitRef.current = false;
+    }
+  }, [chartGCPSeries, colorMode]);
+
+  useEffect(() => {
+    if (!chartReady) return;
+    updateCandleSeries(candles);
+  }, [chartReady, candles, updateCandleSeries]);
+
+  // ── Initial candle fetch + reset on symbol/TF change ───────────────────────
   useEffect(() => {
     let cancelled = false;
-    setCandleLoading(true);
-    setCandleError(null);
+    isInitRef.current = true;
+    setIsLoading(true);
+    setError(null);
     setHasMoreLeft(true);
-    setIsLoadingMore(false);
-    isFetchingMoreRef.current = false;
-    isInitialLoadRef.current = true;
     allCandlesRef.current = [];
-    setCandlesState([]);
+    earliestTsRef.current = null;
+    setCandles([]);
 
-    fetchCandles()
+    fetchCandlesBefore(symbol, chartTF, INIT_SIZE[chartTF])
       .then(initial => {
         if (cancelled) return;
         allCandlesRef.current = initial;
-        setCandlesState(initial);
-        setCandleLoading(false);
+        earliestTsRef.current = initial[0]?.t ?? null;
+        setCandles(initial);
+        setIsLoading(false);
       })
       .catch(e => {
         if (cancelled) return;
         console.warn('[ChartView] initial candle fetch error:', e);
-        setCandleError(String(e));
-        setCandleLoading(false);
+        setError(String(e));
+        setIsLoading(false);
       });
 
     return () => { cancelled = true; };
-  }, [fetchCandles]);
+  }, [symbol, chartTF]);
 
-  // Right-side live refresh — append new candles every 60s.
+  // ── Lazy scroll-back ───────────────────────────────────────────────────────
   useEffect(() => {
-    const id = setInterval(async () => {
-      if (!allCandlesRef.current.length) return;
-      try {
-        const latest = await fetchCandles();
-        if (!latest.length) return;
+    if (!chartReady) return;
+    const chart = chartRef.current;
+    if (!chart) return;
 
-        const lastTs  = allCandlesRef.current[allCandlesRef.current.length - 1].t;
-        const newOnes = latest.filter(c => c.t > lastTs);
-        if (!newOnes.length) return;
+    let inFlight = false;
 
-        allCandlesRef.current = [...allCandlesRef.current, ...newOnes];
-        setCandlesState([...allCandlesRef.current]);
-      } catch { /* silent */ }
-    }, 60_000);
-    return () => clearInterval(id);
-  }, [fetchCandles]);
-  const priceRef = useRef<HTMLDivElement>(null);
-  const gcpRef   = useRef<HTMLDivElement>(null);
-
-  const gcpOverlayRef   = useRef<HTMLCanvasElement>(null);
-  const priceOverlayRef = useRef<HTMLCanvasElement>(null);
-
-  const priceChart = useRef<IChartApi | null>(null);
-  const gcpChart   = useRef<IChartApi | null>(null);
-
-  const regimeSeries  = useRef<Map<string, ISeriesApi<'Candlestick'>>>(new Map());
-  const gcpLineSeries = useRef<ISeriesApi<'Line'>        | null>(null);
-
-  const markersPlugin = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-
-  const [candleColorMode, setCandleColorMode] = useState<'regime' | 'updown'>('regime');
-  const [seriesReady, setSeriesReady] = useState(false);
-
-  // Lazy-load older candles when the user scrolls near the left edge.
-  useEffect(() => {
-    if (!seriesReady) return;
-    const pc = priceChart.current;
-    if (!pc) return;
-
-    const handleRangeChange = async (range: { from: number; to: number } | null) => {
+    const onRangeChange = async (range: { from: number; to: number } | null) => {
       if (!range) return;
-      if (isFetchingMoreRef.current) return;
-      if (!hasMoreLeft) return;
-      if (range.from > 10) return; // still plenty of history visible
-
-      const earliest = allCandlesRef.current[0]?.t;
+      if (inFlight || isLoadingMore || !hasMoreLeft) return;
+      if (range.from > 5) return;
+      const earliest = earliestTsRef.current;
       if (!earliest) return;
 
-      isFetchingMoreRef.current = true;
+      inFlight = true;
       setIsLoadingMore(true);
       try {
         const before = earliest - 60_000;
-        const older  = await fetchCandles(before);
+        const older  = await fetchCandlesBefore(symbol, chartTF, 500, before);
         if (!older.length) {
           setHasMoreLeft(false);
           return;
@@ -356,520 +437,165 @@ export default function ChartView({
         merged.sort((a, b) => a.t - b.t);
 
         allCandlesRef.current = merged;
-        setCandlesState(merged);
+        earliestTsRef.current = merged[0].t;
+        setCandles([...merged]);
       } catch (e) {
         console.warn('[ChartView] lazy load error:', e);
       } finally {
-        isFetchingMoreRef.current = false;
+        inFlight = false;
         setIsLoadingMore(false);
       }
     };
 
-    pc.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
-    return () => {
-      pc.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesReady, fetchCandles, hasMoreLeft]);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange);
+    return () => chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
+  }, [chartReady, symbol, chartTF, isLoadingMore, hasMoreLeft]);
 
-  const applyColorMode = useCallback((mode: 'regime' | 'updown') => {
-    setCandleColorMode(mode);
-    regimeSeries.current.forEach((s, regime) => {
-      if (mode === 'updown') {
-        s.applyOptions({
-          upColor:         COLORS.green,
-          downColor:       COLORS.red,
-          borderUpColor:   COLORS.green,
-          borderDownColor: COLORS.red,
-          wickUpColor:     COLORS.green,
-          wickDownColor:   COLORS.red,
-        });
-      } else {
-        const col = REGIME_CANDLE[regime] ?? COLORS.cyan;
-        s.applyOptions({
-          upColor:         col,
-          downColor:       'transparent',
-          borderUpColor:   col,
-          borderDownColor: col,
-          wickUpColor:     col,
-          wickDownColor:   col,
-        });
-      }
-    });
-  }, []);
-
-  // Filter the GCP series to the same window as the candles so the GCP
-  // pane doesn't extend further left than the price pane. baseSeries
-  // can be ~120k points (full historical merged); the filter clips down
-  // to whatever the candle window covers, then LTTB caps it at 800
-  // points so rendering stays cheap.
-  const chartSeries = useMemo(() => {
-    if (!series.length) return series;
-    if (!candles.length) {
-      const fallback = series.slice(-1440);
-      return fallback.length > 800 ? lttbDownsample(fallback, 800) : fallback;
-    }
-
-    const earliest = candles[0].t;
-    const span     = candles[candles.length - 1].t - earliest;
-    const buffer   = Math.max(span * 0.05, 60_000);
-
-    const filtered = series
-      .filter(p => p.t >= earliest - buffer)
-      .sort((a, b) => a.t - b.t);
-
-    return filtered.length > 800 ? lttbDownsample(filtered, 800) : filtered;
-  }, [series, candles]);
-
-  // Series snapshot the redraw fn reads from — kept in a ref so callbacks are stable
-  const seriesRef = useRef<DataPoint[]>(chartSeries);
-  seriesRef.current = chartSeries;
-
-  const redrawOverlays = () => {
-    const gcpInst = gcpChart.current;
-    const gcpCanvas = gcpOverlayRef.current;
-    const gcpHost = gcpRef.current;
-    if (gcpInst && gcpCanvas && gcpHost) {
-      const rect = gcpHost.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        if (gcpCanvas.width !== rect.width)  gcpCanvas.width  = rect.width;
-        if (gcpCanvas.height !== rect.height) gcpCanvas.height = rect.height;
-        drawRegimeBands(gcpCanvas, gcpInst, seriesRef.current);
-      }
-    }
-
-    const priceInst = priceChart.current;
-    const priceCanvas = priceOverlayRef.current;
-    const priceHost = priceRef.current;
-    if (priceInst && priceCanvas && priceHost) {
-      const rect = priceHost.getBoundingClientRect();
-      if (rect.width > 0) {
-        if (priceCanvas.width !== rect.width) priceCanvas.width = rect.width;
-        if (priceCanvas.height !== 8)         priceCanvas.height = 8;
-        drawRegimeStrip(priceCanvas, priceInst, seriesRef.current);
-      }
-    }
-  };
-
+  // ── Right-side live append every 60s ───────────────────────────────────────
   useEffect(() => {
-    if (!priceRef.current || !gcpRef.current) return;
-
-    const sharedOptions = {
-      layout: {
-        background: { color: COLORS.bg },
-        textColor:  COLORS.text,
-        fontFamily: "'IBM Plex Mono', monospace",
-        fontSize:   11,
-      },
-      grid: {
-        vertLines: { color: COLORS.line, style: LineStyle.Dashed },
-        horzLines: { color: COLORS.line, style: LineStyle.Dashed },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: COLORS.textBright, width: 1 as const, style: LineStyle.Dashed, labelBackgroundColor: COLORS.bgPanel },
-        horzLine: { color: COLORS.textBright, width: 1 as const, style: LineStyle.Dashed, labelBackgroundColor: COLORS.bgPanel },
-      },
-      timeScale: {
-        borderColor:    COLORS.line,
-        timeVisible:    true,
-        secondsVisible: false,
-      },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true },
-      handleScale:  { mouseWheel: true, pinch: true },
-    };
-
-    const pc = createChart(priceRef.current, {
-      ...sharedOptions,
-      width:  priceRef.current.clientWidth,
-      height: priceRef.current.clientHeight,
-      rightPriceScale: {
-        borderColor:  COLORS.line,
-        scaleMargins: { top: 0.05, bottom: 0.2 },
-      },
-    });
-
-    const rSeriesMap = new Map<string, ISeriesApi<'Candlestick'>>();
-    REGIME_IDS.forEach(r => {
-      const col = REGIME_CANDLE[r] ?? COLORS.cyan;
-      const series = pc.addSeries(CandlestickSeries, {
-        upColor:         col,
-        downColor:       'transparent',
-        borderUpColor:   col,
-        borderDownColor: col,
-        wickUpColor:     col,
-        wickDownColor:   col,
-      });
-      rSeriesMap.set(r, series);
-    });
-    regimeSeries.current = rSeriesMap;
-
-    const gc = createChart(gcpRef.current, {
-      ...sharedOptions,
-      width:  gcpRef.current.clientWidth,
-      height: gcpRef.current.clientHeight,
-      rightPriceScale: {
-        borderColor:  COLORS.line,
-        scaleMargins: { top: 0.05, bottom: 0.05 },
-      },
-    });
-
-    const gl = gc.addSeries(LineSeries, {
-      color:                      COLORS.cyan,
-      lineWidth:                  2,
-      lastValueVisible:           true,
-      priceLineVisible:           false,
-      crosshairMarkerVisible:     true,
-      crosshairMarkerRadius:      4,
-      crosshairMarkerBorderColor: COLORS.bg,
-    });
-
-    priceChart.current    = pc;
-    gcpChart.current      = gc;
-    gcpLineSeries.current = gl;
-    setSeriesReady(true);
-
-    let syncing = false;
-
-    const syncFromPrice = (range: ReturnType<typeof pc.timeScale>['getVisibleLogicalRange'] extends () => infer R ? R : null) => {
-      if (!syncing && range) {
-        syncing = true;
-        gc.timeScale().setVisibleLogicalRange(range);
-        syncing = false;
-      }
-      redrawOverlays();
-    };
-    const syncFromGCP = (range: typeof syncFromPrice extends (r: infer R) => unknown ? R : null) => {
-      if (!syncing && range) {
-        syncing = true;
-        pc.timeScale().setVisibleLogicalRange(range);
-        syncing = false;
-      }
-      redrawOverlays();
-    };
-
-    pc.timeScale().subscribeVisibleLogicalRangeChange(syncFromPrice);
-    gc.timeScale().subscribeVisibleLogicalRangeChange(syncFromGCP);
-
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (entry.target === priceRef.current) {
-          pc.applyOptions({ width: Math.max(400, width), height: Math.max(200, height) });
-        } else if (entry.target === gcpRef.current) {
-          gc.applyOptions({ width: Math.max(400, width), height: Math.max(100, height) });
-        }
-      }
-      redrawOverlays();
-    });
-    ro.observe(priceRef.current);
-    ro.observe(gcpRef.current);
-
-    return () => {
-      pc.timeScale().unsubscribeVisibleLogicalRangeChange(syncFromPrice);
-      gc.timeScale().unsubscribeVisibleLogicalRangeChange(syncFromGCP);
-      ro.disconnect();
-      pc.remove();
-      gc.remove();
-      priceChart.current = null;
-      gcpChart.current = null;
-      regimeSeries.current = new Map();
-      markersPlugin.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (seriesReady && regimeSeries.current.size === 6) {
-      applyColorMode(candleColorMode);
-    }
-  }, [seriesReady, candleColorMode, applyColorMode]);
-
-  useEffect(() => {
-    // Lazy reinit: if the candle series map was wiped (e.g. fast-refresh),
-    // rebuild all six regime series before writing data.
-    if (regimeSeries.current.size === 0 && priceChart.current) {
-      const pc = priceChart.current;
-      const map = new Map<string, ISeriesApi<'Candlestick'>>();
-      REGIME_IDS.forEach(r => {
-        const col = REGIME_CANDLE[r] ?? COLORS.cyan;
-        const s = pc.addSeries(CandlestickSeries, {
-          upColor:         col,
-          downColor:       'transparent',
-          borderUpColor:   col,
-          borderDownColor: col,
-          wickUpColor:     col,
-          wickDownColor:   col,
-        });
-        map.set(r, s);
-      });
-      regimeSeries.current = map;
-    }
-
-    if (regimeSeries.current.size !== 6) {
-      console.warn('[ChartView] regime series not initialized, skipping candle update');
-      return;
-    }
-
-    if (!candles.length) {
-      regimeSeries.current.forEach(s => s.setData([]));
-      return;
-    }
-
-    const regimeByTs = new Map<number, RegimeKey>();
-    for (const s of series) {
-      regimeByTs.set(Math.floor(s.t / 1000), s.r as RegimeKey);
-    }
-
-    const findRegime = (ts: number): RegimeKey => {
-      const direct = regimeByTs.get(ts);
-      if (direct) return direct;
-      for (let delta = 1; delta <= 60; delta++) {
-        const nearest = regimeByTs.get(ts - delta) ?? regimeByTs.get(ts + delta);
-        if (nearest) return nearest;
-      }
-      return 'B';
-    };
-
-    const byRegime = new Map<string, CandlestickData[]>();
-    REGIME_IDS.forEach(r => byRegime.set(r, []));
-
-    for (const c of candlesToTV(candles)) {
-      const ts = c.time as number;
-      let bucketKey: string;
-      if (candleColorMode === 'updown') {
-        bucketKey = c.close >= c.open ? '_up' : '_down';
-      } else {
-        bucketKey = findRegime(ts);
-      }
-      const bucket = byRegime.get(bucketKey) ?? byRegime.get('B')!;
-      bucket.push(c);
-    }
-
-    regimeSeries.current.forEach((s, regime) => {
-      const data = (byRegime.get(regime) ?? [])
-        .slice()
-        .sort((a, b) => (a.time as number) - (b.time as number));
+    const id = setInterval(async () => {
+      if (!allCandlesRef.current.length) return;
       try {
-        s.setData(data);
-      } catch (e) {
-        console.warn('[ChartView] setData error for regime', regime, e);
-      }
-    });
+        const latest = await fetchCandlesBefore(symbol, chartTF, 10);
+        if (!latest.length) return;
+        const lastTs  = allCandlesRef.current[allCandlesRef.current.length - 1].t;
+        const newOnes = latest.filter(c => c.t > lastTs);
+        if (!newOnes.length) return;
+        allCandlesRef.current = [...allCandlesRef.current, ...newOnes];
+        setCandles([...allCandlesRef.current]);
+      } catch { /* silent */ }
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [symbol, chartTF]);
 
-    requestAnimationFrame(() => {
-      // Only fit-to-content on the initial load. Lazy-load prepends would
-      // otherwise yank the visible range back to the full history every
-      // time the user scrolls left.
-      if (isInitialLoadRef.current) {
-        priceChart.current?.timeScale().fitContent();
-        priceChart.current?.priceScale('right').applyOptions({ autoScale: true });
-        isInitialLoadRef.current = false;
-      }
-      redrawOverlays();
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, series, candleColorMode]);
-
+  // ── Pattern markers on the D-regime candle series ──────────────────────────
   useEffect(() => {
-    if (!gcpLineSeries.current) return;
-    if (!chartSeries.length) {
-      gcpLineSeries.current.setData([]);
-      redrawOverlays();
+    const dSeries = candleSeriesRef.current.get('D')
+      ?? candleSeriesRef.current.values().next().value;
+    if (!dSeries) return;
+
+    if (!patterns.length || !chartGCPSeries.length) {
+      markersRef.current?.setMarkers([]);
       return;
     }
 
-    gcpLineSeries.current.setData(seriesToLine(chartSeries));
-    gcpChart.current?.timeScale().fitContent();
-    redrawOverlays();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chartSeries]);
+    const MARKER_COLORS: Record<string, string> = {
+      'Alignment Ladder':   C.cyan,
+      'Shock Jump':         C.red,
+      'Failed Alignment':   '#d946ef',
+      'Coherence Volcano':  '#f59e0b',
+    };
 
-  useEffect(() => {
-    const markerHost =
-      regimeSeries.current.get('D') ??
-      regimeSeries.current.values().next().value;
-    if (!markerHost) return;
+    const markers: SeriesMarker<Time>[] = patterns
+      .filter(p => p.start < chartGCPSeries.length)
+      .map(p => {
+        const gcpPt = chartGCPSeries[Math.min(p.start, chartGCPSeries.length - 1)];
+        return {
+          time:     toTime(gcpPt.t),
+          position: 'aboveBar' as const,
+          color:    MARKER_COLORS[p.kind] ?? C.text,
+          shape:    'arrowDown' as const,
+          text:     p.kind.split(' ').map(w => w[0]).join(''),
+        };
+      })
+      .sort((a, b) => (a.time as number) - (b.time as number));
 
-    if (!candles.length || !patterns.length || !series.length) {
-      if (markersPlugin.current) {
-        markersPlugin.current.setMarkers([]);
-      }
-      return;
-    }
-
-    const candleTimes = new Set<number>();
-    for (const c of candles) {
-      if (c.o > 0 && c.c > 0) candleTimes.add(Math.floor(c.t / 1000));
-    }
-
-    const markers: SeriesMarker<Time>[] = [];
-    for (const p of patterns) {
-      const sp = series[p.start];
-      if (!sp) continue;
-      const t = Math.floor(sp.t / 1000);
-      if (!candleTimes.has(t)) continue;
-      markers.push({
-        time:     t as Time,
-        position: 'aboveBar',
-        color:    KIND_COLOR[p.kind] ?? '#6b7280',
-        shape:    'arrowDown',
-        text:     KIND_ABBR[p.kind] ?? '',
-      });
-    }
-
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-
-    if (markersPlugin.current) {
-      markersPlugin.current.setMarkers(markers);
+    if (markersRef.current) {
+      markersRef.current.setMarkers(markers);
     } else {
-      markersPlugin.current = createSeriesMarkers<Time>(markerHost, markers);
+      markersRef.current = createSeriesMarkers<Time>(dSeries, markers);
     }
-  }, [patterns, series, candles]);
-
-  const showNoCandleMessage = !candles.length;
+  }, [patterns, chartGCPSeries]);
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column',
-      height: '100%', overflow: 'hidden',
-      background: COLORS.bg,
-    }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '8px 16px',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 14px',
         borderBottom: '1px solid var(--line-1)',
         flexShrink: 0,
         fontFamily: 'var(--font-mono)',
         fontSize: 10,
       }}>
-        <span style={{ color: 'var(--fg-0)', fontWeight: 600, letterSpacing: '0.04em' }}>{symbol}</span>
+        <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>{symbol}</span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
-        <span style={{ color: 'var(--fg-2)' }}>OHLCV + GCP Coherence · 7d window</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 6 }}>
-          {CHART_TF_LIST.map(tf => (
+        <span style={{ color: 'var(--fg-2)' }}>OHLCV + GCP Coherence</span>
+        <span style={{ color: 'var(--fg-3)' }}>·</span>
+        <span style={{ color: 'var(--fg-3)' }}>dashboard {timeframe}</span>
+
+        <div style={{ display: 'flex', gap: 2, marginLeft: 8 }}>
+          {(['5m','15m','1h','4h','1D'] as ChartTF[]).map(tf => (
             <button key={tf}
-              onClick={() => setChartTF(tf)}
+              onClick={() => { isInitRef.current = true; setChartTF(tf); }}
               style={{
-                padding: '2px 7px',
-                fontSize: 9, letterSpacing: '0.08em',
+                padding: '2px 7px', fontSize: 9, letterSpacing: '0.08em',
                 fontFamily: 'var(--font-mono)',
                 background: chartTF === tf ? 'var(--bg-3)' : 'transparent',
                 border: `1px solid ${chartTF === tf ? 'var(--line-2)' : 'transparent'}`,
                 borderRadius: 2,
                 color: chartTF === tf ? 'var(--fg-0)' : 'var(--fg-3)',
                 cursor: 'pointer',
-              }}
-            >
+              }}>
               {tf}
             </button>
           ))}
         </div>
-        {candleLoading && (
-          <span style={{ color: 'var(--fg-3)', fontSize: 9, letterSpacing: '0.08em' }}>
-            loading candles…
-          </span>
-        )}
-        {!candleLoading && candleError && (
-          <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
-            ⚠ {candleError}
-          </span>
-        )}
-        {showNoCandleMessage && !candleLoading && !candleError && (
-          <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
-            ⚠ No candle data
-          </span>
-        )}
+
+        <div style={{ flex: 1 }} />
+
         {isLoadingMore && (
-          <span style={{
-            fontSize: 9, color: 'var(--cyan)', letterSpacing: '0.08em',
-            animation: 'livepulse 1s ease-in-out infinite',
-          }}>
-            ← loading more
+          <span style={{ fontSize: 9, color: 'var(--cyan)', letterSpacing: '0.08em' }}>
+            ← loading…
           </span>
         )}
-        {!hasMoreLeft && !candleLoading && (
+        {!hasMoreLeft && !isLoading && (
           <span style={{ fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em' }}>
             ← history limit
           </span>
         )}
-        <span style={{ flex: 1 }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{
-            fontSize: 8, letterSpacing: '0.12em',
-            color: 'var(--fg-4)', marginRight: 2,
-          }}>CANDLE</span>
-          <button
-            onClick={() => applyColorMode(candleColorMode === 'regime' ? 'updown' : 'regime')}
-            style={{
-              padding: '2px 8px',
-              fontSize: 9, letterSpacing: '0.08em',
-              fontFamily: 'var(--font-mono)',
-              background: candleColorMode === 'regime' ? 'var(--bg-3)' : 'transparent',
-              border: '1px solid var(--line-2)',
-              borderRadius: 2,
-              color: candleColorMode === 'regime' ? 'var(--cyan)' : 'var(--fg-3)',
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-            }}
-          >
-            {candleColorMode === 'regime' ? 'BY REGIME' : 'UP / DOWN'}
-          </button>
-          {candleColorMode === 'regime' && (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
-              {REGIME_IDS.map(r => (
-                <span key={r} style={{
-                  fontSize: 9,
-                  fontFamily: 'var(--font-mono)',
-                  color: REGIME_CANDLE[r] ?? '#aaa',
-                  letterSpacing: '0.04em',
-                }}>
-                  {r}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        {error && (
+          <span style={{ fontSize: 9, color: 'var(--red)' }}>
+            {error.slice(0, 40)}
+          </span>
+        )}
 
-      <div style={{ flex: '0 0 68%', position: 'relative', minHeight: 0 }}>
-        <div ref={priceRef} style={{ width: '100%', height: '100%' }} />
-        <canvas
-          ref={priceOverlayRef}
+        <button
+          onClick={() => setColorMode(m => m === 'regime' ? 'updown' : 'regime')}
           style={{
-            position: 'absolute',
-            bottom: 28,
-            left: 0,
-            width: '100%',
-            height: 8,
-            pointerEvents: 'none',
-            zIndex: 1,
-          }}
-        />
+            padding: '2px 8px', fontSize: 9, letterSpacing: '0.08em',
+            fontFamily: 'var(--font-mono)',
+            background: colorMode === 'regime' ? 'var(--bg-3)' : 'transparent',
+            border: '1px solid var(--line-2)', borderRadius: 2,
+            color: colorMode === 'regime' ? 'var(--cyan)' : 'var(--fg-3)',
+            cursor: 'pointer',
+          }}>
+          {colorMode === 'regime' ? 'BY REGIME' : 'UP / DOWN'}
+        </button>
+
+        {colorMode === 'regime' && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            {REGIME_IDS.map(r => (
+              <span key={r} style={{ fontSize: 9, color: C.candle[r], fontFamily: 'var(--font-mono)' }}>
+                {r}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div style={{ height: 2, background: 'var(--line-1)', flexShrink: 0, position: 'relative' }}>
-        <span style={{
-          position: 'absolute', left: 16, top: -8,
-          fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
-          background: COLORS.bg, padding: '0 6px',
-        }}>
-          GCP NET VARIANCE
-        </span>
-      </div>
-
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        <div ref={gcpRef} style={{ width: '100%', height: '100%' }} />
-        <canvas
-          ref={gcpOverlayRef}
-          style={{
-            position: 'absolute',
-            top: 0, left: 0,
-            width: '100%', height: '100%',
-            pointerEvents: 'none',
-            zIndex: 1,
-          }}
-        />
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {isLoading && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: C.bg, zIndex: 10,
+            color: 'var(--fg-2)', fontSize: 11, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.1em',
+          }}>
+            LOADING {symbol} {chartTF}…
+          </div>
+        )}
       </div>
     </div>
   );
