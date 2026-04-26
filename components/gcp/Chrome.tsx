@@ -160,6 +160,11 @@ function Header({
   gcpLive, gcpNetvar, gcpError,
 }: HeaderProps) {
   const showTFView = page === 'pattern';
+  // On Patterns we only expose VIEW. Pattern detection always runs at 1m
+  // resolution (compression coils etc. are meaningless at 4h/1D), so the
+  // TF selector is hidden there.
+  const showTF   = false;
+  const showView = showTFView;
   return (
     <header className="app-header">
       <div className="brand" style={{ gap: 8 }}>
@@ -178,7 +183,7 @@ function Header({
           onSymbolChange={onSymbolChange}
         />
 
-        {showTFView && (
+        {showTF && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{
               fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
@@ -199,11 +204,7 @@ function Header({
           </div>
         )}
 
-        {showTFView && (
-          <div style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
-        )}
-
-        {showTFView && (
+        {showView && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{
               fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',

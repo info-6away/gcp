@@ -50,8 +50,6 @@ export function usePSSAlert(
     try {
       const n = new Notification(title, {
         body,
-        icon:   '/favicon.ico',
-        badge:  '/favicon.ico',
         tag:    `gcppro-pss-${pattern.kind}`,
         silent: false,
       });

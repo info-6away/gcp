@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server';
 
-export const revalidate = 300;
-
 const FEEDS = [
-  { name: 'Reuters World',   url: 'https://feeds.reuters.com/Reuters/worldNews' },
+  { name: 'Reuters World',   url: 'https://feeds.reuters.com/reuters/worldNews' },
   { name: 'Reuters Finance', url: 'https://feeds.reuters.com/reuters/businessNews' },
-  { name: 'AP Top News',     url: 'https://feeds.apnews.com/rss/topnews' },
+  { name: 'AP Top News',     url: 'https://feeds.apnews.com/rss/apf-topnews' },
   { name: 'BBC World',       url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
 ];
 
@@ -62,9 +60,13 @@ export async function GET() {
   );
 
   const allItems: NewsItem[] = [];
-  for (const r of results) {
-    if (r.status === 'fulfilled') allItems.push(...r.value);
-  }
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      allItems.push(...r.value);
+    } else {
+      console.warn(`[news] Feed "${FEEDS[i].name}" failed:`, r.reason);
+    }
+  });
 
   const seen = new Set<string>();
   const deduped = allItems
@@ -77,5 +79,8 @@ export async function GET() {
     })
     .slice(0, 30);
 
-  return NextResponse.json({ items: deduped });
+  return NextResponse.json(
+    { items: deduped },
+    { headers: { 'Cache-Control': 'no-store, max-age=0' } },
+  );
 }

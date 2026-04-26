@@ -67,7 +67,7 @@ export function useNewsData(series: DataPoint[]) {
 
   useEffect(() => {
     fetchNews();
-    const id = setInterval(fetchNews, 300_000);
+    const id = setInterval(fetchNews, 180_000);
     return () => clearInterval(id);
   }, [fetchNews]);
 

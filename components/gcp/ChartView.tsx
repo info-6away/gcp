@@ -140,6 +140,10 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     x: number; y: number; price: number | null; time: number | null;
   } | null>(null);
 
+  const [gcpTooltip, setGcpTooltip] = useState<{
+    x: number; nv: number; regime: string; regimeLabel: string; time: string;
+  } | null>(null);
+
   useEffect(() => {
     if (!ctxMenu) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtxMenu(null); };
@@ -240,6 +244,37 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       });
     });
     ro.observe(containerRef.current);
+
+    // Hovering the GCP pane shows a floating NV/regime/time tooltip.
+    const REGIME_LABELS: Record<string, string> = {
+      A: 'Silence', B: 'Ignition', C: 'Alignment',
+      D: 'Synchronization', E: 'Climax', F: 'Shock',
+    };
+
+    chart.subscribeCrosshairMove(param => {
+      const line = gcpLineRef.current;
+      if (!param.point || param.time == null || !line) {
+        setGcpTooltip(null);
+        return;
+      }
+      const data = param.seriesData.get(line) as { value?: number } | undefined;
+      if (!data || typeof data.value !== 'number') {
+        setGcpTooltip(null);
+        return;
+      }
+      const nv     = data.value;
+      const regime = nv < 50 ? 'A' : nv < 100 ? 'B' : nv < 140 ? 'C'
+                   : nv < 170 ? 'D' : nv < 220 ? 'E' : 'F';
+      const ts   = (param.time as number) * 1000;
+      const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setGcpTooltip({
+        x:           param.point.x,
+        nv:          Math.round(nv * 10) / 10,
+        regime,
+        regimeLabel: REGIME_LABELS[regime] ?? '',
+        time,
+      });
+    });
 
     setChartReady(true);
 
@@ -502,6 +537,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       <div
         ref={containerRef}
         style={{ flex: 1, minHeight: 0, position: 'relative' }}
+        onMouseLeave={() => setGcpTooltip(null)}
         onContextMenu={e => {
           e.preventDefault();
           const chart = chartRef.current;
@@ -522,6 +558,37 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         }}
         onClick={() => setCtxMenu(null)}
       >
+        {gcpTooltip && (
+          <div style={{
+            position: 'absolute',
+            left: Math.min(gcpTooltip.x + 12, (containerRef.current?.offsetWidth ?? 800) - 170),
+            bottom: 40,
+            pointerEvents: 'none',
+            zIndex: 8,
+            background: 'var(--bg-2)',
+            border: '1px solid var(--line-2)',
+            borderRadius: 3,
+            padding: '6px 10px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            minWidth: 130,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{ color: 'var(--fg-3)', fontSize: 8, letterSpacing: '0.1em', marginBottom: 3 }}>
+              GCP NET VARIANCE
+            </div>
+            <div style={{ color: C.cyan, fontSize: 18, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+              {gcpTooltip.nv.toFixed(1)}
+            </div>
+            <div style={{ color: 'var(--fg-2)', fontSize: 9, marginTop: 4 }}>
+              {gcpTooltip.regime} · {gcpTooltip.regimeLabel}
+            </div>
+            <div style={{ color: 'var(--fg-4)', fontSize: 8, marginTop: 2 }}>
+              {gcpTooltip.time}
+            </div>
+          </div>
+        )}
+
         {isLoading && (
           <div style={{
             position: 'absolute', inset: 0,

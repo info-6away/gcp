@@ -355,7 +355,7 @@ export default function Dashboard({
           <PatternCard patterns={patterns} series={series} flash={pssFlash} />
         </div>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
           <div style={{
             padding: '7px 16px',
             borderBottom: '1px solid var(--line-0)',
@@ -366,11 +366,11 @@ export default function Dashboard({
             <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)' }} />
             GLOBAL EVENTS FEED · Reuters · AP · BBC
             <span style={{ marginLeft: 'auto', color: 'var(--fg-4)' }}>
-              tagged by GCP regime at publish time · updates every 5min
+              tagged by GCP regime at publish time · updates every 3min
             </span>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
             {newsLoading && (
               <div style={{
                 padding: 24, textAlign: 'center',

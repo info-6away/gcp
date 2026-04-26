@@ -74,9 +74,12 @@ export default function GCPApp() {
     return { displaySeries: display, analysisSeries: analysis };
   }, [windowedSeries, timeframe]);
 
+  // Pattern detection always runs at 1m resolution. The Compression Coil
+  // and Alignment Ladder algorithms are calibrated to 1-minute bars; running
+  // them on aggregated 4h/1D buckets yields meaningless windows.
   const displayPatterns = useMemo(
-    () => detectPatterns(analysisSeries, TIMEFRAME_BARS[timeframe]),
-    [analysisSeries, timeframe]
+    () => detectPatterns(analysisSeries, 1),
+    [analysisSeries]
   );
 
   useEffect(() => {
