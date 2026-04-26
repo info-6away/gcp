@@ -290,8 +290,11 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const updateCandleSeries = useCallback((candleList: Candle[]) => {
     if (!candleSeriesRef.current.size) return;
 
+    // Build regime lookup from the FULL series (not just the windowed
+    // chartGCPSeries) so candles that extend beyond the current GCP window
+    // still resolve to a regime.
     const regimeByTs = new Map<number, string>();
-    chartGCPSeries.forEach(p => regimeByTs.set(Math.floor(p.t / 1000), p.r));
+    series.forEach(p => regimeByTs.set(Math.floor(p.t / 1000), p.r));
 
     const byRegime = new Map<string, CandlestickData[]>();
     REGIME_IDS.forEach(r => byRegime.set(r, []));
@@ -300,7 +303,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       const ts = Math.floor(c.t / 1000);
       let regime: string | undefined = regimeByTs.get(ts);
       if (!regime) {
-        for (let d = 1; d <= 60; d++) {
+        // Widened fallback: ±300 s in 60 s steps so 5 m / 15 m candles still
+        // hit a GCP point even when their bar timestamps don't align.
+        for (let d = 60; d <= 300; d += 60) {
           regime = regimeByTs.get(ts - d) ?? regimeByTs.get(ts + d);
           if (regime) break;
         }
@@ -360,7 +365,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       });
       isInitRef.current = false;
     }
-  }, [chartGCPSeries, colorMode]);
+  }, [series, colorMode]);
 
   useEffect(() => {
     if (!chartReady) return;
@@ -462,11 +467,10 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return () => clearInterval(id);
   }, [symbol, chartTF]);
 
-  // ── Pattern markers on the D-regime candle series ──────────────────────────
+  // ── Pattern markers on the GCP line (bottom pane) ──────────────────────────
   useEffect(() => {
-    const dSeries = candleSeriesRef.current.get('D')
-      ?? candleSeriesRef.current.values().next().value;
-    if (!dSeries) return;
+    const gcpLine = gcpLineRef.current;
+    if (!gcpLine) return;
 
     if (!patterns.length || !chartGCPSeries.length) {
       markersRef.current?.setMarkers([]);
@@ -474,18 +478,23 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     }
 
     const MARKER_COLORS: Record<string, string> = {
-      'Alignment Ladder':   C.cyan,
-      'Shock Jump':         C.red,
-      'Failed Alignment':   '#d946ef',
-      'Coherence Volcano':  '#f59e0b',
+      'Alignment Ladder':    C.cyan,
+      'Shock Jump':          C.red,
+      'Failed Alignment':    '#d946ef',
+      'Coherence Volcano':   '#f59e0b',
+      'Compression Coil':    '#6b7280',
+      'Compression Release': '#22c55e',
+      'Ignition Drift':      '#888780',
     };
 
     const markers: SeriesMarker<Time>[] = patterns
-      .filter(p => p.start < chartGCPSeries.length)
+      .filter(p => p.tStart > 0 && p.tEnd > 0)
       .map(p => {
-        const gcpPt = chartGCPSeries[Math.min(p.start, chartGCPSeries.length - 1)];
+        const closest = chartGCPSeries.reduce((best, pt) =>
+          Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
+        );
         return {
-          time:     toTime(gcpPt.t),
+          time:     toTime(closest.t),
           position: 'aboveBar' as const,
           color:    MARKER_COLORS[p.kind] ?? C.text,
           shape:    'arrowDown' as const,
@@ -497,7 +506,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     if (markersRef.current) {
       markersRef.current.setMarkers(markers);
     } else {
-      markersRef.current = createSeriesMarkers<Time>(dSeries, markers);
+      markersRef.current = createSeriesMarkers<Time>(gcpLine, markers);
     }
   }, [patterns, chartGCPSeries]);
 
@@ -552,6 +561,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         )}
 
         <button
+          title="Candle color = GCP coherence regime at that bar (A=Silence → F=Shock), not price direction"
           onClick={() => setColorMode(m => m === 'regime' ? 'updown' : 'regime')}
           style={{
             padding: '2px 8px', fontSize: 9, letterSpacing: '0.08em',
@@ -561,11 +571,14 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             color: colorMode === 'regime' ? 'var(--cyan)' : 'var(--fg-3)',
             cursor: 'pointer',
           }}>
-          {colorMode === 'regime' ? 'BY REGIME' : 'UP / DOWN'}
+          {colorMode === 'regime' ? 'BY GCP REGIME' : 'BY PRICE DIR'}
         </button>
 
         {colorMode === 'regime' && (
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.08em' }}>
+              GCP REGIME →
+            </span>
             {REGIME_IDS.map(r => (
               <span key={r} style={{ fontSize: 9, color: C.candle[r], fontFamily: 'var(--font-mono)' }}>
                 {r}

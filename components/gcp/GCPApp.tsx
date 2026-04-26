@@ -195,7 +195,7 @@ export default function GCPApp() {
               symbol={symbol}
               timeframe={timeframe}
               onBack={() => setPage('dashboard')}
-              onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
+              onNavToCursor={(i) => { setCursor(i); setPage('chart'); }}
             />
           )}
           {page === 'chart' && (
