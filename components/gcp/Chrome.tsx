@@ -159,7 +159,7 @@ function Header({
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
 }: HeaderProps) {
-  const showTFView = page !== 'chart' && page !== 'dashboard';
+  const showTFView = page === 'pattern';
   return (
     <header className="app-header">
       <div className="brand" style={{ gap: 8 }}>
@@ -418,6 +418,35 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
         <span>{APP_MODEL}</span>
       </div>
     </footer>
+  );
+}
+
+export function PageHeader({
+  crumbs,
+  right,
+}: {
+  crumbs: { label: string; back?: boolean }[];
+  right?: React.ReactNode;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center',
+      padding: '7px 16px',
+      borderBottom: '1px solid var(--line-1)',
+      fontSize: 10, letterSpacing: '0.06em',
+      color: 'var(--fg-3)',
+      flexShrink: 0,
+    }}>
+      {crumbs.map((c, i) => (
+        <span key={i} style={{ display: 'flex', alignItems: 'center' }}>
+          {i > 0 && <span style={{ color: 'var(--fg-4)', margin: '0 4px' }}>·</span>}
+          <span style={{ color: c.back ? 'var(--fg-2)' : 'var(--fg-3)' }}>
+            {c.back && '‹ '}{c.label}
+          </span>
+        </span>
+      ))}
+      {right && <div style={{ marginLeft: 'auto' }}>{right}</div>}
+    </div>
   );
 }
 

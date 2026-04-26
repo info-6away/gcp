@@ -129,10 +129,22 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const [hasMoreLeft,   setHasMoreLeft]   = useState(true);
   const [error,         setError]         = useState<string | null>(null);
   const [chartReady,    setChartReady]    = useState(false);
+  const [retryNonce,    setRetryNonce]    = useState(0);
 
   const allCandlesRef = useRef<Candle[]>([]);
   const earliestTsRef = useRef<number | null>(null);
   const isInitRef     = useRef(true);
+  const prevSymbolRef = useRef<MarketSymbol>(symbol);
+
+  // Wipe every series immediately when the symbol changes so the old
+  // ticker's data doesn't briefly bleed onto the new symbol's axes.
+  useEffect(() => {
+    if (prevSymbolRef.current === symbol) return;
+    prevSymbolRef.current = symbol;
+    candleSeriesRef.current.forEach(s => { try { s.setData([]); } catch { /* */ } });
+    try { gcpLineRef.current?.setData([]); } catch { /* */ }
+    isInitRef.current = true;
+  }, [symbol]);
 
   const [ctxMenu, setCtxMenu] = useState<{
     x: number; y: number; price: number | null; time: number | null;
@@ -146,21 +158,20 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   }, [ctxMenu]);
 
   const chartGCPSeries = useMemo(() => {
-    if (!series.length) return series;
-    if (!candles.length) {
-      // 1440 points = 24h at 1m, renders fine natively
-      return series.slice(-1440);
-    }
+    // Don't compute while candles are loading or empty — pushing a full
+    // unfiltered slice into Lightweight Charts during a symbol switch
+    // briefly renders the GCP series with the wrong scale and confuses
+    // the time axis.
+    if (isLoading || !candles.length || !series.length) return [];
+
     const earliest = candles[0].t;
     const latest   = candles[candles.length - 1].t;
     const buffer   = (latest - earliest) * 0.05;
     const filtered = series
       .filter(p => p.t >= earliest - buffer)
       .sort((a, b) => a.t - b.t);
-    // Only downsample when truly necessary — aggressive LTTB at 800 destroys
-    // the GCP spikes that make this chart meaningful.
     return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
-  }, [series, candles]);
+  }, [series, candles, isLoading]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {
@@ -383,7 +394,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       });
 
     return () => { cancelled = true; };
-  }, [symbol, chartTF]);
+  }, [symbol, chartTF, retryNonce]);
 
   // ── Lazy scroll-back ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -539,11 +550,6 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             ← history limit
           </span>
         )}
-        {error && (
-          <span style={{ fontSize: 9, color: 'var(--red)' }}>
-            {error.slice(0, 40)}
-          </span>
-        )}
 
         <button
           onClick={() => setColorMode(m => m === 'regime' ? 'updown' : 'regime')}
@@ -602,6 +608,34 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             letterSpacing: '0.1em',
           }}>
             LOADING {symbol} {chartTF}…
+          </div>
+        )}
+
+        {error && !candles.length && !isLoading && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(7,8,10,0.85)', zIndex: 11,
+            gap: 8, fontFamily: 'var(--font-mono)',
+          }}>
+            <div style={{ fontSize: 10, color: 'var(--red)', letterSpacing: '0.08em' }}>
+              CANDLE FETCH ERROR
+            </div>
+            <div style={{ fontSize: 9, color: 'var(--fg-4)', maxWidth: 320, textAlign: 'center' }}>
+              {error.slice(0, 140)}
+            </div>
+            <button
+              onClick={() => { setError(null); setRetryNonce(n => n + 1); }}
+              style={{
+                marginTop: 8, padding: '4px 14px', fontSize: 9,
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+                background: 'transparent', border: '1px solid var(--line-2)',
+                color: 'var(--fg-2)', borderRadius: 2, cursor: 'pointer',
+              }}
+            >
+              RETRY
+            </button>
           </div>
         )}
 

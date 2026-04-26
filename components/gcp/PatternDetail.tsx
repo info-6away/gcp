@@ -156,20 +156,23 @@ function LibraryCard({
   const lastT     = lastMatch ? series[lastMatch.start]?.t : null;
   const avgDur    = n ? Math.round(matches.reduce((s, m) => s + (m.end - m.start), 0) / n) : 0;
 
+  const isEmpty = n === 0;
   return (
     <div
       className="lib-card"
-      onClick={onSelect}
+      onClick={isEmpty ? undefined : onSelect}
       style={{
         background: 'var(--bg-2)',
         border: '1px solid var(--line-1)',
         borderRadius: 'var(--r-md)',
         padding: '14px 16px',
-        cursor: 'pointer',
+        cursor: isEmpty ? 'default' : 'pointer',
         transition: 'border-color 0.15s',
+        opacity: isEmpty ? 0.35 : 1,
+        pointerEvents: isEmpty ? 'none' : 'auto',
       }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--line-3)')}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--line-1)')}
+      onMouseEnter={e => { if (!isEmpty) e.currentTarget.style.borderColor = 'var(--line-3)'; }}
+      onMouseLeave={e => { if (!isEmpty) e.currentTarget.style.borderColor = 'var(--line-1)'; }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
         <div>
@@ -339,9 +342,6 @@ export default function PatternDetail({
               &nbsp;·&nbsp;
               patterns re-detect on every change
             </div>
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
-            {patterns.length} total detections across {Object.keys(byKind).length} types
           </div>
         </div>
 

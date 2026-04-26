@@ -218,9 +218,19 @@ function PatternCard({ patterns, series }: { patterns: Pattern[]; series: DataPo
 }
 
 function NewsRow({ item }: { item: NewsItem }) {
-  const time = new Date(item.publishedAt).toLocaleTimeString([], {
-    hour: '2-digit', minute: '2-digit',
-  });
+  const date    = new Date(item.publishedAt);
+  const now     = new Date();
+  const yest    = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+
+  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const isToday     = sameDay(date, now);
+  const isYesterday = sameDay(date, yest);
+
+  const timeStr  = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dayLabel = isToday ? '' : isYesterday ? 'YEST'
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
   const titleColor =
     item.regime === 'F' ? '#e24b4a' :
     item.regime === 'D' || item.regime === 'E' ? '#d4a028' :
@@ -233,15 +243,27 @@ function NewsRow({ item }: { item: NewsItem }) {
       rel="noopener noreferrer"
       style={{
         display: 'grid',
-        gridTemplateColumns: '50px 1fr',
+        gridTemplateColumns: '58px 1fr',
         gap: 10,
         padding: '9px 16px',
         borderBottom: '1px solid var(--bg-0)',
         textDecoration: 'none',
       }}
     >
-      <div style={{ fontSize: 9, color: 'var(--fg-4)', fontVariantNumeric: 'tabular-nums', paddingTop: 1 }}>
-        {time}
+      <div style={{ paddingTop: 1 }}>
+        <div style={{
+          fontSize: 11,
+          color: 'var(--fg-2)',
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '0.02em',
+        }}>
+          {timeStr}
+        </div>
+        {dayLabel && (
+          <div style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.08em', marginTop: 1 }}>
+            {dayLabel}
+          </div>
+        )}
       </div>
       <div>
         <div style={{ fontSize: 10, color: titleColor, lineHeight: 1.45, letterSpacing: '0.01em' }}>
@@ -250,7 +272,7 @@ function NewsRow({ item }: { item: NewsItem }) {
         </div>
         <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2, letterSpacing: '0.06em' }}>
           {item.source.toUpperCase()}
-          {item.nv != null && ` · NV ${item.nv} at publish`}
+          {item.nv != null && ` · NV ${item.nv}`}
         </div>
       </div>
     </a>
@@ -326,15 +348,15 @@ export default function Dashboard({ gcpData, series, patterns }: DashboardProps)
       </div>
 
       <div style={{
-        width: 260, borderLeft: '1px solid var(--line-0)',
+        width: 220, borderLeft: '1px solid var(--line-0)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
         background: 'var(--bg-1)',
       }}>
-        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--line-0)' }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--line-0)', flex: 1, overflowY: 'auto' }}>
           <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-            PATTERN FEED
+            PATTERN FEED · {patterns.length} DETECTED
           </div>
-          {patterns.slice(-6).reverse().map((p, i) => (
+          {patterns.slice().reverse().map((p, i) => (
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '5px 0', borderBottom: '1px solid var(--bg-0)', fontSize: 9,
@@ -346,9 +368,7 @@ export default function Dashboard({ gcpData, series, patterns }: DashboardProps)
                 }} />
                 <span style={{ color: 'var(--fg-1)' }}>{p.kind}</span>
               </div>
-              <span style={{
-                color: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--fg-3)',
-              }}>
+              <span style={{ color: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--fg-3)' }}>
                 {pssOf(p)}
               </span>
             </div>
@@ -358,38 +378,19 @@ export default function Dashboard({ gcpData, series, patterns }: DashboardProps)
           )}
         </div>
 
-        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--line-0)', flex: 1 }}>
-          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-            INTERPRETATION
-          </div>
-          {latestPattern ? (
-            <>
-              <div style={{ fontSize: 10, color: 'var(--cyan)', letterSpacing: '0.04em', marginBottom: 5 }}>
-                {latestPattern.kind.toUpperCase()}
-              </div>
-              <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.6 }}>
-                {PATTERN_INTERPRETATIONS[latestPattern.kind] ?? '—'}
-              </div>
-            </>
-          ) : (
-            <div style={{ fontSize: 9, color: 'var(--fg-4)' }}>
-              No active pattern. Monitor the feed for emerging setups.
+        {latestPattern && (
+          <div style={{ padding: '10px 14px' }}>
+            <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 6 }}>
+              LATEST
             </div>
-          )}
-        </div>
-
-        <div style={{ padding: '12px 14px' }}>
-          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-            REGIME LEGEND
+            <div style={{ fontSize: 9, color: 'var(--cyan)', letterSpacing: '0.04em', marginBottom: 4 }}>
+              {latestPattern.kind}
+            </div>
+            <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.55 }}>
+              {PATTERN_INTERPRETATIONS[latestPattern.kind] ?? '—'}
+            </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px' }}>
-            {Object.entries(REGIME_META).map(([r, meta]) => (
-              <div key={r} style={{ fontSize: 8, color: meta.color }}>
-                {r} {meta.label}
-              </div>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
