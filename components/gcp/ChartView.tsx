@@ -140,9 +140,13 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     x: number; y: number; price: number | null; time: number | null;
   } | null>(null);
 
-  const [gcpTooltip, setGcpTooltip] = useState<{
-    x: number; nv: number; regime: string; regimeLabel: string; time: string;
-  } | null>(null);
+  type GcpTooltipState =
+    | { mode: 'nv';      x: number; nv: number; regime: string; regimeLabel: string; time: string }
+    | { mode: 'pattern'; x: number; kind: string; pss: number; regime: string; bars: number; time: string };
+
+  const [gcpTooltip, setGcpTooltip] = useState<GcpTooltipState | null>(null);
+  const chartPatternsRef            = useRef<Pattern[]>([]);
+  const chartGCPSeriesRef           = useRef<DataPoint[]>([]);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -257,6 +261,29 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
         setGcpTooltip(null);
         return;
       }
+
+      const cursorTs = (param.time as number) * 1000;
+
+      // If the crosshair is within a couple of bars of a pattern start,
+      // show the pattern name + PSS instead of the NV reading.
+      const PATTERN_HIT_MS = 2 * 60_000;
+      const nearPattern = chartPatternsRef.current.find(p =>
+        p.tStart > 0 && Math.abs(p.tStart - cursorTs) < PATTERN_HIT_MS,
+      );
+      if (nearPattern) {
+        const startPt = chartGCPSeriesRef.current[nearPattern.start];
+        setGcpTooltip({
+          mode:   'pattern',
+          x:      param.point.x,
+          kind:   nearPattern.kind,
+          pss:    Math.round(nearPattern.strength * 100),
+          regime: startPt?.r ?? '?',
+          bars:   nearPattern.end - nearPattern.start,
+          time:   new Date(nearPattern.tStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        });
+        return;
+      }
+
       const data = param.seriesData.get(line) as { value?: number } | undefined;
       if (!data || typeof data.value !== 'number') {
         setGcpTooltip(null);
@@ -265,9 +292,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       const nv     = data.value;
       const regime = nv < 50 ? 'A' : nv < 100 ? 'B' : nv < 140 ? 'C'
                    : nv < 170 ? 'D' : nv < 220 ? 'E' : 'F';
-      const ts   = (param.time as number) * 1000;
-      const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const time   = new Date(cursorTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setGcpTooltip({
+        mode:        'nv',
         x:           param.point.x,
         nv:          Math.round(nv * 10) / 10,
         regime,
@@ -438,6 +465,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return detectPatterns(chartGCPSeries, 1);
   }, [chartGCPSeries]);
 
+  useEffect(() => { chartPatternsRef.current = chartPatterns; }, [chartPatterns]);
+  useEffect(() => { chartGCPSeriesRef.current = chartGCPSeries; }, [chartGCPSeries]);
+
   // ── Pattern markers on the GCP line (bottom pane) ──────────────────────────
   useEffect(() => {
     const gcpLine = gcpLineRef.current;
@@ -566,7 +596,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             pointerEvents: 'none',
             zIndex: 8,
             background: 'var(--bg-2)',
-            border: '1px solid var(--line-2)',
+            border: `1px solid ${gcpTooltip.mode === 'pattern' ? C.cyan : 'var(--line-2)'}`,
             borderRadius: 3,
             padding: '6px 10px',
             fontFamily: 'var(--font-mono)',
@@ -574,18 +604,45 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
             minWidth: 130,
             boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
           }}>
-            <div style={{ color: 'var(--fg-3)', fontSize: 8, letterSpacing: '0.1em', marginBottom: 3 }}>
-              GCP NET VARIANCE
-            </div>
-            <div style={{ color: C.cyan, fontSize: 18, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-              {gcpTooltip.nv.toFixed(1)}
-            </div>
-            <div style={{ color: 'var(--fg-2)', fontSize: 9, marginTop: 4 }}>
-              {gcpTooltip.regime} · {gcpTooltip.regimeLabel}
-            </div>
-            <div style={{ color: 'var(--fg-4)', fontSize: 8, marginTop: 2 }}>
-              {gcpTooltip.time}
-            </div>
+            {gcpTooltip.mode === 'pattern' ? (
+              <>
+                <div style={{ color: 'var(--fg-3)', fontSize: 8, letterSpacing: '0.1em', marginBottom: 3 }}>
+                  PATTERN DETECTED
+                </div>
+                <div style={{ color: C.cyan, fontSize: 13, letterSpacing: '0.02em', lineHeight: 1.1 }}>
+                  {gcpTooltip.kind}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 5 }}>
+                  <span style={{ color: '#d4a028', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
+                    PSS {gcpTooltip.pss}
+                  </span>
+                  <span style={{ color: 'var(--fg-3)', fontSize: 9 }}>
+                    {gcpTooltip.regime} regime
+                  </span>
+                  <span style={{ color: 'var(--fg-4)', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
+                    {gcpTooltip.bars}b
+                  </span>
+                </div>
+                <div style={{ color: 'var(--fg-4)', fontSize: 8, marginTop: 3 }}>
+                  {gcpTooltip.time}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ color: 'var(--fg-3)', fontSize: 8, letterSpacing: '0.1em', marginBottom: 3 }}>
+                  GCP NET VARIANCE
+                </div>
+                <div style={{ color: C.cyan, fontSize: 18, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+                  {gcpTooltip.nv.toFixed(1)}
+                </div>
+                <div style={{ color: 'var(--fg-2)', fontSize: 9, marginTop: 4 }}>
+                  {gcpTooltip.regime} · {gcpTooltip.regimeLabel}
+                </div>
+                <div style={{ color: 'var(--fg-4)', fontSize: 8, marginTop: 2 }}>
+                  {gcpTooltip.time}
+                </div>
+              </>
+            )}
           </div>
         )}
 

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 
 const FEEDS = [
-  { name: 'Reuters World',   url: 'https://feeds.reuters.com/reuters/worldNews' },
-  { name: 'Reuters Finance', url: 'https://feeds.reuters.com/reuters/businessNews' },
-  { name: 'AP Top News',     url: 'https://feeds.apnews.com/rss/apf-topnews' },
-  { name: 'BBC World',       url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
+  { name: 'Reuters World',  url: 'https://feeds.reuters.com/reuters/worldNews' },
+  { name: 'AP Top News',    url: 'https://feeds.apnews.com/rss/apf-topnews' },
+  { name: 'Al Jazeera',     url: 'https://www.aljazeera.com/xml/rss/all.xml' },
+  { name: 'Guardian World', url: 'https://www.theguardian.com/world/rss' },
+  { name: 'BBC World',      url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
 ];
 
 interface NewsItem {
@@ -55,7 +56,7 @@ export async function GET() {
       const url = `${feed.url}${feed.url.includes('?') ? '&' : '?'}_=${Date.now()}`;
       const res = await fetch(url, {
         headers: {
-          'User-Agent':    'Mozilla/5.0 GCPPro/10.7',
+          'User-Agent':    'Mozilla/5.0 GCPPro/10.8',
           'Cache-Control': 'no-cache',
           'Pragma':        'no-cache',
         },
@@ -78,15 +79,20 @@ export async function GET() {
   });
 
   const seen = new Set<string>();
-  const deduped = allItems
+  const dedupedAll = allItems
     .sort((a, b) => b.publishedAt - a.publishedAt)
     .filter(item => {
       const key = item.title.slice(0, 60).toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, 30);
+    });
+
+  // Prefer items from the last 6 hours; fall back to the parser's 24 h
+  // cap if that yields too little to populate the feed.
+  const SIX_H = 6 * 3_600_000;
+  const fresh = dedupedAll.filter(item => Date.now() - item.publishedAt < SIX_H);
+  const deduped = (fresh.length >= 5 ? fresh : dedupedAll).slice(0, 30);
 
   console.log(
     `[news] Returning ${deduped.length} items, newest: ${
