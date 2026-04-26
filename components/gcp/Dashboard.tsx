@@ -1,301 +1,396 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { REGIMES, energyAt, persistenceAt, INTERP } from '@/lib/gcp-data';
-import GCPChartResponsive from './GCPChart';
-import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
+import { useMemo } from 'react';
+import type { DataPoint, Pattern } from '@/types/gcp';
+import type { GCPDataState } from '@/lib/useGCPData';
+import { useNewsData, type NewsItem } from '@/lib/useNewsData';
 
-interface DashboardProps {
-  series: DataPoint[];
-  patterns: Pattern[];
-  cursor: number;
-  setCursor: (i: number) => void;
-  live: boolean;
-  onSelectPatternKind: (kind: string) => void;
-  symbol: MarketSymbol;
-  timeframe: Timeframe;
-}
-
-const KIND_COLOR: Record<string, string> = {
-  'Alignment Ladder':   'var(--cyan)',
-  'Shock Jump':         'var(--red)',
-  'Failed Alignment':   'var(--magenta)',
-  'Coherence Volcano':  'var(--amber)',
-  'Compression Coil':   'var(--r-b)',
-  'Compression Release':'var(--r-c)',
-  'Ignition Drift':     'var(--fg-2)',
+const REGIME_META: Record<string, { label: string; color: string; bg: string; range: string }> = {
+  A: { label: 'Silence',         color: '#4a72c4', bg: 'rgba(59,90,160,0.15)',  range: '0–50' },
+  B: { label: 'Ignition',        color: '#4dd9e8', bg: 'rgba(50,130,180,0.15)', range: '50–100' },
+  C: { label: 'Alignment',       color: '#2db8b4', bg: 'rgba(40,180,175,0.15)', range: '100–140' },
+  D: { label: 'Synchronization', color: '#d4a028', bg: 'rgba(200,160,40,0.15)', range: '140–170' },
+  E: { label: 'Climax',          color: '#d46428', bg: 'rgba(210,100,40,0.15)', range: '170–220' },
+  F: { label: 'Shock',           color: '#e24b4a', bg: 'rgba(220,50,50,0.18)',  range: '220+' },
 };
 
-function fmtClock(ts: number) {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+const REGIME_TAG_LABEL: Record<string, string> = {
+  A: 'A SILENCE', B: 'B EVENT', C: 'C ALIGN',
+  D: 'D SYNC',    E: 'E CLIMAX', F: 'F SHOCK',
+};
+
+const PATTERN_INTERPRETATIONS: Record<string, string> = {
+  'Compression Coil':    'Energy accumulating. Range-building. Expansion likely if PSS > 70.',
+  'Alignment Ladder':    'Trend environment forming. Highest continuation probability.',
+  'Failed Alignment':    'Fake breakout. Low continuation probability. Fade or stand aside.',
+  'Shock Jump':          'Extreme coherence event. News/geopolitical reaction. Expect volatility.',
+  'Coherence Volcano':   'Single-peak spike into C that mean-reverts immediately.',
+  'Compression Release': 'Coil energy releasing upward into C alignment.',
+  'Ignition Drift':      'Oscillation within the ignition band; no decisive direction.',
+};
+
+const REGIME_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+function pssOf(p: Pattern): number {
+  return Math.round(p.strength * 100);
 }
 
-function PSSGauge({ value }: { value: number }) {
-  const pct = Math.max(0, Math.min(1, value));
-  const score = Math.round(pct * 100);
-  const color =
-    pct >= 0.7 ? 'var(--green)' :
-    pct >= 0.4 ? 'var(--amber)' :
-    'var(--fg-2)';
-  const label =
-    pct >= 0.7 ? 'STRONG' :
-    pct >= 0.4 ? 'MEDIUM' :
-    'WEAK';
+function regimeOfPattern(p: Pattern, series: DataPoint[]): string | null {
+  return series[p.start]?.r ?? null;
+}
 
+function barsOfPattern(p: Pattern): number {
+  return p.end - p.start;
+}
+
+function RegimeTag({ regime }: { regime: string }) {
+  const meta = REGIME_META[regime];
+  if (!meta) return null;
   return (
-    <div style={{ padding: '12px 0 8px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-        <span className="hairline">Pattern Strength Score</span>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <span style={{
-            fontSize: 28,
-            fontFamily: 'var(--font-mono)',
-            fontWeight: 600,
-            color,
-            lineHeight: 1,
-            fontVariantNumeric: 'tabular-nums',
-          }}>
-            {score}
-          </span>
-          <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>/ 100</span>
-          <span style={{
-            fontSize: 9,
-            letterSpacing: '0.1em',
-            color,
-            textTransform: 'uppercase',
-            marginLeft: 4,
-          }}>
-            {label}
-          </span>
-        </div>
-      </div>
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 5px',
+      borderRadius: 2,
+      fontSize: 7,
+      letterSpacing: '0.08em',
+      background: meta.bg,
+      color: meta.color,
+      marginLeft: 6,
+      verticalAlign: 'middle',
+      border: `1px solid ${meta.color}44`,
+    }}>
+      {REGIME_TAG_LABEL[regime]}
+    </span>
+  );
+}
 
-      <div style={{
-        position: 'relative',
-        height: 6,
-        background: 'var(--bg-3)',
-        borderRadius: 1,
-        overflow: 'visible',
-      }}>
-        <div style={{
-          position: 'absolute',
-          left: 0, top: 0, bottom: 0,
-          width: `${pct * 100}%`,
-          background: color,
-          borderRadius: 1,
-          transition: 'width 0.3s ease, background 0.3s ease',
-          boxShadow: pct >= 0.7 ? `0 0 8px ${color}` : 'none',
+function NVSparkline({ series }: { series: DataPoint[] }) {
+  const last15 = series.slice(-15);
+  if (!last15.length) return null;
+  const max = Math.max(...last15.map(p => p.v));
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-end', gap: 2,
+      height: 28, marginTop: 10,
+    }}>
+      {last15.map((p, i) => (
+        <div key={i} style={{
+          width: 5, borderRadius: 1,
+          background: '#4dd9e8',
+          opacity: 0.4 + (i / last15.length) * 0.6,
+          height: `${Math.max(10, (p.v / (max || 1)) * 100)}%`,
         }} />
-        {[0.25, 0.5, 0.75].map(t => (
-          <div key={t} style={{
-            position: 'absolute',
-            left: `${t * 100}%`,
-            top: -3,
-            bottom: -3,
-            width: 1,
-            background: 'var(--line-2)',
-          }} />
-        ))}
-      </div>
-
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        marginTop: 5,
-        fontSize: 9,
-        color: 'var(--fg-3)',
-        fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.06em',
-      }}>
-        <span>WEAK</span>
-        <span>FORMING</span>
-        <span>STRONG</span>
-        <span>EXPLOSIVE</span>
-      </div>
-    </div>
-  );
-}
-
-function EnergyGrid({
-  slope, curv, ced, persistence, timeframe,
-}: {
-  slope: number;
-  curv: number;
-  ced: number;
-  persistence: { tag: string; label: string; duration: number };
-  timeframe: Timeframe;
-}) {
-  const unit = timeframe === '1m' ? 'bars' : `× ${timeframe}`;
-  return (
-    <div className="metrics-grid">
-      <div className="metric-cell">
-        <span className="metric-label">Slope</span>
-        <span className="metric-val tab">{slope.toFixed(2)}</span>
-      </div>
-      <div className="metric-cell">
-        <span className="metric-label">Curvature</span>
-        <span className="metric-val tab">{curv.toFixed(2)}</span>
-      </div>
-      <div className="metric-cell">
-        <span className="metric-label">CED</span>
-        <span className="metric-val tab">{ced.toFixed(2)}</span>
-      </div>
-      <div className="metric-cell">
-        <span className="metric-label">Persist</span>
-        <span style={{ fontSize: 14, fontFamily: 'var(--font-mono)', color: 'var(--fg-0)' }}>
-          {persistence.duration}
-          <span style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 4 }}>{unit}</span>
-        </span>
-        <span style={{ fontSize: 9.5, color: 'var(--fg-2)', letterSpacing: '0.04em' }}>
-          {persistence.tag} · {persistence.label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PatternFeed({
-  patterns, series, onPick, activeId,
-}: {
-  patterns: Pattern[];
-  series: DataPoint[];
-  onPick: (p: Pattern) => void;
-  activeId: string | null;
-}) {
-  if (!patterns.length) return <div style={{ color: 'var(--fg-3)', fontSize: 11 }}>No patterns detected.</div>;
-  return (
-    <div className="feed-list">
-      {patterns.slice(-30).reverse().map(p => {
-        const ts = series[p.start]?.t ?? 0;
-        return (
-          <div
-            key={p.id}
-            className={`feed-row ${activeId === p.id ? 'active' : ''}`}
-            onClick={() => onPick(p)}
-          >
-            <span className="feed-dot" style={{ background: KIND_COLOR[p.kind] || 'var(--fg-2)' }} />
-            <span className="feed-kind">{p.kind}</span>
-            <span className="feed-glyph">{p.glyph}</span>
-            <span className="feed-strength tab">{(p.strength * 100).toFixed(0)}</span>
-            <span className="feed-time tab">{fmtClock(ts)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RegimeLegend() {
-  return (
-    <div className="legend-grid">
-      {REGIMES.map(r => (
-        <div className="legend-row" key={r.id}>
-          <span className="legend-swatch" style={{ background: `var(--r-${r.id.toLowerCase()})` }} />
-          <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>{r.id}</span>
-          <span style={{ color: 'var(--fg-2)' }}>{r.name}</span>
-        </div>
       ))}
     </div>
   );
 }
 
-export default function Dashboard({
-  series, patterns, cursor, setCursor, onSelectPatternKind, symbol, timeframe,
-}: DashboardProps) {
-  const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
-
-  const energy = useMemo(() => energyAt(series, cursor), [series, cursor]);
-  const persistence = useMemo(() => persistenceAt(series, cursor), [series, cursor]);
-
-  const activePattern = useMemo(() => {
-    if (selectedPatternId) return patterns.find(p => p.id === selectedPatternId) || null;
-    return patterns.find(p => cursor >= p.start && cursor <= p.end) || null;
-  }, [patterns, cursor, selectedPatternId]);
-
-  const interp = activePattern ? INTERP[activePattern.kind] : 'Cursor outside any detected pattern. Use feed to inspect a region.';
+function NVCard({ series, liveNV }: { series: DataPoint[]; liveNV: number | null }) {
+  const prev = series.length > 24 ? series[series.length - 24] : null;
+  const delta = liveNV != null && prev ? liveNV - prev.v : null;
 
   return (
-    <div className="dashboard">
-      <section className="panel panel-chart">
-        <div className="panel-head">
-          <span className="title">{symbol} · Coherence Regime · {timeframe}</span>
+    <div style={{ background: 'var(--bg-1)', padding: 16, borderRight: '1px solid var(--line-0)' }}>
+      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+        NET VARIANCE · LIVE
+      </div>
+      <div style={{
+        fontSize: 44, color: 'var(--cyan)',
+        fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+        letterSpacing: '-0.02em',
+      }}>
+        {liveNV?.toFixed(1) ?? '—'}
+      </div>
+      {delta !== null && (
+        <div style={{ fontSize: 9, color: delta > 0 ? 'var(--green)' : 'var(--fg-4)', marginTop: 4 }}>
+          {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)} from 24m ago
         </div>
-        <div className="panel-body">
-          <GCPChartResponsive
-            series={series}
-            patterns={patterns}
-            cursor={cursor}
-            setCursor={setCursor}
-            selectedPatternId={selectedPatternId}
-            onSelectPattern={(id) => setSelectedPatternId(id)}
-          />
-        </div>
-      </section>
+      )}
+      <NVSparkline series={series} />
+      <div style={{ fontSize: 7, color: 'var(--fg-4)', marginTop: 3 }}>last 15 readings</div>
+    </div>
+  );
+}
 
-      <section className="panel panel-side">
-        <div className="panel-head">
-          <span className="title">Energy / Persistence</span>
+function RegimeCard({ regime }: { regime: string | null }) {
+  const meta = regime ? REGIME_META[regime] : null;
+
+  return (
+    <div style={{ background: 'var(--bg-1)', padding: 16, borderRight: '1px solid var(--line-0)' }}>
+      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+        REGIME
+      </div>
+      {meta && regime ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: meta.color }} />
+            <span style={{ fontSize: 22, color: meta.color }}>{regime}</span>
+            <span style={{ fontSize: 11, color: meta.color, opacity: 0.7, letterSpacing: '0.04em' }}>
+              {meta.label.toUpperCase()}
+            </span>
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--fg-4)', marginBottom: 10 }}>
+            {meta.range} NV range
+          </div>
+          <div style={{ display: 'flex', gap: 2 }}>
+            {REGIME_ORDER.map(r => (
+              <div key={r} style={{
+                flex: 1, height: 3, borderRadius: 1,
+                background: REGIME_META[r].color,
+                opacity: r === regime ? 1 : 0.2,
+              }} />
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 2, marginTop: 2 }}>
+            {REGIME_ORDER.map(r => (
+              <div key={r} style={{
+                flex: 1, fontSize: 7, textAlign: 'center',
+                color: r === regime ? REGIME_META[r].color : 'var(--fg-4)',
+              }}>
+                {r}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize: 22, color: 'var(--fg-4)' }}>—</div>
+      )}
+    </div>
+  );
+}
+
+function PatternCard({ patterns, series }: { patterns: Pattern[]; series: DataPoint[] }) {
+  const latest = patterns[patterns.length - 1] ?? null;
+
+  if (!latest) {
+    return (
+      <div style={{ background: 'var(--bg-1)', padding: 16 }}>
+        <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+          ACTIVE PATTERN · PSS
         </div>
-        <div className="panel-body">
-          <div className="gauge-wrap">
-            <PSSGauge value={energy.pss} />
-            <EnergyGrid
-              slope={energy.slope}
-              curv={energy.curv}
-              ced={energy.ced}
-              persistence={persistence}
-              timeframe={timeframe}
-            />
+        <div style={{ fontSize: 14, color: 'var(--fg-4)' }}>No pattern detected</div>
+      </div>
+    );
+  }
+
+  const pss    = pssOf(latest);
+  const regime = regimeOfPattern(latest, series);
+  const bars   = barsOfPattern(latest);
+  const tier   = pss >= 80 ? 'STRONG' : pss >= 60 ? 'FORMING' : 'WEAK';
+
+  return (
+    <div style={{ background: 'var(--bg-1)', padding: 16 }}>
+      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+        ACTIVE PATTERN · PSS
+      </div>
+      <div style={{
+        fontSize: 38, color: '#d4a028',
+        fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+      }}>
+        {pss}
+      </div>
+      <div style={{ fontSize: 9, color: '#854f0b', marginTop: 2 }}>
+        / 100 · {tier}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--fg-1)', marginTop: 6, letterSpacing: '0.02em' }}>
+        {latest.kind}
+      </div>
+      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+        {regime ?? '?'} · {bars} bars
+      </div>
+      <div style={{
+        height: 4, background: 'var(--bg-2)',
+        borderRadius: 2, marginTop: 8, overflow: 'hidden',
+      }}>
+        <div style={{
+          width: `${pss}%`, height: '100%',
+          background: '#d4a028', borderRadius: 2,
+        }} />
+      </div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        fontSize: 7, color: 'var(--fg-4)', marginTop: 2,
+      }}>
+        <span>WEAK</span><span>FORMING</span><span>STRONG</span><span>EXPLOSIVE</span>
+      </div>
+    </div>
+  );
+}
+
+function NewsRow({ item }: { item: NewsItem }) {
+  const time = new Date(item.publishedAt).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit',
+  });
+  const titleColor =
+    item.regime === 'F' ? '#e24b4a' :
+    item.regime === 'D' || item.regime === 'E' ? '#d4a028' :
+    'var(--fg-1)';
+
+  return (
+    <a
+      href={item.link}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '50px 1fr',
+        gap: 10,
+        padding: '9px 16px',
+        borderBottom: '1px solid var(--bg-0)',
+        textDecoration: 'none',
+      }}
+    >
+      <div style={{ fontSize: 9, color: 'var(--fg-4)', fontVariantNumeric: 'tabular-nums', paddingTop: 1 }}>
+        {time}
+      </div>
+      <div>
+        <div style={{ fontSize: 10, color: titleColor, lineHeight: 1.45, letterSpacing: '0.01em' }}>
+          {item.title}
+          {item.regime && <RegimeTag regime={item.regime} />}
+        </div>
+        <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2, letterSpacing: '0.06em' }}>
+          {item.source.toUpperCase()}
+          {item.nv != null && ` · NV ${item.nv} at publish`}
+        </div>
+      </div>
+    </a>
+  );
+}
+
+interface DashboardProps {
+  gcpData:  GCPDataState;
+  series:   DataPoint[];
+  patterns: Pattern[];
+}
+
+export default function Dashboard({ gcpData, series, patterns }: DashboardProps) {
+  const { items: newsItems, loading: newsLoading } = useNewsData(series);
+  const latestPattern = patterns[patterns.length - 1] ?? null;
+
+  // For the sparkline / 24m delta we want the last 15 minute-resolution points.
+  // baseSeries already supplies this — no further trimming needed.
+  // useMemo just keeps the slice stable for the sparkline.
+  useMemo(() => series.slice(-15), [series]);
+
+  return (
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+          borderBottom: '1px solid var(--line-0)',
+          flexShrink: 0,
+        }}>
+          <NVCard series={series} liveNV={gcpData.liveNetvar} />
+          <RegimeCard regime={gcpData.liveRegime} />
+          <PatternCard patterns={patterns} series={series} />
+        </div>
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{
+            padding: '7px 16px',
+            borderBottom: '1px solid var(--line-0)',
+            fontSize: 8, letterSpacing: '0.1em', color: 'var(--fg-4)',
+            display: 'flex', alignItems: 'center', gap: 8,
+            flexShrink: 0,
+          }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)' }} />
+            GLOBAL EVENTS FEED · Reuters · AP · BBC
+            <span style={{ marginLeft: 'auto', color: 'var(--fg-4)' }}>
+              tagged by GCP regime at publish time · updates every 5min
+            </span>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {newsLoading && (
+              <div style={{
+                padding: 24, textAlign: 'center',
+                fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.08em',
+              }}>
+                LOADING FEED…
+              </div>
+            )}
+            {!newsLoading && newsItems.length === 0 && (
+              <div style={{
+                padding: 24, textAlign: 'center',
+                fontSize: 10, color: 'var(--fg-4)',
+              }}>
+                No recent items — feed may be temporarily unavailable
+              </div>
+            )}
+            {newsItems.map((item, i) => (
+              <NewsRow key={i} item={item} />
+            ))}
           </div>
         </div>
-      </section>
+      </div>
 
-      <section className="panel panel-feed">
-        <div className="panel-head">
-          <span className="title">Pattern Feed</span>
-          <span className="hairline">{patterns.length} detected</span>
-        </div>
-        <div className="panel-body">
-          <PatternFeed
-            patterns={patterns}
-            series={series}
-            activeId={activePattern?.id ?? null}
-            onPick={(p) => {
-              setSelectedPatternId(p.id);
-              setCursor(Math.floor((p.start + p.end) / 2));
-            }}
-          />
-        </div>
-      </section>
-
-      <section className="panel panel-meta">
-        <div className="panel-head">
-          <span className="title">Interpretation</span>
-          {activePattern && (
-            <button
-              className="tool-btn"
-              onClick={() => onSelectPatternKind(activePattern.kind)}
-            >
-              DETAIL →
-            </button>
+      <div style={{
+        width: 260, borderLeft: '1px solid var(--line-0)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        background: 'var(--bg-1)',
+      }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--line-0)' }}>
+          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+            PATTERN FEED
+          </div>
+          {patterns.slice(-6).reverse().map((p, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '5px 0', borderBottom: '1px solid var(--bg-0)', fontSize: 9,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <div style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--cyan)',
+                }} />
+                <span style={{ color: 'var(--fg-1)' }}>{p.kind}</span>
+              </div>
+              <span style={{
+                color: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--fg-3)',
+              }}>
+                {pssOf(p)}
+              </span>
+            </div>
+          ))}
+          {!patterns.length && (
+            <div style={{ fontSize: 9, color: 'var(--fg-4)' }}>No patterns detected</div>
           )}
         </div>
-        <div className="panel-body">
-          {activePattern && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ color: KIND_COLOR[activePattern.kind] || 'var(--fg-0)', fontSize: 13, fontWeight: 600, letterSpacing: '0.04em' }}>
-                {activePattern.kind.toUpperCase()}
+
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--line-0)', flex: 1 }}>
+          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+            INTERPRETATION
+          </div>
+          {latestPattern ? (
+            <>
+              <div style={{ fontSize: 10, color: 'var(--cyan)', letterSpacing: '0.04em', marginBottom: 5 }}>
+                {latestPattern.kind.toUpperCase()}
               </div>
-              <div className="hairline" style={{ marginTop: 2 }}>{activePattern.glyph}</div>
+              <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.6 }}>
+                {PATTERN_INTERPRETATIONS[latestPattern.kind] ?? '—'}
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 9, color: 'var(--fg-4)' }}>
+              No active pattern. Monitor the feed for emerging setups.
             </div>
           )}
-          <div className="interp-box">{interp}</div>
-          <div className="hairline" style={{ marginTop: 14 }}>Regime Legend</div>
-          <RegimeLegend />
         </div>
-      </section>
+
+        <div style={{ padding: '12px 14px' }}>
+          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
+            REGIME LEGEND
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px' }}>
+            {Object.entries(REGIME_META).map(([r, meta]) => (
+              <div key={r} style={{ fontSize: 8, color: meta.color }}>
+                {r} {meta.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -20,6 +20,7 @@ export default function GCPApp() {
   const [timeframe, setTimeframe] = useState<Timeframe>('15m');
   const [viewWindow, setViewWindow] = useState<ViewWindow>('24h');
 
+  const gcpData = useGCPData();
   const {
     series: liveBaseSeries,
     liveNetvar,
@@ -27,7 +28,7 @@ export default function GCPApp() {
     gcpError,
     isLive: gcpIsLive,
     scaleFactor: gcpScaleFactor,
-  } = useGCPData();
+  } = gcpData;
 
   const fallbackSeries = useMemo(() => buildSeries().series, []);
   const baseSeries = liveBaseSeries.length > 0 ? liveBaseSeries : fallbackSeries;
@@ -118,11 +119,6 @@ export default function GCPApp() {
     setPage(p);
   };
 
-  const handleSelectPatternKind = (kind: string) => {
-    setSelectedPatternKind(kind);
-    setPage('pattern');
-  };
-
   const lastDataDate = useMemo(() => {
     if (!baseSeries.length) return null;
     return new Date(baseSeries[baseSeries.length - 1].t)
@@ -184,14 +180,9 @@ export default function GCPApp() {
         <main className="main">
           {page === 'dashboard' && (
             <Dashboard
-              series={displaySeries}
+              gcpData={gcpData}
+              series={baseSeries}
               patterns={displayPatterns}
-              cursor={effectiveCursor}
-              setCursor={setCursor}
-              live={live}
-              onSelectPatternKind={handleSelectPatternKind}
-              symbol={symbol}
-              timeframe={timeframe}
             />
           )}
           {page === 'pattern' && (

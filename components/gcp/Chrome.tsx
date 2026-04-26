@@ -159,7 +159,7 @@ function Header({
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
 }: HeaderProps) {
-  const showTFView = page !== 'chart';
+  const showTFView = page !== 'chart' && page !== 'dashboard';
   return (
     <header className="app-header">
       <div className="brand" style={{ gap: 8 }}>
