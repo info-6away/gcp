@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -16,8 +16,43 @@ import {
   type SeriesMarker,
   type ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
-import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
-import type { Candle } from '@/lib/useCandleData';
+import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+
+interface Candle {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+}
+
+const TD_BASE = 'https://api.twelvedata.com';
+const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
+
+const TD_SYMBOLS: Record<MarketSymbol, string> = {
+  XAUUSD: 'XAU/USD',
+  BTC:    'BTC/USD',
+};
+
+type ChartTF = '5m' | '15m' | '1h' | '4h' | '1D';
+
+const CHART_TF_LIST: ChartTF[] = ['5m', '15m', '1h', '4h', '1D'];
+
+const TD_INTERVALS_CHART: Record<ChartTF, string> = {
+  '5m':  '5min',
+  '15m': '15min',
+  '1h':  '1h',
+  '4h':  '4h',
+  '1D':  '1day',
+};
+
+const CHART_OUTPUT_SIZE: Record<ChartTF, number> = {
+  '5m':  2016,
+  '15m': 672,
+  '1h':  168,
+  '4h':  42,
+  '1D':  7,
+};
 
 const COLORS = {
   bg:         '#0a0b0d',
@@ -166,15 +201,68 @@ function drawRegimeStrip(canvas: HTMLCanvasElement, chart: IChartApi, series: Da
 interface ChartViewProps {
   series:      DataPoint[];
   patterns:    Pattern[];
-  candles:     Candle[];
   symbol:      MarketSymbol;
   symbolColor: string;
-  timeframe:   Timeframe;
 }
 
 export default function ChartView({
-  series, patterns, candles, symbol, timeframe,
+  series, patterns, symbol,
 }: ChartViewProps) {
+  const [chartTF, setChartTF] = useState<ChartTF>('1h');
+
+  const [candles, setCandlesState] = useState<Candle[]>([]);
+  const [candleLoading, setCandleLoading] = useState(true);
+  const [candleError, setCandleError] = useState<string | null>(null);
+
+  const fetchChartCandles = useCallback(async () => {
+    const tdSymbol = TD_SYMBOLS[symbol];
+    if (!tdSymbol || !TD_KEY) {
+      setCandleLoading(false);
+      setCandleError('No API key configured');
+      return;
+    }
+    const interval   = TD_INTERVALS_CHART[chartTF];
+    const outputsize = CHART_OUTPUT_SIZE[chartTF];
+
+    try {
+      const url = `${TD_BASE}/time_series`
+        + `?symbol=${encodeURIComponent(tdSymbol)}`
+        + `&interval=${interval}`
+        + `&outputsize=${outputsize}`
+        + `&apikey=${TD_KEY}`;
+      const res  = await fetch(url);
+      if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
+      const data = await res.json();
+      if (data.status === 'error') throw new Error(data.message ?? 'TD error');
+
+      const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
+        (data.values ?? []).slice().reverse();
+
+      const newCandles: Candle[] = values.map(v => ({
+        t: new Date(v.datetime + 'Z').getTime(),
+        o: parseFloat(v.open),
+        h: parseFloat(v.high),
+        l: parseFloat(v.low),
+        c: parseFloat(v.close),
+      }));
+
+      setCandlesState(newCandles);
+      setCandleLoading(false);
+      setCandleError(null);
+    } catch (e) {
+      console.warn('[ChartView] candle fetch error:', e);
+      setCandleError(String(e));
+      setCandleLoading(false);
+    }
+  }, [symbol, chartTF]);
+
+  useEffect(() => {
+    setCandleLoading(true);
+    setCandlesState([]);
+    fetchChartCandles();
+    const id = setInterval(fetchChartCandles, 60_000);
+    return () => clearInterval(id);
+  }, [fetchChartCandles]);
   const priceRef = useRef<HTMLDivElement>(null);
   const gcpRef   = useRef<HTMLDivElement>(null);
 
@@ -218,9 +306,20 @@ export default function ChartView({
     });
   }, []);
 
+  // Filter the GCP series to the same window as the candles so the GCP
+  // pane doesn't extend further left than the price pane (which would
+  // otherwise leave a visible gap on every Chart-tab render).
+  const chartSeries = useMemo(() => {
+    if (!candles.length || !series.length) return series;
+    const earliest = candles[0].t;
+    const span     = candles[candles.length - 1].t - candles[0].t;
+    const buffer   = Math.max(span * 0.1, 60_000);
+    return series.filter(p => p.t >= earliest - buffer);
+  }, [series, candles]);
+
   // Series snapshot the redraw fn reads from — kept in a ref so callbacks are stable
-  const seriesRef = useRef<DataPoint[]>(series);
-  seriesRef.current = series;
+  const seriesRef = useRef<DataPoint[]>(chartSeries);
+  seriesRef.current = chartSeries;
 
   const redrawOverlays = () => {
     const gcpInst = gcpChart.current;
@@ -464,17 +563,17 @@ export default function ChartView({
 
   useEffect(() => {
     if (!gcpLineSeries.current) return;
-    if (!series.length) {
+    if (!chartSeries.length) {
       gcpLineSeries.current.setData([]);
       redrawOverlays();
       return;
     }
 
-    gcpLineSeries.current.setData(seriesToLine(series));
+    gcpLineSeries.current.setData(seriesToLine(chartSeries));
     gcpChart.current?.timeScale().fitContent();
     redrawOverlays();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series]);
+  }, [chartSeries]);
 
   useEffect(() => {
     const markerHost =
@@ -536,12 +635,39 @@ export default function ChartView({
       }}>
         <span style={{ color: 'var(--fg-0)', fontWeight: 600, letterSpacing: '0.04em' }}>{symbol}</span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
-        <span style={{ color: 'var(--fg-2)' }}>OHLCV + GCP Coherence</span>
-        <span style={{ color: 'var(--fg-3)' }}>·</span>
-        <span style={{ color: 'var(--fg-3)' }}>{timeframe} bars</span>
-        {showNoCandleMessage && (
+        <span style={{ color: 'var(--fg-2)' }}>OHLCV + GCP Coherence · 7d window</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 6 }}>
+          {CHART_TF_LIST.map(tf => (
+            <button key={tf}
+              onClick={() => setChartTF(tf)}
+              style={{
+                padding: '2px 7px',
+                fontSize: 9, letterSpacing: '0.08em',
+                fontFamily: 'var(--font-mono)',
+                background: chartTF === tf ? 'var(--bg-3)' : 'transparent',
+                border: `1px solid ${chartTF === tf ? 'var(--line-2)' : 'transparent'}`,
+                borderRadius: 2,
+                color: chartTF === tf ? 'var(--fg-0)' : 'var(--fg-3)',
+                cursor: 'pointer',
+              }}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+        {candleLoading && (
+          <span style={{ color: 'var(--fg-3)', fontSize: 9, letterSpacing: '0.08em' }}>
+            loading candles…
+          </span>
+        )}
+        {!candleLoading && candleError && (
           <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
-            ⚠ No candle data — check OHLCV status in header
+            ⚠ {candleError}
+          </span>
+        )}
+        {showNoCandleMessage && !candleLoading && !candleError && (
+          <span style={{ color: 'var(--amber)', fontSize: 9, letterSpacing: '0.08em' }}>
+            ⚠ No candle data
           </span>
         )}
         <span style={{ flex: 1 }} />

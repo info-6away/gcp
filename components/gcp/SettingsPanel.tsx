@@ -10,13 +10,12 @@ interface SettingsPanelProps {
   goldStatus:       string;
   goldPrice:        number | null;
   goldSource:       string | null;
-  candleLoading:    boolean;
-  candleError:      string | null;
   symbol:           MarketSymbol;
   timeframe:        Timeframe;
   seriesLength:     number;
   historicalPoints: number;
 }
+
 
 function StatusDot({ ok }: { ok: boolean }) {
   return (
@@ -83,8 +82,8 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         />
         <Row
           label="OHLCV Candles"
-          sub="twelvedata.com — 60s poll — Grow plan"
-          value={<><StatusDot ok={!props.candleError && !props.candleLoading} />{props.candleLoading ? 'Loading…' : props.candleError ? 'Error' : 'Live'}</>}
+          sub="twelvedata.com — fetched on the Chart tab, 60s refresh"
+          value="On demand"
         />
         <Row
           label="Historical GCP"

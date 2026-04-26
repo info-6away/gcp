@@ -246,16 +246,20 @@ async function _runFetchCurrent(): Promise<void> {
 }
 
 async function _pollLoop(): Promise<void> {
-  // First fetch — series only.
+  // Brief startup delay — lets StrictMode finish double-mounting and the
+  // historical JSON load before we hit the live API.
+  await new Promise(r => setTimeout(r, 2_000));
+  if (!_intervalsInstalled) return;
+
   await _runFetchSeries();
 
   while (_intervalsInstalled && _listeners.size > 0) {
-    await new Promise(r => setTimeout(r, 10_000));
+    await new Promise(r => setTimeout(r, 15_000));
     if (!_intervalsInstalled) break;
 
     await _runFetchCurrent();
 
-    await new Promise(r => setTimeout(r, 110_000));
+    await new Promise(r => setTimeout(r, 105_000));
     if (!_intervalsInstalled) break;
 
     await _runFetchSeries();

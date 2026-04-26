@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { buildSeries, detectPatterns, processSeries } from '@/lib/gcp-data';
 import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
-import { useCandleData } from '@/lib/useCandleData';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -43,7 +42,6 @@ export default function GCPApp() {
   }, [baseSeries.length]);
 
   const goldData = useGoldData(symbol);
-  const candleData = useCandleData(symbol, timeframe, viewWindow);
 
   // Dashboard is GCP-only. Price overlay lives on the Chart tab now;
   // ChartView consumes candleData directly so we don't need to merge
@@ -177,9 +175,6 @@ export default function GCPApp() {
         goldMarketStatus={goldData.marketStatus}
         goldSessionDate={null}
         goldSource={goldData.source}
-        candleLoading={candleData.loading}
-        candleError={!!candleData.error}
-        candleCount={candleData.candles.length}
         gcpLive={gcpIsLive}
         gcpNetvar={liveNetvar}
         gcpError={!!gcpError}
@@ -213,10 +208,8 @@ export default function GCPApp() {
             <ChartView
               series={displaySeries}
               patterns={displayPatterns}
-              candles={candleData.candles}
               symbol={symbol}
               symbolColor={getSymbolMeta(symbol).color}
-              timeframe={timeframe}
             />
           )}
           {page === 'settings' && (
@@ -227,8 +220,6 @@ export default function GCPApp() {
               goldStatus={goldData.marketStatus}
               goldPrice={goldData.price}
               goldSource={goldData.source}
-              candleLoading={candleData.loading}
-              candleError={candleData.error}
               symbol={symbol}
               timeframe={timeframe}
               seriesLength={displaySeries.length}

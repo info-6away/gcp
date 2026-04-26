@@ -58,9 +58,6 @@ interface HeaderProps {
   gcpLive:           boolean;
   gcpNetvar:         number | null;
   gcpError:          boolean;
-  candleLoading:     boolean;
-  candleError:       boolean;
-  candleCount:       number;
 }
 
 function SymbolPicker({
@@ -161,7 +158,6 @@ function Header({
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
-  candleLoading, candleError, candleCount,
 }: HeaderProps) {
   const showTFView = page !== 'chart';
   return (
@@ -264,7 +260,6 @@ function Header({
             style={{
               display: 'flex', flexDirection: 'column', gap: 1,
               padding: '4px 10px',
-              borderRight: '1px solid var(--line-1)',
               cursor: 'default',
             }}
           >
@@ -290,30 +285,6 @@ function Header({
             )}
           </div>
 
-          <div
-            title="OHLCV candle data — Open/High/Low/Close/Volume from Twelve Data. Powers the price overlay on the chart."
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '4px 10px',
-              cursor: 'default',
-            }}
-          >
-            <span style={{ color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
-              {candleLoading || candleError ? 'CANDLES' : 'OHLCV'}
-            </span>
-            {!candleLoading && !candleError && candleCount > 0 && (
-              <span style={{ color: 'var(--fg-3)', fontSize: 9, fontVariantNumeric: 'tabular-nums' }}>
-                {candleCount}
-              </span>
-            )}
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: candleError ? 'var(--red)'
-                : candleLoading ? 'var(--fg-3)'
-                : 'var(--green)',
-              flexShrink: 0,
-            }} />
-          </div>
         </div>
 
         <div className="divider-v" style={{ height: 20 }} />
