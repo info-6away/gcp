@@ -5,7 +5,10 @@ export const revalidate = 60;
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const symbol = searchParams.get('symbol') ?? 'XAUUSD';
-  const ticker = symbol === 'BTC' ? 'BTC-USD' : 'XAUUSD=X';
+  const ticker =
+    symbol === 'BTC'    ? 'BTC-USD' :
+    symbol === 'XAGUSD' ? 'XAGUSD=X' :
+    'XAUUSD=X';
 
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1m&range=1d`;

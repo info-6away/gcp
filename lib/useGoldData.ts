@@ -9,11 +9,13 @@ const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
   BTC:    'BTC/USD',
+  XAGUSD: 'XAG/USD',
 };
 
 const GOLD_API_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU',
   BTC:    'BTC',
+  XAGUSD: 'XAG',
 };
 
 export interface GoldState {

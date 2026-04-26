@@ -26,6 +26,7 @@ const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
   BTC:    'BTC/USD',
+  XAGUSD: 'XAG/USD',
 };
 
 type ChartTF = '5m' | '15m' | '1h' | '4h' | '1D';
@@ -226,12 +227,12 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     }, 1);
     gcpLineRef.current = gcpLine;
 
-    // 70/30 split between candles (top) and GCP line (bottom).
+    // 68/32 split between candles (top) and GCP line (bottom).
     try {
       const panes = chart.panes();
       if (panes.length >= 2) {
-        panes[0].setStretchFactor(70);
-        panes[1].setStretchFactor(30);
+        panes[0].setStretchFactor(68);
+        panes[1].setStretchFactor(32);
       }
     } catch { /* older versions silently ignore */ }
 

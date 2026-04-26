@@ -36,7 +36,7 @@ export function barDuration(bars: number, tf: Timeframe): string {
   return `${(mins / 1440).toFixed(1).replace('.0', '')}d`;
 }
 
-export type MarketSymbol = 'XAUUSD' | 'BTC';
+export type MarketSymbol = 'XAUUSD' | 'BTC' | 'XAGUSD';
 
 export interface SymbolMeta {
   id:          MarketSymbol;
@@ -63,6 +63,14 @@ export const SYMBOLS: SymbolMeta[] = [
     prefix:      '$',
     decimals:    0,
     color:       'oklch(0.75 0.18 55)',
+  },
+  {
+    id:          'XAGUSD',
+    label:       'Silver Spot',
+    yahooTicker: 'XAGUSD=X',
+    prefix:      '$',
+    decimals:    3,
+    color:       'oklch(0.80 0.04 220)',
   },
 ];
 
