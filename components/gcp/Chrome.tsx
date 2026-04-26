@@ -325,6 +325,7 @@ function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
     { id: 'dashboard' as const, label: 'Dashboard', hint: 'D' },
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
     { id: 'chart'     as const, label: 'Chart',     hint: 'C' },
+    { id: 'research'  as const, label: 'Research',  hint: 'R' },
     { id: 'settings'  as const, label: 'Settings',  hint: 'S' },
   ];
   return (

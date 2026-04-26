@@ -10,6 +10,7 @@ import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
 import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
+import ResearchView from './ResearchView';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
@@ -143,6 +144,7 @@ export default function GCPApp() {
       if (e.key === 'd') setPage('dashboard');
       if (e.key === 'p') { setSelectedPatternKind(null); setPage('pattern'); }
       if (e.key === 'c') setPage('chart');
+      if (e.key === 'r') setPage('research');
       if (e.key === 's') setPage('settings');
       if (e.key === ' ') { e.preventDefault(); setLive(l => !l); }
       if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 10));
@@ -260,6 +262,12 @@ export default function GCPApp() {
               patterns={displayPatterns}
               symbol={symbol}
               timeframe={timeframe}
+            />
+          )}
+          {page === 'research' && (
+            <ResearchView
+              series={baseSeries}
+              symbol={symbol}
             />
           )}
           {page === 'settings' && (
