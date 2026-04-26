@@ -139,45 +139,60 @@ export function lttbDownsample(series: DataPoint[], threshold: number): DataPoin
 
 const LTTB_TARGET = 1200;
 
-export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
-  // Ascending order is required by both LTTB and Lightweight Charts.
+export interface ProcessedSeries {
+  display:  DataPoint[];
+  analysis: DataPoint[];
+}
+
+// Returns both:
+//   display  — bucketed + LTTB-downsampled for chart rendering (~1200 pts)
+//   analysis — bucketed only (no LTTB), for pattern detection
+// LTTB scatters points for visual fidelity; that destroys the consecutive
+// regime sequences pattern detection relies on. Patterns must run on the
+// pre-LTTB series.
+export function processSeries(series: DataPoint[], barsPerBucket: number): ProcessedSeries {
   const sorted = [...series].sort((a, b) => a.t - b.t);
-  let bucketed = sorted;
 
-  if (barsPerBucket > 1) {
-    const out: DataPoint[] = [];
-    for (let i = 0; i < sorted.length; i += barsPerBucket) {
-      const bucket = sorted.slice(i, i + barsPerBucket);
-      if (!bucket.length) break;
-
-      let maxV = -Infinity;
-      for (const p of bucket) if (p.v > maxV) maxV = p.v;
-
-      // MEDIAN for regime classification — keeps a single transient
-      // spike from pinning the whole bucket to F.
-      const sortedV = bucket.map(p => p.v).sort((a, b) => a - b);
-      const vMedian = sortedV[Math.floor(sortedV.length / 2)];
-
-      const last    = bucket[bucket.length - 1];
-      const hasReal = bucket.some(p => p.gReal);
-
-      out.push({
-        i:     out.length,
-        t:     last.t,
-        v:     +maxV.toFixed(2),       // MAX keeps spikes visible on the line
-        r:     regimeFor(vMedian),     // MEDIAN gives the dominant regime
-        g:     last.g,
-        gReal: hasReal || undefined,
-      });
-    }
-    bucketed = out;
+  if (barsPerBucket <= 1) {
+    const display = sorted.length > LTTB_TARGET
+      ? lttbDownsample(sorted, LTTB_TARGET)
+      : sorted;
+    return { display, analysis: sorted };
   }
 
-  if (bucketed.length > LTTB_TARGET) {
-    return lttbDownsample(bucketed, LTTB_TARGET);
+  const bucketed: DataPoint[] = [];
+  for (let i = 0; i < sorted.length; i += barsPerBucket) {
+    const bucket = sorted.slice(i, i + barsPerBucket);
+    if (!bucket.length) break;
+
+    let maxV = -Infinity;
+    for (const p of bucket) if (p.v > maxV) maxV = p.v;
+
+    const sortedV = bucket.map(p => p.v).sort((a, b) => a - b);
+    const vMedian = sortedV[Math.floor(sortedV.length / 2)];
+
+    const last    = bucket[bucket.length - 1];
+    const hasReal = bucket.some(p => p.gReal);
+
+    bucketed.push({
+      i:     bucketed.length,
+      t:     last.t,
+      v:     +maxV.toFixed(2),
+      r:     regimeFor(vMedian),
+      g:     last.g,
+      gReal: hasReal || undefined,
+    });
   }
 
-  return bucketed;
+  const display = bucketed.length > LTTB_TARGET
+    ? lttbDownsample(bucketed, LTTB_TARGET).map((p, i) => ({ ...p, i }))
+    : bucketed;
+
+  return { display, analysis: bucketed };
+}
+
+export function resampleSeries(series: DataPoint[], barsPerBucket: number): DataPoint[] {
+  return processSeries(series, barsPerBucket).display;
 }
 
 export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[] {

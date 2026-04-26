@@ -115,7 +115,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Row
           label="GCP Scale"
           sub="sum_sq × 0.46 per 60s bucket, calibrated to live API"
-          value={`× 0.46 × ${props.gcpScale?.toFixed(3) ?? '…'}`}
+          value={
+            props.gcpScale != null
+              ? `× 0.46 × ${props.gcpScale.toFixed(3)}`
+              : '× 0.46 (calibrating…)'
+          }
         />
         <Row label="Regime A"    value="0 – 50 NV" />
         <Row label="Regime B"    value="50 – 100 NV" />

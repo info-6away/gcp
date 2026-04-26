@@ -259,8 +259,11 @@ button { font-family: inherit; font-size: inherit; color: inherit; background: n
 .panel-chart { grid-column: 1 / 2; grid-row: 1 / 2; }
 .panel-side  { grid-column: 2 / 3; grid-row: 1 / 2; }
 .panel-feed  { grid-column: 1 / 2; grid-row: 2 / 3; }
-.panel-meta  { grid-column: 2 / 3; grid-row: 2 / 3; }
-.panel-meta .panel-body { padding-bottom: 24px; }
+.panel-meta  { grid-column: 2 / 3; grid-row: 2 / 3; min-height: 0; }
+.panel-meta .panel-body {
+  padding-bottom: 24px;
+  overflow: auto;
+}
 
 /* Chart panel toolbar */
 .chart-tools {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { regimeFor } from '@/lib/gcp-data';
 import type { DataPoint, RegimeId } from '@/types/gcp';
 
@@ -9,6 +9,7 @@ const GCP2_BASE   = 'https://gcp2.net';
 
 const SERIES_POLL_MS  = 60_000;
 const CURRENT_POLL_MS = 120_000;
+const MIN_FETCH_GAP   = 55_000;
 
 interface RawAggregate {
   end_epoch:        number;
@@ -30,25 +31,6 @@ export interface GCPDataState {
   isLive:      boolean;
   lastUpdate:  Date | null;
   scaleFactor: number | null;
-}
-
-const LS_KEY_SERIES  = 'gcp_last_series_fetch';
-const LS_KEY_CURRENT = 'gcp_last_current_fetch';
-const MIN_INTERVAL   = 55_000;
-
-function canFetch(lsKey: string): boolean {
-  if (typeof window === 'undefined') return true;
-  try {
-    const last = parseInt(window.localStorage.getItem(lsKey) ?? '0', 10);
-    return Date.now() - last > MIN_INTERVAL;
-  } catch {
-    return true;
-  }
-}
-
-function markFetched(lsKey: string): void {
-  if (typeof window === 'undefined') return;
-  try { window.localStorage.setItem(lsKey, String(Date.now())); } catch {}
 }
 
 async function gcpFetch(endpoint: string): Promise<unknown | null> {
@@ -95,8 +77,6 @@ function livePointsToSeries(points: GCPPoint[], startIndex: number): DataPoint[]
 function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   if (!live.length) return historical;
   const liveStart = live[0].t;
-  // 2h buffer drops historical points right at the boundary so the SVG
-  // path doesn't "lift" between the last historical and first live sample.
   const base   = historical.filter(p => p.t < liveStart - 7_200_000);
   const liveDP = livePointsToSeries(live, base.length);
   return [...base, ...liveDP]
@@ -113,16 +93,8 @@ function median(arr: number[]): number {
     : sorted[mid];
 }
 
-// Compare overlapping time-window medians to derive a scale factor.
-// The historical JSON was processed with sum_sq × 0.46 (Session 5.5);
-// the live API serves raw netvar_aggregate. Without rescaling, regime
-// classification is wrong on the historical half of the merged series.
 function computeHistoricalScale(historical: DataPoint[], live: GCPPoint[]): number {
   if (!historical.length || !live.length) return 1;
-
-  // Global medians — the historical JSON ends before the live window starts,
-  // so a strict time-overlap comparison falls back to scale=1. Comparing
-  // global medians gives a usable approximation of how the two scales differ.
   const histMed = median(historical.map(p => p.v));
   const liveMed = median(live.map(p => p.v));
   if (histMed <= 0 || liveMed <= 0) return 1;
@@ -147,140 +119,155 @@ function rescaleHistorical(historical: DataPoint[], scale: number): DataPoint[] 
   });
 }
 
-export function useGCPData(): GCPDataState {
-  const [state, setState] = useState<GCPDataState>({
-    series: [], liveNetvar: null, liveRegime: null,
-    gcpLoading: true, gcpError: null, isLive: false, lastUpdate: null,
-    scaleFactor: null,
-  });
+// ── Module-level singleton ─────────────────────────────────────────────────
+// Keeps polling and cached data outside React's lifecycle so that StrictMode
+// double-mounts and remounts don't re-trigger fetches and overwhelm the API.
 
-  const historicalRef        = useRef<DataPoint[]>([]);
-  const scaledHistoricalRef  = useRef<DataPoint[]>([]);
-  const scaleRef             = useRef<number | null>(null);
-  const livePointsRef        = useRef<GCPPoint[]>([]);
-  const fetchingRef          = useRef(false);
-  const fetchingCurrentRef   = useRef(false);
-  const mountedSeriesRef     = useRef(false);
-  const mountedCurrentRef    = useRef(false);
+const INITIAL_STATE: GCPDataState = {
+  series: [], liveNetvar: null, liveRegime: null,
+  gcpLoading: true, gcpError: null, isLive: false, lastUpdate: null,
+  scaleFactor: null,
+};
 
-  useEffect(() => {
-    loadHistoricalSeries().then(hist => {
-      historicalRef.current       = hist;
-      scaledHistoricalRef.current = hist; // identity until scale is computed
-      const merged = mergeSeries(scaledHistoricalRef.current, livePointsRef.current);
-      setState(s => ({
-        ...s,
-        series:     merged,
-        gcpLoading: hist.length === 0 && s.series.length === 0,
-      }));
-    });
-  }, []);
+let _state: GCPDataState = INITIAL_STATE;
+const _listeners = new Set<(s: GCPDataState) => void>();
 
-  const fetchSeries = useCallback(async () => {
-    if (fetchingRef.current) return;
-    const isFirstMount = !mountedSeriesRef.current;
-    mountedSeriesRef.current = true;
-    if (!isFirstMount && !canFetch(LS_KEY_SERIES)) {
-      setState(s => (s.gcpLoading ? { ...s, gcpLoading: false } : s));
+function _setState(updater: (s: GCPDataState) => GCPDataState) {
+  _state = updater(_state);
+  _listeners.forEach(fn => fn(_state));
+}
+
+let _historical:        DataPoint[]       = [];
+let _scaledHistorical:  DataPoint[]       = [];
+let _scale:             number | null     = null;
+let _livePoints:        GCPPoint[]        = [];
+let _historicalLoaded   = false;
+let _historicalLoading  = false;
+let _intervalsInstalled = false;
+let _fetchingSeries     = false;
+let _fetchingCurrent    = false;
+let _lastSeriesFetch    = 0;
+let _lastCurrentFetch   = 0;
+
+async function _loadHistoricalOnce(): Promise<void> {
+  if (_historicalLoaded || _historicalLoading) return;
+  _historicalLoading = true;
+  try {
+    const hist = await loadHistoricalSeries();
+    _historical       = hist;
+    _scaledHistorical = hist;
+    _historicalLoaded = true;
+
+    const merged = mergeSeries(_scaledHistorical, _livePoints);
+    _setState(s => ({
+      ...s,
+      series:     merged,
+      gcpLoading: hist.length === 0 && s.series.length === 0,
+    }));
+  } finally {
+    _historicalLoading = false;
+  }
+}
+
+async function _runFetchSeries(): Promise<void> {
+  if (_fetchingSeries) return;
+  if (Date.now() - _lastSeriesFetch < MIN_FETCH_GAP && _lastSeriesFetch !== 0) return;
+  _fetchingSeries = true;
+  try {
+    const data = await gcpFetch('/api/getNetVarAggregate24H') as
+      | { aggregates?: RawAggregate[] }
+      | null;
+    if (!data) {
+      _setState(s => ({ ...s, gcpLoading: false }));
       return;
     }
+    _lastSeriesFetch = Date.now();
 
-    fetchingRef.current = true;
-    try {
-      const data = await gcpFetch('/api/getNetVarAggregate24H') as
-        | { aggregates?: RawAggregate[] }
-        | null;
-      if (!data) {
-        setState(s => ({ ...s, gcpLoading: false }));
-        return;
-      }
+    const aggregates: RawAggregate[] = data.aggregates ?? [];
+    if (!aggregates.length) throw new Error('Empty aggregates');
 
-      markFetched(LS_KEY_SERIES);
+    const points: GCPPoint[] = aggregates.map(pt => {
+      const v = parseFloat(String(pt.netvar_aggregate));
+      return { t: pt.end_epoch * 1000, v: +v.toFixed(1), r: regimeFor(v) };
+    });
 
-      const aggregates: RawAggregate[] = data.aggregates ?? [];
-      if (!aggregates.length) throw new Error('Empty aggregates');
+    _livePoints = points;
 
-      const points: GCPPoint[] = aggregates.map(pt => {
-        const v = parseFloat(String(pt.netvar_aggregate));
-        return { t: pt.end_epoch * 1000, v: +v.toFixed(1), r: regimeFor(v) };
-      });
-
-      livePointsRef.current = points;
-
-      if (scaleRef.current === null && historicalRef.current.length) {
-        const scale = computeHistoricalScale(historicalRef.current, points);
-        scaleRef.current = scale;
-        scaledHistoricalRef.current = rescaleHistorical(historicalRef.current, scale);
-        if (scale !== 1) {
-          console.debug(`[GCP] Historical rescaled by x${scale.toFixed(3)}`);
-        }
-      }
-
-      const merged = mergeSeries(scaledHistoricalRef.current, points);
-      const scale = scaleRef.current;
-
-      setTimeout(() => {
-        setState(s => ({
-          ...s,
-          series:      merged,
-          gcpLoading:  false,
-          gcpError:    null,
-          isLive:      true,
-          lastUpdate:  new Date(),
-          scaleFactor: scale,
-        }));
-      }, 0);
-    } catch (e) {
-      setState(s => ({
-        ...s,
-        gcpLoading: false,
-        gcpError:   String(e),
-        isLive:     false,
-      }));
-    } finally {
-      fetchingRef.current = false;
+    if (_scale === null && _historical.length) {
+      _scale            = computeHistoricalScale(_historical, points);
+      _scaledHistorical = rescaleHistorical(_historical, _scale);
     }
-  }, []);
 
-  const fetchCurrent = useCallback(async () => {
-    if (fetchingCurrentRef.current) return;
-    const isFirstMount = !mountedCurrentRef.current;
-    mountedCurrentRef.current = true;
-    if (!isFirstMount && !canFetch(LS_KEY_CURRENT)) return;
+    const merged = mergeSeries(_scaledHistorical, points);
+    const scale  = _scale;
 
-    fetchingCurrentRef.current = true;
-    try {
-      const data = await gcpFetch('/api/getcurrentnetvar') as
-        | { netvar: { netvar: string }[] }
-        | null;
-      if (!data) return;
+    setTimeout(() => {
+      _setState(s => ({
+        ...s,
+        series:      merged,
+        gcpLoading:  false,
+        gcpError:    null,
+        isLive:      true,
+        lastUpdate:  new Date(),
+        scaleFactor: scale,
+      }));
+    }, 0);
+  } catch (e) {
+    _setState(s => ({
+      ...s,
+      gcpLoading: false,
+      gcpError:   String(e),
+      isLive:     false,
+    }));
+  } finally {
+    _fetchingSeries = false;
+  }
+}
 
-      markFetched(LS_KEY_CURRENT);
+async function _runFetchCurrent(): Promise<void> {
+  if (_fetchingCurrent) return;
+  if (Date.now() - _lastCurrentFetch < MIN_FETCH_GAP && _lastCurrentFetch !== 0) return;
+  _fetchingCurrent = true;
+  try {
+    const data = await gcpFetch('/api/getcurrentnetvar') as
+      | { netvar: { netvar: string }[] }
+      | null;
+    if (!data) return;
+    _lastCurrentFetch = Date.now();
 
-      const netvar = parseFloat(data.netvar[0].netvar);
-      if (!isNaN(netvar)) {
-        setState(s => ({
-          ...s,
-          liveNetvar: +netvar.toFixed(1),
-          liveRegime: regimeFor(netvar),
-        }));
-      }
-    } catch { /* silent — series is primary */ }
-    finally { fetchingCurrentRef.current = false; }
-  }, []);
+    const netvar = parseFloat(data.netvar[0].netvar);
+    if (!isNaN(netvar)) {
+      _setState(s => ({
+        ...s,
+        liveNetvar: +netvar.toFixed(1),
+        liveRegime: regimeFor(netvar),
+      }));
+    }
+  } catch { /* silent — series is primary */ }
+  finally { _fetchingCurrent = false; }
+}
+
+function _ensurePolling(): void {
+  if (_intervalsInstalled) return;
+  _intervalsInstalled = true;
+  _loadHistoricalOnce();
+  _runFetchSeries();
+  setTimeout(_runFetchCurrent, 5_000);
+  setInterval(_runFetchSeries,  SERIES_POLL_MS);
+  setInterval(_runFetchCurrent, CURRENT_POLL_MS);
+}
+
+export function useGCPData(): GCPDataState {
+  const [state, setLocalState] = useState<GCPDataState>(_state);
 
   useEffect(() => {
-    fetchSeries();
-    const initDelay = setTimeout(fetchCurrent, 5000);
-
-    const s = setInterval(fetchSeries,  SERIES_POLL_MS);
-    const c = setInterval(fetchCurrent, CURRENT_POLL_MS);
+    _listeners.add(setLocalState);
+    _ensurePolling();
+    setLocalState(_state);
     return () => {
-      clearTimeout(initDelay);
-      clearInterval(s);
-      clearInterval(c);
+      _listeners.delete(setLocalState);
     };
-  }, [fetchSeries, fetchCurrent]);
+  }, []);
 
   return state;
 }

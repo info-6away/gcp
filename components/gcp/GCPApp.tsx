@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { buildSeries, detectPatterns, resampleSeries } from '@/lib/gcp-data';
+import { buildSeries, detectPatterns, processSeries } from '@/lib/gcp-data';
 import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
 import { useCandleData } from '@/lib/useCandleData';
@@ -81,14 +81,15 @@ export default function GCPApp() {
     return [...sliced].sort((a, b) => a.t - b.t);
   }, [mergedSeries, viewWindow]);
 
-  const displaySeries = useMemo(() => {
+  const { displaySeries, analysisSeries } = useMemo(() => {
     const bars = TIMEFRAME_BARS[timeframe];
-    return resampleSeries(windowedSeries, bars);
+    const { display, analysis } = processSeries(windowedSeries, bars);
+    return { displaySeries: display, analysisSeries: analysis };
   }, [windowedSeries, timeframe]);
 
   const displayPatterns = useMemo(
-    () => detectPatterns(displaySeries, TIMEFRAME_BARS[timeframe]),
-    [displaySeries, timeframe]
+    () => detectPatterns(analysisSeries, TIMEFRAME_BARS[timeframe]),
+    [analysisSeries, timeframe]
   );
 
   useEffect(() => {

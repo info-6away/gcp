@@ -154,6 +154,7 @@ function SymbolPicker({
 }
 
 function Header({
+  page,
   live, onToggleLive,
   symbol, onSymbolChange,
   timeframe, onTimeframeChange,
@@ -162,6 +163,7 @@ function Header({
   gcpLive, gcpNetvar, gcpError,
   candleLoading, candleError, candleCount,
 }: HeaderProps) {
+  const showTFView = page !== 'chart';
   return (
     <header className="app-header">
       <div className="brand">
@@ -179,45 +181,51 @@ function Header({
           onSymbolChange={onSymbolChange}
         />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{
-            fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
-            textTransform: 'uppercase', marginRight: 2,
-          }}>TF</span>
-          <div className="tf-group">
-            {TIMEFRAME_LABELS.map(tf => (
-              <button
-                key={tf}
-                className={`tf-btn ${tf === timeframe ? 'active' : ''}`}
-                onClick={() => onTimeframeChange(tf)}
-                title={TF_DESCRIPTIONS[tf]}
-              >
-                {tf}
-              </button>
-            ))}
+        {showTFView && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{
+              fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+              textTransform: 'uppercase', marginRight: 2,
+            }}>TF</span>
+            <div className="tf-group">
+              {TIMEFRAME_LABELS.map(tf => (
+                <button
+                  key={tf}
+                  className={`tf-btn ${tf === timeframe ? 'active' : ''}`}
+                  onClick={() => onTimeframeChange(tf)}
+                  title={TF_DESCRIPTIONS[tf]}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
+        {showTFView && (
+          <div style={{ width: 1, height: 16, background: 'var(--line-2)' }} />
+        )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{
-            fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
-            textTransform: 'uppercase', marginRight: 2,
-          }}>VIEW</span>
-          <div className="tf-group">
-            {VIEW_LABELS.map(w => (
-              <button
-                key={w}
-                className={`tf-btn ${w === viewWindow ? 'active' : ''}`}
-                onClick={() => onViewWindowChange(w)}
-                title={VW_DESCRIPTIONS[w]}
-              >
-                {w}
-              </button>
-            ))}
+        {showTFView && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{
+              fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+              textTransform: 'uppercase', marginRight: 2,
+            }}>VIEW</span>
+            <div className="tf-group">
+              {VIEW_LABELS.map(w => (
+                <button
+                  key={w}
+                  className={`tf-btn ${w === viewWindow ? 'active' : ''}`}
+                  onClick={() => onViewWindowChange(w)}
+                  title={VW_DESCRIPTIONS[w]}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
