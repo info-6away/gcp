@@ -7,9 +7,7 @@ import type { DataPoint, RegimeId } from '@/types/gcp';
 const GCP2_BEARER = 'Bearer 5|M1bz2cXL3YLdmuArrI2KaySF0Cl8UxtiDznzK7Mk';
 const GCP2_BASE   = 'https://gcp2.net';
 
-const SERIES_POLL_MS  = 60_000;
-const CURRENT_POLL_MS = 120_000;
-const MIN_FETCH_GAP   = 55_000;
+const MIN_FETCH_GAP = 55_000;
 
 interface RawAggregate {
   end_epoch:        number;
@@ -247,14 +245,28 @@ async function _runFetchCurrent(): Promise<void> {
   finally { _fetchingCurrent = false; }
 }
 
+async function _pollLoop(): Promise<void> {
+  // First fetch — series only.
+  await _runFetchSeries();
+
+  while (_intervalsInstalled && _listeners.size > 0) {
+    await new Promise(r => setTimeout(r, 10_000));
+    if (!_intervalsInstalled) break;
+
+    await _runFetchCurrent();
+
+    await new Promise(r => setTimeout(r, 110_000));
+    if (!_intervalsInstalled) break;
+
+    await _runFetchSeries();
+  }
+}
+
 function _ensurePolling(): void {
   if (_intervalsInstalled) return;
   _intervalsInstalled = true;
   _loadHistoricalOnce();
-  _runFetchSeries();
-  setTimeout(_runFetchCurrent, 5_000);
-  setInterval(_runFetchSeries,  SERIES_POLL_MS);
-  setInterval(_runFetchCurrent, CURRENT_POLL_MS);
+  _pollLoop();
 }
 
 export function useGCPData(): GCPDataState {
@@ -266,6 +278,11 @@ export function useGCPData(): GCPDataState {
     setLocalState(_state);
     return () => {
       _listeners.delete(setLocalState);
+      // The page is gone — stop the loop so it doesn't keep firing.
+      // _ensurePolling() will restart it the next time a subscriber mounts.
+      if (_listeners.size === 0) {
+        _intervalsInstalled = false;
+      }
     };
   }, []);
 

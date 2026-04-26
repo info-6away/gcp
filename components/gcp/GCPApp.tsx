@@ -45,41 +45,14 @@ export default function GCPApp() {
   const goldData = useGoldData(symbol);
   const candleData = useCandleData(symbol, timeframe, viewWindow);
 
-  const mergedSeries = useMemo(() => {
-    const series = baseSeries.map(p => ({
-      ...p,
-      gReal: false as boolean | undefined,
-    }));
-
-    const candles = candleData.candles;
-
-    if (candles.length > 0) {
-      const n = Math.min(candles.length, series.length);
-      for (let i = 0; i < n; i++) {
-        const gcpIdx = series.length - n + i;
-        series[gcpIdx] = {
-          ...baseSeries[gcpIdx],
-          g:     candles[i].c,
-          gReal: true,
-        };
-      }
-    } else if (goldData.price !== null && series.length > 0) {
-      const last = series.length - 1;
-      series[last] = {
-        ...baseSeries[last],
-        g:     goldData.price,
-        gReal: true,
-      };
-    }
-
-    return series;
-  }, [baseSeries, candleData.candles, goldData.price]);
-
+  // Dashboard is GCP-only. Price overlay lives on the Chart tab now;
+  // ChartView consumes candleData directly so we don't need to merge
+  // gold/BTC closes into the GCP series anymore.
   const windowedSeries = useMemo(() => {
     const mins = VIEW_MINUTES[viewWindow];
-    const sliced = !Number.isFinite(mins) ? mergedSeries : mergedSeries.slice(-mins);
+    const sliced = !Number.isFinite(mins) ? baseSeries : baseSeries.slice(-mins);
     return [...sliced].sort((a, b) => a.t - b.t);
-  }, [mergedSeries, viewWindow]);
+  }, [baseSeries, viewWindow]);
 
   const { displaySeries, analysisSeries } = useMemo(() => {
     const bars = TIMEFRAME_BARS[timeframe];
@@ -137,11 +110,9 @@ export default function GCPApp() {
     time: `${pad(d.getHours())}:${pad(d.getMinutes())}:00`,
     v: cursorS.v.toFixed(1),
     r: cursorS.r,
-    g: cursorS.gReal && cursorS.g > 0
-      ? formatPrice(cursorS.g, symbol)
-      : goldData.price
-        ? `${formatPrice(goldData.price, symbol)} (live)`
-        : '—',
+    g: goldData.price
+      ? `${formatPrice(goldData.price, symbol)} (live)`
+      : '—',
   };
 
   const handleNav = (p: AppPage) => {

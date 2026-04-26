@@ -9,13 +9,6 @@ function fmtTime(ts: number) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function formatPriceInChart(price: number, symbolId?: string): string {
-  if (symbolId === 'BTC') {
-    return '$' + Math.round(price).toLocaleString('en-US');
-  }
-  return '$' + price.toFixed(2);
-}
-
 const KIND_COLOR: Record<string, string> = {
   'Alignment Ladder':   'var(--cyan)',
   'Shock Jump':         'var(--red)',
@@ -29,23 +22,18 @@ interface GCPChartProps {
   patterns: Pattern[];
   cursor: number;
   setCursor: (i: number) => void;
-  showGold: boolean;
   selectedPatternId: string | null;
   onSelectPattern: (id: string) => void;
   width: number;
   height: number;
-  symbolColor?: string;
-  symbolId?: string;
 }
 
 function GCPChart({
   series, patterns, cursor, setCursor,
-  showGold, selectedPatternId, onSelectPattern,
+  selectedPatternId, onSelectPattern,
   width: W, height: H,
-  symbolColor, symbolId,
 }: GCPChartProps) {
-  const goldColor = symbolColor ?? 'var(--amber)';
-  const padL = 50, padR = 60, padT = 24, padB = 40;
+  const padL = 50, padR = 16, padT = 24, padB = 40;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const viewStart = 0, viewEnd = series.length - 1;
@@ -54,13 +42,6 @@ function GCPChart({
   const xOf = (i: number) => padL + ((i - viewStart) / total) * innerW;
   const yMin = 0, yMax = 260;
   const yOf = (v: number) => padT + (1 - (v - yMin) / (yMax - yMin)) * innerH;
-
-  const realGolds  = series.filter(s => s.gReal).map(s => s.g);
-  const scaleGolds = realGolds.length > 0 ? realGolds : series.map(s => s.g);
-  const padding    = symbolId === 'BTC' ? scaleGolds[0] * 0.005 : 5;
-  const gMin = Math.min(...scaleGolds) - padding;
-  const gMax = Math.max(...scaleGolds) + padding;
-  const gyOf = (g: number) => padT + (1 - (g - gMin) / (gMax - gMin)) * innerH;
 
   const bands = useMemo(() => {
     const out: { s: number; e: number; r: string }[] = [];
@@ -82,44 +63,6 @@ function GCPChart({
     }, '');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, W, H]);
-
-  const firstRealIdx = useMemo(() => {
-    if (!series.length) return -1;
-    const idx = series.findIndex(s => s.gReal);
-    return idx;
-  }, [series]);
-
-  const goldPathSynthetic = useMemo(() => {
-    if (!series.length || !showGold) return '';
-    // Synthetic gold prices are only meaningful for XAUUSD; on other
-    // symbols (BTC etc.) the synthetic tail would distort the scale.
-    if (symbolId && symbolId !== 'XAUUSD') return '';
-    const end = firstRealIdx >= 0 ? firstRealIdx : series.length - 1;
-    const step = Math.max(1, Math.floor(series.length / 1600));
-    let d = '';
-    let started = false;
-    for (let i = 0; i <= end; i++) {
-      if (i % step !== 0 && i !== end) continue;
-      d += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + gyOf(series[i].g).toFixed(1) + ' ';
-      started = true;
-    }
-    return d;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, W, H, showGold, firstRealIdx, symbolId]);
-
-  const goldPathReal = useMemo(() => {
-    if (!series.length || !showGold || firstRealIdx < 0) return '';
-    const step = Math.max(1, Math.floor(series.length / 1600));
-    let d = '';
-    let started = false;
-    for (let i = firstRealIdx; i < series.length; i++) {
-      if (i % step !== 0 && i !== series.length - 1 && i !== firstRealIdx) continue;
-      d += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + gyOf(series[i].g).toFixed(1) + ' ';
-      started = true;
-    }
-    return d;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, W, H, showGold, firstRealIdx]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const handleMove = (e: React.MouseEvent) => {
@@ -177,14 +120,6 @@ function GCPChart({
         );
       })}
 
-      {showGold && (
-        <>
-          <text x={W - padR + 8} y={padT + 10} fill={goldColor} fontSize={9.5} fontFamily="var(--font-mono)">{formatPriceInChart(gMax, symbolId)}</text>
-          <text x={W - padR + 8} y={H - padB - 2} fill={goldColor} fontSize={9.5} fontFamily="var(--font-mono)">{formatPriceInChart(gMin, symbolId)}</text>
-          <text x={W - padR + 8} y={padT - 8} fill="var(--fg-3)" fontSize={9} fontFamily="var(--font-mono)" letterSpacing="0.1em">{symbolId ?? 'XAUUSD'}</text>
-        </>
-      )}
-
       {tTicks.map((t, idx) => (
         <g key={`tt${idx}`}>
           <line x1={t.x} x2={t.x} y1={H - padB} y2={H - padB + 4} stroke="var(--line-2)" />
@@ -222,14 +157,6 @@ function GCPChart({
         );
       })}
 
-      {showGold && goldPathSynthetic && (
-        <path d={goldPathSynthetic} stroke={goldColor} strokeWidth={1} fill="none" opacity={0.4} />
-      )}
-      {showGold && goldPathReal && (
-        <path d={goldPathReal} stroke={goldColor} strokeWidth={1.4} fill="none" opacity={0.9}
-          style={{ filter: 'drop-shadow(0 0 3px oklch(0.78 0.15 75 / 0.4))' }} />
-      )}
-
       <path d={linePath} stroke="var(--cyan)" strokeWidth={1.3} fill="none"
         style={{ filter: 'drop-shadow(0 0 3px oklch(0.78 0.14 210 / 0.5))' }} />
 
@@ -238,12 +165,9 @@ function GCPChart({
           <line x1={xOf(cursor)} x2={xOf(cursor)} y1={padT} y2={H - padB}
             stroke="var(--fg-1)" strokeWidth={1} strokeDasharray="2 3" opacity={0.5} />
           <circle cx={xOf(cursor)} cy={yOf(cursorS.v)} r={3.5} fill="var(--cyan)" stroke="var(--bg-0)" strokeWidth={1.5} />
-          {showGold && cursorS.gReal && (
-            <circle cx={xOf(cursor)} cy={gyOf(cursorS.g)} r={3.5} fill={goldColor} stroke="var(--bg-0)" strokeWidth={1.5} />
-          )}
           <g>
             <rect x={Math.min(W - padR - 140, xOf(cursor) + 8)} y={padT + 6}
-              width={132} height={showGold && cursorS.gReal ? 56 : 40}
+              width={132} height={40}
               fill="var(--bg-2)" stroke="var(--line-2)" strokeWidth={1} rx={2} />
             <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 20}
               fill="var(--fg-2)" fontSize={9} fontFamily="var(--font-mono)" letterSpacing="0.08em">
@@ -253,18 +177,6 @@ function GCPChart({
               fill="var(--cyan)" fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
               NV {cursorS.v.toFixed(1)}
             </text>
-            {showGold && cursorS.gReal && (
-              <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 50}
-                fill={goldColor} fontSize={12} fontFamily="var(--font-mono)" fontWeight={600}>
-                {(symbolId ?? 'XAU')} {formatPriceInChart(cursorS.g, symbolId)}
-              </text>
-            )}
-            {showGold && !cursorS.gReal && symbolId && symbolId !== 'XAUUSD' && (
-              <text x={Math.min(W - padR - 140, xOf(cursor) + 8) + 8} y={padT + 50}
-                fill="var(--fg-3)" fontSize={10} fontFamily="var(--font-mono)">
-                {symbolId} — synthetic zone
-              </text>
-            )}
           </g>
         </g>
       )}

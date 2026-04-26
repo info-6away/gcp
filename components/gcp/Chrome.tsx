@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
-import { APP_VERSION, APP_MODEL } from '@/lib/version';
+import { APP_MODEL } from '@/lib/version';
 
 const TF_DESCRIPTIONS: Record<string, string> = {
   '1m':  'Each bar = 1 minute',
@@ -166,12 +166,13 @@ function Header({
   const showTFView = page !== 'chart';
   return (
     <header className="app-header">
-      <div className="brand">
-        <LogoMark size={20} />
+      <div className="brand" style={{ gap: 8 }}>
+        <div style={{ filter: 'drop-shadow(0 0 6px rgba(77,217,232,0.25))' }}>
+          <LogoMark size={28} />
+        </div>
         <div className="brand-name">
-          <span style={{ color: 'var(--fg-0)', fontWeight: 600, letterSpacing: '0.04em' }}>GCP</span>
-          <span style={{ color: 'var(--cyan)', fontWeight: 600, letterSpacing: '0.04em' }}> PRO</span>
-          <span style={{ color: 'var(--fg-3)', marginLeft: 10, fontSize: 10, letterSpacing: '0.15em' }}>v{APP_VERSION}</span>
+          <span style={{ color: 'var(--fg-0)', fontWeight: 700, letterSpacing: '0.06em', fontSize: 13 }}>GCP</span>
+          <span style={{ color: 'var(--cyan)', fontWeight: 700, letterSpacing: '0.06em', fontSize: 13 }}> PRO</span>
         </div>
       </div>
 

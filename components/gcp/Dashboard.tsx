@@ -4,7 +4,6 @@ import { useState, useMemo } from 'react';
 import { REGIMES, energyAt, persistenceAt, INTERP } from '@/lib/gcp-data';
 import GCPChartResponsive from './GCPChart';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
-import { getSymbolMeta } from '@/types/gcp';
 
 interface DashboardProps {
   series: DataPoint[];
@@ -205,9 +204,7 @@ function RegimeLegend() {
 export default function Dashboard({
   series, patterns, cursor, setCursor, onSelectPatternKind, symbol, timeframe,
 }: DashboardProps) {
-  const [showGold, setShowGold] = useState(true);
   const [selectedPatternId, setSelectedPatternId] = useState<string | null>(null);
-  const symbolMeta = getSymbolMeta(symbol);
 
   const energy = useMemo(() => energyAt(series, cursor), [series, cursor]);
   const persistence = useMemo(() => persistenceAt(series, cursor), [series, cursor]);
@@ -224,22 +221,6 @@ export default function Dashboard({
       <section className="panel panel-chart">
         <div className="panel-head">
           <span className="title">{symbol} · Coherence Regime · {timeframe}</span>
-          <div className="chart-tools">
-            <button
-              className={`tool-btn ${showGold ? 'on' : ''}`}
-              onClick={() => setShowGold(s => !s)}
-            >
-              <span style={{
-                width: 8, height: 8,
-                background: symbolMeta.color,
-                display: 'inline-block',
-                borderRadius: 1,
-                marginRight: 5,
-                verticalAlign: 'middle',
-              }} />
-              {symbol} {showGold ? '◉' : '○'}
-            </button>
-          </div>
         </div>
         <div className="panel-body">
           <GCPChartResponsive
@@ -247,11 +228,8 @@ export default function Dashboard({
             patterns={patterns}
             cursor={cursor}
             setCursor={setCursor}
-            showGold={showGold}
             selectedPatternId={selectedPatternId}
             onSelectPattern={(id) => setSelectedPatternId(id)}
-            symbolColor={symbolMeta.color}
-            symbolId={symbol}
           />
         </div>
       </section>
