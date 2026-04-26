@@ -17,6 +17,7 @@ import {
   type ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import { lttbDownsample } from '@/lib/gcp-data';
 
 interface Candle {
   t: number;
@@ -50,8 +51,8 @@ const CHART_OUTPUT_SIZE: Record<ChartTF, number> = {
   '5m':  2016,
   '15m': 672,
   '1h':  168,
-  '4h':  42,
-  '1D':  7,
+  '4h':  84,   // 14 days × 6 — gives room to zoom out
+  '1D':  30,   // 30 daily candles for monthly context
 };
 
 const COLORS = {
@@ -307,14 +308,26 @@ export default function ChartView({
   }, []);
 
   // Filter the GCP series to the same window as the candles so the GCP
-  // pane doesn't extend further left than the price pane (which would
-  // otherwise leave a visible gap on every Chart-tab render).
+  // pane doesn't extend further left than the price pane. baseSeries
+  // can be ~120k points (full historical merged); the filter clips down
+  // to whatever the candle window covers, then LTTB caps it at 800
+  // points so rendering stays cheap.
   const chartSeries = useMemo(() => {
-    if (!candles.length || !series.length) return series;
+    if (!series.length) return series;
+    if (!candles.length) {
+      const fallback = series.slice(-1440);
+      return fallback.length > 800 ? lttbDownsample(fallback, 800) : fallback;
+    }
+
     const earliest = candles[0].t;
-    const span     = candles[candles.length - 1].t - candles[0].t;
-    const buffer   = Math.max(span * 0.1, 60_000);
-    return series.filter(p => p.t >= earliest - buffer);
+    const span     = candles[candles.length - 1].t - earliest;
+    const buffer   = Math.max(span * 0.05, 60_000);
+
+    const filtered = series
+      .filter(p => p.t >= earliest - buffer)
+      .sort((a, b) => a.t - b.t);
+
+    return filtered.length > 800 ? lttbDownsample(filtered, 800) : filtered;
   }, [series, candles]);
 
   // Series snapshot the redraw fn reads from — kept in a ref so callbacks are stable

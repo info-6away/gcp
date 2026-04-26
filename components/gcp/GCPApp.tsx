@@ -206,7 +206,7 @@ export default function GCPApp() {
           )}
           {page === 'chart' && (
             <ChartView
-              series={displaySeries}
+              series={baseSeries}
               patterns={displayPatterns}
               symbol={symbol}
               symbolColor={getSymbolMeta(symbol).color}
