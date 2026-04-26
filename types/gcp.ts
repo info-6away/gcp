@@ -132,6 +132,8 @@ export interface Pattern {
   kind: PatternKind;
   start: number;
   end: number;
+  tStart: number;
+  tEnd: number;
   glyph: string;
   strength: number;
 }

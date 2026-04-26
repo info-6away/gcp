@@ -244,7 +244,7 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
 
   const compressions = runs(r => r === 'A' || r === 'B').filter(([a, b]) => b - a >= MIN_COMPRESSION);
   for (const [a, b] of compressions) {
-    patterns.push({ id: `cc-${a}`, kind: 'Compression Coil', start: a, end: b, glyph: 'AB#', strength: 0.55 + Math.min(0.3, (b - a) / Math.max(1, 400 / barsPerMinute)) });
+    patterns.push({ id: `cc-${a}`, kind: 'Compression Coil', start: a, end: b, tStart: 0, tEnd: 0, glyph: 'AB#', strength: 0.55 + Math.min(0.3, (b - a) / Math.max(1, 400 / barsPerMinute)) });
   }
 
   for (let i = 0; i < regs.length - AL_LOOP_END; i++) {
@@ -255,7 +255,7 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
     const idxC = w.indexOf('C', abEnd);
     const idxD = idxC >= 0 ? w.indexOf('D', idxC) : -1;
     if (idxAB >= 0 && idxC > 0 && idxD > 0 && (idxD - idxAB) < AL_MAX_SPAN && abEnd - idxAB > AL_MIN_AB) {
-      patterns.push({ id: `al-${i + idxAB}`, kind: 'Alignment Ladder', start: i + idxAB, end: i + idxD + AL_TAIL, glyph: 'AB# → B↑ → C → D#', strength: 0.82 });
+      patterns.push({ id: `al-${i + idxAB}`, kind: 'Alignment Ladder', start: i + idxAB, end: i + idxD + AL_TAIL, tStart: 0, tEnd: 0, glyph: 'AB# → B↑ → C → D#', strength: 0.82 });
       i += idxD + AL_TAIL;
     }
   }
@@ -267,14 +267,14 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
     const backB = w.slice(FA_B_START, FA_B_END).includes('B');
     const backA = w.slice(FA_A_START, FA_A_END).includes('A');
     if (hasAB && hasC && backB && backA) {
-      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + FA_SPAN, glyph: 'AB# → B → C → B → A', strength: 0.28 });
+      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + FA_SPAN, tStart: 0, tEnd: 0, glyph: 'AB# → B → C → B → A', strength: 0.28 });
       i += FA_SPAN;
     }
   }
 
   const fruns = runs(r => r === 'F');
   for (const [a, b] of fruns) {
-    patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER, glyph: 'B → F', strength: 0.95 });
+    patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER, tStart: 0, tEnd: 0, glyph: 'B → F', strength: 0.95 });
   }
 
   for (let i = CV_HALF; i < regs.length - CV_LOOP_END; i++) {
@@ -282,12 +282,25 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
     const peak  = regs.slice(i, i + CV_HALF);
     const right = regs.slice(i + CV_HALF, i + CV_LOOP_END).filter(r => r === 'A').length;
     if (left > CV_MIN_A && right > CV_MIN_A && peak.includes('C') && !peak.includes('D')) {
-      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - CV_PRE_PAD, end: i + CV_POST_PAD, glyph: 'A → B → C → B → A', strength: 0.38 });
+      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - CV_PRE_PAD, end: i + CV_POST_PAD, tStart: 0, tEnd: 0, glyph: 'A → B → C → B → A', strength: 0.38 });
       i += CV_SKIP;
     }
   }
 
   patterns.sort((a, b) => a.start - b.start);
+
+  // Stamp absolute timestamps from the series so callers can fetch price
+  // candles for the pattern window without having to keep the series array
+  // around. Clamp end to the last valid index — some patterns extend a few
+  // bars past the detected region and may overflow the series.
+  const lastIdx = series.length - 1;
+  for (const p of patterns) {
+    const sIdx = Math.max(0, Math.min(p.start, lastIdx));
+    const eIdx = Math.max(0, Math.min(p.end,   lastIdx));
+    p.tStart = series[sIdx]?.t ?? 0;
+    p.tEnd   = series[eIdx]?.t ?? 0;
+  }
+
   return patterns;
 }
 

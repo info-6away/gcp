@@ -193,6 +193,7 @@ export default function GCPApp() {
               series={displaySeries}
               patterns={displayPatterns}
               symbol={symbol}
+              timeframe={timeframe}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('dashboard'); }}
             />

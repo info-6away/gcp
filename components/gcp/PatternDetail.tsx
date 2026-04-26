@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
+import PatternPriceChart from './PatternPriceChart';
+import { usePriceCorrelation, type PatternStats } from '@/lib/usePriceCorrelation';
 
 const LIB_META: Record<string, {
   glyph: string; color: string; summary: string; market: string;
@@ -142,12 +144,13 @@ function MiniChart({
 }
 
 function LibraryCard({
-  kind, matches, series, onSelect,
+  kind, matches, series, onSelect, priceStat,
 }: {
   kind: string;
   matches: Pattern[];
   series: DataPoint[];
   onSelect: () => void;
+  priceStat?: PatternStats;
 }) {
   const meta      = LIB_META[kind] ?? LIB_META['Compression Coil'];
   const n         = matches.length;
@@ -195,7 +198,7 @@ function LibraryCard({
         {meta.summary}
       </div>
 
-      <div style={{ display: 'flex', gap: 16, borderTop: '1px solid var(--line-1)', paddingTop: 10 }}>
+      <div style={{ display: 'flex', gap: 16, borderTop: '1px solid var(--line-1)', paddingTop: 10, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>AVG PSS</div>
           <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: pssColor(avgPSS), fontVariantNumeric: 'tabular-nums' }}>
@@ -214,6 +217,25 @@ function LibraryCard({
             {lastT ? fmtTime(lastT) : '—'}
           </div>
         </div>
+        {priceStat && (
+          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>AVG PRICE MOVE</div>
+            <div style={{
+              fontSize: 13, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+              color: priceStat.avgPriceChange > 0.1 ? '#22c55e'
+                   : priceStat.avgPriceChange < -0.1 ? '#ef4444'
+                   : 'var(--fg-1)',
+            }}>
+              {priceStat.avgPriceChange > 0 ? '+' : ''}{priceStat.avgPriceChange.toFixed(1)}%
+            </div>
+            <div style={{ fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              <span style={{ color: '#22c55e' }}>{priceStat.bullish}↑</span>
+              {' '}
+              <span style={{ color: '#ef4444' }}>{priceStat.bearish}↓</span>
+              <span style={{ color: 'var(--fg-4)' }}> · n={priceStat.count}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: 10, fontSize: 10, color: meta.color, letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -277,6 +299,7 @@ interface PatternDetailProps {
   series:        DataPoint[];
   patterns:      Pattern[];
   symbol:        MarketSymbol;
+  timeframe:     Timeframe;
   onBack:        () => void;
   onNavToCursor: (i: number) => void;
 }
@@ -285,6 +308,8 @@ export default function PatternDetail({
   kind: initialKind,
   series,
   patterns,
+  symbol,
+  timeframe,
   onBack,
   onNavToCursor,
 }: PatternDetailProps) {
@@ -307,6 +332,8 @@ export default function PatternDetail({
   const selected = sortedMatches.find(m => m.id === selectedId) ?? sortedMatches[0];
 
   const meta = LIB_META[kind] ?? LIB_META['Compression Coil'];
+
+  const priceStats = usePriceCorrelation(patterns, symbol, timeframe);
 
   const stats = useMemo(() => {
     const n = matchesForKind.length;
@@ -358,6 +385,7 @@ export default function PatternDetail({
               kind={k}
               matches={byKind[k] ?? []}
               series={series}
+              priceStat={priceStats.get(k)}
               onSelect={() => { setKind(k); setSelectedId((byKind[k] ?? [])[0]?.id ?? null); setView('detail'); }}
             />
           ))}
@@ -457,6 +485,15 @@ export default function PatternDetail({
                 </div>
               </div>
               <MiniChart match={selected} series={series} color={meta.color} />
+            </div>
+
+            <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', padding: '12px 16px' }}>
+              <PatternPriceChart
+                symbol={symbol}
+                tf={timeframe}
+                tStart={selected.tStart}
+                tEnd={selected.tEnd}
+              />
             </div>
 
             <div style={{ background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', padding: '14px 16px' }}>
