@@ -83,6 +83,17 @@ export default function GCPApp() {
   );
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(
+        '[GCPApp] VIEW:', viewWindow,
+        '| windowed:', windowedSeries.length,
+        '| analysis:', analysisSeries.length,
+        '| patterns:', displayPatterns.length,
+      );
+    }
+  }, [viewWindow, windowedSeries.length, analysisSeries.length, displayPatterns.length]);
+
+  useEffect(() => {
     setCursor(displaySeries.length - 1);
   }, [timeframe, displaySeries.length]);
 

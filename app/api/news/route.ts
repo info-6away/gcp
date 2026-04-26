@@ -47,11 +47,20 @@ function parseRSS(xml: string, sourceName: string): NewsItem[] {
 }
 
 export async function GET() {
+  console.log(`[news] Fetching at ${new Date().toISOString()}`);
   const results = await Promise.allSettled(
     FEEDS.map(async feed => {
-      const res = await fetch(feed.url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 GCPPro/10.0' },
+      // Cache-bust upstream: append _=ts and disable Next's fetch cache so
+      // CDNs in front of the RSS source don't return stale stories.
+      const url = `${feed.url}${feed.url.includes('?') ? '&' : '?'}_=${Date.now()}`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent':    'Mozilla/5.0 GCPPro/10.7',
+          'Cache-Control': 'no-cache',
+          'Pragma':        'no-cache',
+        },
         signal: AbortSignal.timeout(6_000),
+        cache:  'no-store',
       });
       if (!res.ok) throw new Error(`${res.status}`);
       const xml = await res.text();
@@ -78,6 +87,12 @@ export async function GET() {
       return true;
     })
     .slice(0, 30);
+
+  console.log(
+    `[news] Returning ${deduped.length} items, newest: ${
+      deduped[0] ? new Date(deduped[0].publishedAt).toISOString() : 'none'
+    }`,
+  );
 
   return NextResponse.json(
     { items: deduped },

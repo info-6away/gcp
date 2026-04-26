@@ -99,13 +99,36 @@ export function usePSSAlert(
   }, [patterns, series, enabled, requestPermission, fireNotification, onAlert]);
 
   const testAlert = useCallback(async () => {
-    const granted = await requestPermission();
-    if (!granted) {
-      if (typeof window !== 'undefined') {
-        window.alert('Notification permission denied. Please enable notifications for this site in your browser settings.');
-      }
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      console.warn('[PSS] Notifications not supported in this environment');
       return;
     }
+
+    // Permission must be requested directly from the user gesture; doing
+    // any extra `await` work before this call can drop the gesture context
+    // in some browsers (notably Safari) and silently no-op the prompt.
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission !== 'granted') {
+      console.warn('[PSS] Notification permission not granted:', permission);
+      return;
+    }
+
+    try {
+      const n = new Notification('GCP PRO — Test Alert', {
+        body: 'PSS 82 · D regime · Alignment Ladder · 18 bars\nAlerts are working correctly.',
+        tag:  'gcppro-test',
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+      setTimeout(() => n.close(), 8_000);
+      console.log('[PSS] Test notification fired');
+    } catch (e) {
+      console.error('[PSS] Notification error:', e);
+    }
+
     const sample: Pattern = {
       id:     'test-alert',
       kind:   'Alignment Ladder',
@@ -116,9 +139,8 @@ export function usePSSAlert(
       glyph:  'AB# → B↑ → C → D#',
       strength: 0.82,
     };
-    fireNotification(sample, 82, 'D', 18);
     onAlert?.(sample);
-  }, [requestPermission, fireNotification, onAlert]);
+  }, [onAlert]);
 
   return { testAlert };
 }

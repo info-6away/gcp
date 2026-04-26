@@ -17,7 +17,7 @@ interface SettingsPanelProps {
   timeframe:        Timeframe;
   seriesLength:     number;
   historicalPoints: number;
-  onTestAlert:      () => void;
+  onTestAlert:      () => void | Promise<void>;
 }
 
 const PREFS_LS_KEY = 'gcpro-settings';
@@ -130,6 +130,7 @@ function ToggleRow({
 
 export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [testFired, setTestFired] = useState(false);
 
   useEffect(() => {
     setPrefs(loadPrefs());
@@ -215,16 +216,23 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </div>
               </div>
               <button
-                onClick={props.onTestAlert}
+                onClick={async () => {
+                  await props.onTestAlert();
+                  setTestFired(true);
+                  setTimeout(() => setTestFired(false), 3_000);
+                }}
                 style={{
                   padding: '4px 12px', fontSize: 9, letterSpacing: '0.08em',
                   fontFamily: 'var(--font-mono)',
-                  background: 'transparent',
-                  border: '1px solid var(--line-2)',
-                  borderRadius: 2, color: 'var(--fg-2)', cursor: 'pointer',
+                  background: testFired ? 'rgba(34,197,94,0.12)' : 'transparent',
+                  border: `1px solid ${testFired ? 'var(--green)' : 'var(--line-2)'}`,
+                  borderRadius: 2,
+                  color: testFired ? 'var(--green)' : 'var(--fg-2)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
                 }}
               >
-                SEND TEST
+                {testFired ? 'SENT ✓' : 'SEND TEST'}
               </button>
             </div>
           )}

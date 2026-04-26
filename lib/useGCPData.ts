@@ -75,7 +75,10 @@ function livePointsToSeries(points: GCPPoint[], startIndex: number): DataPoint[]
 function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   if (!live.length) return historical;
   const liveStart = live[0].t;
-  const base   = historical.filter(p => p.t < liveStart - 7_200_000);
+  // Only drop historical points whose timestamps overlap live; no buffer,
+  // otherwise we lop off the end of historical and create a visible gap
+  // at the boundary when live hasn't loaded yet.
+  const base   = historical.filter(p => p.t < liveStart);
   const liveDP = livePointsToSeries(live, base.length);
   return [...base, ...liveDP]
     .sort((a, b) => a.t - b.t)
@@ -141,7 +144,7 @@ let _scale:             number | null     = null;
 let _livePoints:        GCPPoint[]        = [];
 let _historicalLoaded   = false;
 let _historicalLoading  = false;
-let _intervalsInstalled = false;
+let _pollLoopPromise:   Promise<void> | null = null;
 let _fetchingSeries     = false;
 let _lastSeriesFetch    = 0;
 
@@ -155,10 +158,17 @@ async function _loadHistoricalOnce(): Promise<void> {
     _historicalLoaded = true;
 
     const merged = mergeSeries(_scaledHistorical, _livePoints);
+    const last   = merged[merged.length - 1];
     _setState(s => ({
       ...s,
       series:     merged,
+      // Keep gcpLoading=false once we have something to render — historical
+      // alone is a reasonable fallback while live retries in the background.
       gcpLoading: hist.length === 0 && s.series.length === 0,
+      // Seed liveNetvar/liveRegime from historical so Dashboard widgets
+      // show something even before the live API responds.
+      liveNetvar: s.liveNetvar ?? (last ? last.v : null),
+      liveRegime: s.liveRegime ?? (last ? last.r : null),
     }));
   } finally {
     _historicalLoading = false;
@@ -225,26 +235,25 @@ async function _runFetchSeries(): Promise<void> {
   }
 }
 
-async function _pollLoop(): Promise<void> {
-  // Brief startup delay — lets StrictMode finish double-mounting and the
-  // historical JSON load before we hit the live API.
-  await new Promise(r => setTimeout(r, 2_000));
-  if (!_intervalsInstalled) return;
-
-  await _runFetchSeries();
-
-  while (_intervalsInstalled && _listeners.size > 0) {
-    await new Promise(r => setTimeout(r, 120_000));
-    if (!_intervalsInstalled) break;
-    await _runFetchSeries();
-  }
-}
-
 function _ensurePolling(): void {
-  if (_intervalsInstalled) return;
-  _intervalsInstalled = true;
-  _loadHistoricalOnce();
-  _pollLoop();
+  // Promise-lock: a synchronous boolean was racy under StrictMode because
+  // the 2 s startup delay let the second mount slip past the guard before
+  // the first loop set _intervalsInstalled = true. Assigning a Promise
+  // synchronously here means any concurrent caller sees the lock immediately.
+  if (_pollLoopPromise) return;
+  _pollLoopPromise = (async () => {
+    // Startup delay well outside React's StrictMode double-mount window.
+    await new Promise(r => setTimeout(r, 3_000));
+
+    while (_listeners.size > 0) {
+      try { await _runFetchSeries(); } catch { /* runFetchSeries handles its own errors */ }
+      if (_listeners.size === 0) break;
+      await new Promise(r => setTimeout(r, 120_000));
+    }
+
+    // No subscribers left — release the lock so a future mount can restart polling.
+    _pollLoopPromise = null;
+  })();
 }
 
 export function useGCPData(): GCPDataState {
@@ -252,15 +261,14 @@ export function useGCPData(): GCPDataState {
 
   useEffect(() => {
     _listeners.add(setLocalState);
+    _loadHistoricalOnce();
     _ensurePolling();
     setLocalState(_state);
     return () => {
       _listeners.delete(setLocalState);
-      // The page is gone — stop the loop so it doesn't keep firing.
-      // _ensurePolling() will restart it the next time a subscriber mounts.
-      if (_listeners.size === 0) {
-        _intervalsInstalled = false;
-      }
+      // Don't tear down polling on unmount — other subscribers may exist
+      // and StrictMode unmounts/remounts immediately. The loop self-exits
+      // when _listeners.size === 0 between cycles.
     };
   }, []);
 
