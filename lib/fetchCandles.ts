@@ -52,6 +52,28 @@ function fillWeekendGaps(candles: Candle[], tfMs: number): Candle[] {
   return out;
 }
 
+// Extend the candle series with flat synthetic bars from the last candle up
+// to "now" so LW Charts allocates time-axis space for the post-close period.
+// Without this, gold/silver close at ~21:00 UTC daily and Twelve Data
+// returns no further candles -- the GCP line's live tail past close is
+// rendered past the right edge of the chart and disappears.
+function extendToNow(candles: Candle[], tfMs: number): Candle[] {
+  if (!candles.length || tfMs <= 0) return candles;
+  const last     = candles[candles.length - 1];
+  const nowSlot  = Math.floor(Date.now() / tfMs) * tfMs;
+  if (nowSlot <= last.t) return candles;
+
+  const flat = last.c;
+  const out  = candles.slice();
+  let added  = 0;
+  const MAX  = 500;
+  for (let t = last.t + tfMs; t <= nowSlot && added < MAX; t += tfMs) {
+    out.push({ t, o: flat, h: flat, l: flat, c: flat });
+    added++;
+  }
+  return out;
+}
+
 interface RawValue {
   datetime: string;
   open:     string;
@@ -96,7 +118,7 @@ export async function fetchCandlesForWindow(
 
   const tfMs = TF_MS[tf] ?? 0;
   if (tfMs > 0 && shouldFillGaps(symbol)) {
-    return fillWeekendGaps(candles, tfMs);
+    return extendToNow(fillWeekendGaps(candles, tfMs), tfMs);
   }
   return candles;
 }
