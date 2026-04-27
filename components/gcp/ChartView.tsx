@@ -156,35 +156,25 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return () => window.removeEventListener('keydown', onKey);
   }, [ctxMenu]);
 
-  // Common time window where both candles AND GCP have data. Clipping both
-  // panes to this intersection keeps the two visually in sync — otherwise
-  // whichever series extends further (e.g. fresh candles while live GCP is
-  // rate-limited, or live GCP arriving while gold is in a weekend close)
-  // renders past the other on the shared time axis.
-  const syncWindow = useMemo<{ start: number; end: number } | null>(() => {
-    if (isLoading || !candles.length || !series.length) return null;
-    const cStart = candles[0].t;
-    const cEnd   = candles[candles.length - 1].t;
-    const sStart = series[0].t;
-    const sEnd   = series[series.length - 1].t;
-    const start = Math.max(cStart, sStart);
-    const end   = Math.min(cEnd,   sEnd);
-    if (end <= start) return null;
-    return { start, end };
-  }, [candles, series, isLoading]);
+  // Candles always render in full — never clip them, so if live GCP is
+  // missing the user still sees price action.
+  const displayCandles = candles;
 
-  const displayCandles = useMemo<Candle[]>(() => {
-    if (!syncWindow) return [];
-    return candles.filter(c => c.t >= syncWindow.start && c.t <= syncWindow.end);
-  }, [candles, syncWindow]);
-
+  // GCP is clipped to the candle window. With both bounds in place, GCP
+  // points outside the candle range can't be rendered to the side of the
+  // candles on the shared time axis. If the GCP series and candles don't
+  // overlap at all, chartGCPSeries is empty and the pane is just blank —
+  // preferable to showing stale data shifted hours away from the candles.
   const chartGCPSeries = useMemo(() => {
-    if (!syncWindow) return [];
+    if (isLoading || !candles.length || !series.length) return [];
+    const earliest = candles[0].t;
+    const latest   = candles[candles.length - 1].t;
+    const buffer   = (latest - earliest) * 0.05;
     const filtered = series
-      .filter(p => p.t >= syncWindow.start && p.t <= syncWindow.end)
+      .filter(p => p.t >= earliest - buffer && p.t <= latest + buffer)
       .sort((a, b) => a.t - b.t);
     return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
-  }, [series, syncWindow]);
+  }, [series, candles, isLoading]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {
