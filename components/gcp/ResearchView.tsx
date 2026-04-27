@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { DataPoint, MarketSymbol } from '@/types/gcp';
 import { fetchCandlesForWindow, type Candle } from '@/lib/fetchCandles';
+import { detectPatterns } from '@/lib/gcp-data';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -10,12 +11,25 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
 };
 
-interface ScatterPoint {
+type ResearchMode = 'regime' | 'pattern';
+
+interface RegimePoint {
+  kind:   'regime';
   regime: string;
   fwdPct: number;
   t:      number;
   nv:     number;
 }
+
+interface PatternPoint {
+  kind:    'pattern';
+  pattern: string;
+  fwdPct:  number;
+  t:       number;
+  pss:     number;
+}
+
+type Hovered = RegimePoint | PatternPoint;
 
 const REGIME_META: Record<string, { label: string; color: string; x: number }> = {
   A: { label: 'A · Silence',         color: '#4a72c4', x: 1 },
@@ -25,6 +39,17 @@ const REGIME_META: Record<string, { label: string; color: string; x: number }> =
   E: { label: 'E · Climax',          color: '#d46428', x: 5 },
   F: { label: 'F · Shock',           color: '#e24b4a', x: 6 },
 };
+
+const PATTERN_META: Record<string, { label: string; abbr: string; color: string; x: number }> = {
+  'Alignment Ladder':    { label: 'Alignment Ladder',    abbr: 'AL', color: '#4dd9e8', x: 1 },
+  'Compression Coil':    { label: 'Compression Coil',    abbr: 'CC', color: '#6b7280', x: 2 },
+  'Compression Release': { label: 'Compression Release', abbr: 'CR', color: '#22c55e', x: 3 },
+  'Failed Alignment':    { label: 'Failed Alignment',    abbr: 'FA', color: '#d946ef', x: 4 },
+  'Coherence Volcano':   { label: 'Coherence Volcano',   abbr: 'CV', color: '#f59e0b', x: 5 },
+  'Ignition Drift':      { label: 'Ignition Drift',      abbr: 'ID', color: '#888780', x: 6 },
+  'Shock Jump':          { label: 'Shock Jump',          abbr: 'SJ', color: '#e24b4a', x: 7 },
+};
+const PATTERN_COLS = 7;
 
 function regimeFor(v: number): string {
   if (v < 50)  return 'A';
@@ -49,16 +74,19 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [fwdBars, setFwdBars] = useState(4);
-  const [hovered, setHovered] = useState<ScatterPoint | null>(null);
-  const svgRef          = useRef<SVGSVGElement>(null);
+  const [mode,    setMode]    = useState<ResearchMode>('regime');
+  const [hovered, setHovered] = useState<Hovered | null>(null);
+
   const svgContainerRef = useRef<HTMLDivElement>(null);
-  const [W, setW]       = useState(720);
+  const [W, setW] = useState(720);
+  const [H, setH] = useState(400);
 
   useEffect(() => {
     if (!svgContainerRef.current) return;
     const ro = new ResizeObserver(entries => {
-      const w = entries[0].contentRect.width;
-      setW(Math.max(420, Math.floor(w) - 16));
+      const { width, height } = entries[0].contentRect;
+      setW(Math.max(360, Math.floor(width)));
+      setH(Math.max(260, Math.floor(height)));
     });
     ro.observe(svgContainerRef.current);
     return () => ro.disconnect();
@@ -75,15 +103,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  const scatterPoints = useMemo<ScatterPoint[]>(() => {
+  // ── Regime scatter (one dot per candle) ─────────────────────────────────────
+  const regimePoints = useMemo<RegimePoint[]>(() => {
     if (!candles.length || !series.length) return [];
 
     const gcpByTs = new Map<number, { v: number; r: string }>();
-    series.forEach(p => {
-      gcpByTs.set(Math.floor(p.t / 1000), { v: p.v, r: p.r ?? regimeFor(p.v) });
-    });
+    series.forEach(p => gcpByTs.set(Math.floor(p.t / 1000), { v: p.v, r: p.r ?? regimeFor(p.v) }));
 
-    const points: ScatterPoint[] = [];
+    const points: RegimePoint[] = [];
     for (let i = 0; i < candles.length - fwdBars; i++) {
       const c    = candles[i];
       const cFwd = candles[i + fwdBars];
@@ -101,6 +128,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
 
       const fwdPct = ((cFwd.c - c.c) / c.c) * 100;
       points.push({
+        kind:   'regime',
         regime: gcpPt.r,
         fwdPct: +fwdPct.toFixed(3),
         t:      c.t,
@@ -110,34 +138,94 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return points;
   }, [candles, series, fwdBars]);
 
-  const stats = useMemo(() => {
-    const map: Record<string, { pts: ScatterPoint[]; avg: number; bull: number; bear: number }> = {};
+  // ── Pattern scatter (one dot per pattern occurrence) ────────────────────────
+  const patternPoints = useMemo<PatternPoint[]>(() => {
+    if (!candles.length || !series.length) return [];
+
+    const candleStart = candles[0].t;
+    const candleEnd   = candles[candles.length - 1].t;
+    const windowSeries = series.filter(p => p.t >= candleStart - 3_600_000 && p.t <= candleEnd);
+    if (windowSeries.length < 50) return [];
+
+    const patterns = detectPatterns(windowSeries, 1);
+
+    const fwdMs = fwdBars * 15 * 60_000;
+    const points: PatternPoint[] = [];
+    for (const p of patterns) {
+      const entryCandle = candles.find(c => c.t >= p.tEnd);
+      if (!entryCandle || entryCandle.c <= 0) continue;
+      const exitTime = entryCandle.t + fwdMs;
+      const exitCandle = candles.find(c => c.t >= exitTime);
+      if (!exitCandle || exitCandle.c <= 0) continue;
+
+      const fwdPct = ((exitCandle.c - entryCandle.c) / entryCandle.c) * 100;
+      points.push({
+        kind:    'pattern',
+        pattern: p.kind,
+        fwdPct:  +fwdPct.toFixed(3),
+        t:       p.tStart,
+        pss:     Math.round(p.strength * 100),
+      });
+    }
+    return points;
+  }, [candles, series, fwdBars]);
+
+  // ── Stats per axis ──────────────────────────────────────────────────────────
+  const regimeStats = useMemo(() => {
+    const map: Record<string, { pts: RegimePoint[]; avg: number; bull: number; bear: number }> = {};
     for (const r of 'ABCDEF') {
-      const pts  = scatterPoints.filter(p => p.regime === r);
+      const pts  = regimePoints.filter(p => p.regime === r);
       const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
       const bull = pts.filter(p => p.fwdPct >  0.05).length;
       const bear = pts.filter(p => p.fwdPct < -0.05).length;
       map[r] = { pts, avg, bull, bear };
     }
     return map;
-  }, [scatterPoints]);
+  }, [regimePoints]);
 
-  const H = 400;
+  const patternStats = useMemo(() => {
+    const map: Record<string, { pts: PatternPoint[]; avg: number; bull: number; bear: number }> = {};
+    for (const kind of Object.keys(PATTERN_META)) {
+      const pts  = patternPoints.filter(p => p.pattern === kind);
+      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      map[kind] = { pts, avg, bull, bear };
+    }
+    return map;
+  }, [patternPoints]);
+
+  // ── Geometry ────────────────────────────────────────────────────────────────
   const PAD = { l: 56, r: 24, t: 24, b: 60 };
-  const IW  = W - PAD.l - PAD.r;
-  const IH  = H - PAD.t - PAD.b;
+  const IW  = Math.max(80, W - PAD.l - PAD.r);
+  const IH  = Math.max(80, H - PAD.t - PAD.b);
 
   const Y_MAX = 3, Y_MIN = -3;
   const yOf = (pct: number) =>
     PAD.t + (1 - (Math.max(Y_MIN, Math.min(Y_MAX, pct)) - Y_MIN) / (Y_MAX - Y_MIN)) * IH;
 
-  const xOf = (regime: string) => {
+  const cols    = mode === 'regime' ? 6 : PATTERN_COLS;
+  const colMeta = mode === 'regime' ? REGIME_META : PATTERN_META;
+
+  const xOfRegime = (regime: string) => {
     const meta = REGIME_META[regime];
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / 6) * IW;
   };
+  const xOfPattern = (kind: string) => {
+    const meta = PATTERN_META[kind];
+    if (!meta) return PAD.l;
+    return PAD.l + ((meta.x - 0.5) / PATTERN_COLS) * IW;
+  };
+  const xOfPoint = (pt: RegimePoint | PatternPoint) =>
+    pt.kind === 'regime' ? xOfRegime(pt.regime) : xOfPattern(pt.pattern);
 
-  const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / 6) * 0.35;
+  const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / cols) * 0.35;
+
+  const visiblePoints: (RegimePoint | PatternPoint)[] = mode === 'regime' ? regimePoints : patternPoints;
+  const totalLabel    = mode === 'regime'
+    ? `${regimePoints.length} bars`
+    : `${patternPoints.length} occurrences`;
 
   return (
     <div style={{
@@ -155,9 +243,30 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
           RESEARCH
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
-        <span style={{ color: 'var(--fg-2)' }}>GCP Regime → Price Correlation</span>
+        <span style={{ color: 'var(--fg-2)' }}>
+          {mode === 'regime' ? 'GCP Regime → Price' : 'GCP Pattern → Forward Price'}
+        </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{symbol}</span>
+
+        <div style={{ display: 'flex', gap: 1, marginLeft: 12 }}>
+          {(['regime', 'pattern'] as ResearchMode[]).map(m => (
+            <button key={m}
+              onClick={() => { setMode(m); setHovered(null); }}
+              style={{
+                padding: '2px 10px', fontSize: 9, letterSpacing: '0.08em',
+                fontFamily: 'var(--font-mono)',
+                background: mode === m ? 'var(--bg-2)' : 'transparent',
+                border: `1px solid ${mode === m ? 'var(--line-2)' : 'transparent'}`,
+                borderRadius: 2,
+                color: mode === m ? 'var(--fg-0)' : 'var(--fg-3)',
+                cursor: 'pointer',
+              }}
+            >
+              {m === 'regime' ? 'BY REGIME' : 'BY PATTERN'}
+            </button>
+          ))}
+        </div>
 
         <div style={{ flex: 1 }} />
 
@@ -180,7 +289,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         ))}
 
         <span style={{ color: 'var(--fg-4)', fontSize: 9, marginLeft: 8 }}>
-          {scatterPoints.length} bars
+          {totalLabel}
         </span>
       </div>
 
@@ -203,7 +312,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       )}
 
       {!loading && !error && (
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <>
           <div style={{
             padding: '10px 16px',
             borderBottom: '1px solid var(--line-0)',
@@ -211,221 +320,341 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
             flexShrink: 0,
           }}>
             <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>How to read this: </span>
-            Each dot = one 15 m price bar, colored by whether price went{' '}
-            <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
-            <span style={{ color: '#ef4444' }}>down ↓</span> over the next {FWD_LABEL[fwdBars]}.
-            X-axis is the GCP regime active when the bar opened; the horizontal line per column
-            is the average move in that regime.{' '}
-            <span style={{ color: '#d4a028' }}>
-              D regime trending positive would mean GCP synchronization tends to precede upward price moves.
-            </span>
-          </div>
-
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', gap: 0 }}>
-          <div ref={svgContainerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', padding: '16px 0 0 0' }}>
-            <svg
-              ref={svgRef}
-              width={W} height={H}
-              style={{ display: 'block' }}
-              onMouseLeave={() => setHovered(null)}
-            >
-              {[-2, -1, 0, 1, 2].map(pct => (
-                <g key={pct}>
-                  <line
-                    x1={PAD.l} x2={W - PAD.r}
-                    y1={yOf(pct)} y2={yOf(pct)}
-                    stroke={pct === 0 ? '#2a2f37' : '#15181d'}
-                    strokeWidth={pct === 0 ? 1 : 0.5}
-                    strokeDasharray={pct === 0 ? '' : '2 4'}
-                  />
-                  <text
-                    x={PAD.l - 6} y={yOf(pct) + 3}
-                    textAnchor="end"
-                    fontSize={9} fill="#464c56"
-                    fontFamily="IBM Plex Mono, monospace"
-                  >
-                    {pct > 0 ? '+' : ''}{pct}%
-                  </text>
-                </g>
-              ))}
-
-              {Object.entries(REGIME_META).map(([r, meta]) => {
-                const cx = PAD.l + ((meta.x - 0.5) / 6) * IW;
-                const bw = IW / 6;
-                return (
-                  <rect key={r}
-                    x={cx - bw / 2} y={PAD.t}
-                    width={bw} height={IH}
-                    fill={`${meta.color}08`}
-                  />
-                );
-              })}
-
-              {scatterPoints.map((pt, i) => {
-                const x = xOf(pt.regime) + jitter(i);
-                const y = yOf(pt.fwdPct);
-                const isUp   = pt.fwdPct >  0.05;
-                const isFlat = Math.abs(pt.fwdPct) <= 0.05;
-                const col    = isUp ? '#22c55e' : isFlat ? '#464c56' : '#ef4444';
-                return (
-                  <circle key={i}
-                    cx={x} cy={y} r={2.5}
-                    fill={col} opacity={0.5}
-                    style={{ cursor: 'crosshair' }}
-                    onMouseEnter={() => setHovered(pt)}
-                  />
-                );
-              })}
-
-              {Object.entries(stats).map(([r, s]) => {
-                if (s.pts.length < 3) return null;
-                const cx  = xOf(r);
-                const y   = yOf(s.avg);
-                const col = REGIME_META[r]?.color ?? '#fff';
-                return (
-                  <g key={r}>
-                    <line
-                      x1={cx - 20} x2={cx + 20}
-                      y1={y} y2={y}
-                      stroke={col} strokeWidth={2}
-                    />
-                    <text
-                      x={cx} y={y - 6}
-                      textAnchor="middle"
-                      fontSize={8} fill={col}
-                      fontFamily="IBM Plex Mono, monospace"
-                    >
-                      {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
-                    </text>
-                  </g>
-                );
-              })}
-
-              {Object.entries(REGIME_META).map(([r, meta]) => (
-                <text key={r}
-                  x={PAD.l + ((meta.x - 0.5) / 6) * IW}
-                  y={H - PAD.b + 16}
-                  textAnchor="middle"
-                  fontSize={9} fill={meta.color}
-                  fontFamily="IBM Plex Mono, monospace"
-                >
-                  {r}
-                </text>
-              ))}
-              {Object.entries(REGIME_META).map(([r, meta]) => (
-                <text key={`${r}-label`}
-                  x={PAD.l + ((meta.x - 0.5) / 6) * IW}
-                  y={H - PAD.b + 28}
-                  textAnchor="middle"
-                  fontSize={8} fill="#2a2f37"
-                  fontFamily="IBM Plex Mono, monospace"
-                >
-                  {meta.label.split('·')[1]?.trim()}
-                </text>
-              ))}
-
-              <text
-                x={14} y={PAD.t + IH / 2}
-                textAnchor="middle" fontSize={8} fill="#464c56"
-                fontFamily="IBM Plex Mono, monospace"
-                transform={`rotate(-90, 14, ${PAD.t + IH / 2})`}
-              >
-                PRICE CHANGE {FWD_LABEL[fwdBars]} FORWARD
-              </text>
-
-              {hovered && (
-                <circle
-                  cx={xOf(hovered.regime) + jitter(scatterPoints.indexOf(hovered))}
-                  cy={yOf(hovered.fwdPct)}
-                  r={5}
-                  fill="none" stroke="white" strokeWidth={1.5}
-                />
-              )}
-            </svg>
-
-            {hovered && (
-              <div style={{
-                position: 'absolute', top: 20, right: 20,
-                background: 'var(--bg-2)',
-                border: '1px solid var(--line-2)',
-                borderRadius: 3, padding: '6px 10px',
-                fontSize: 9, fontFamily: 'var(--font-mono)',
-              }}>
-                <div style={{ color: REGIME_META[hovered.regime]?.color, marginBottom: 3 }}>
-                  {REGIME_META[hovered.regime]?.label}
-                </div>
-                <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
-                  {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
-                </div>
-                <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
-                  NV {hovered.nv.toFixed(1)}
-                </div>
-                <div style={{ color: 'var(--fg-4)' }}>
-                  {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
-                </div>
-              </div>
+            {mode === 'regime' ? (
+              <>
+                Each dot = one 15 m price bar, colored by whether price went{' '}
+                <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
+                <span style={{ color: '#ef4444' }}>down ↓</span> over the next {FWD_LABEL[fwdBars]}.
+                X-axis is the GCP regime active when the bar opened; the horizontal line per column
+                is the average move in that regime.{' '}
+                <span style={{ color: '#d4a028' }}>
+                  D regime trending positive = GCP synchronization tends to precede upward price moves.
+                </span>
+              </>
+            ) : (
+              <>
+                Each dot = one pattern occurrence, colored by whether price went{' '}
+                <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
+                <span style={{ color: '#ef4444' }}>down ↓</span> in the {FWD_LABEL[fwdBars]} after the pattern ended.
+                X-axis is which GCP pattern fired; the horizontal line per column is the average outcome.{' '}
+                <span style={{ color: '#d4a028' }}>
+                  AL trending positive = Alignment Ladder reliably precedes upward moves.
+                </span>
+              </>
             )}
           </div>
 
           <div style={{
-            width: 200, borderLeft: '1px solid var(--line-1)',
-            padding: '16px 14px', overflow: 'auto',
-            flexShrink: 0,
+            flex: 1, minHeight: 0,
+            display: 'flex', overflow: 'hidden',
           }}>
-            <div style={{
-              fontSize: 8, letterSpacing: '0.12em',
-              color: 'var(--fg-4)', marginBottom: 12,
-            }}>
-              REGIME SUMMARY
-            </div>
+            <div
+              ref={svgContainerRef}
+              style={{
+                flex: 1, minWidth: 0, minHeight: 0,
+                position: 'relative', overflow: 'hidden',
+              }}
+            >
+              <svg
+                width={W} height={H}
+                style={{ display: 'block' }}
+                onMouseLeave={() => setHovered(null)}
+              >
+                {[-2, -1, 0, 1, 2].map(pct => (
+                  <g key={pct}>
+                    <line
+                      x1={PAD.l} x2={W - PAD.r}
+                      y1={yOf(pct)} y2={yOf(pct)}
+                      stroke={pct === 0 ? '#2a2f37' : '#15181d'}
+                      strokeWidth={pct === 0 ? 1 : 0.5}
+                      strokeDasharray={pct === 0 ? '' : '2 4'}
+                    />
+                    <text
+                      x={PAD.l - 6} y={yOf(pct) + 3}
+                      textAnchor="end"
+                      fontSize={9} fill="#464c56"
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {pct > 0 ? '+' : ''}{pct}%
+                    </text>
+                  </g>
+                ))}
 
-            {Object.entries(REGIME_META).map(([r, meta]) => {
-              const s = stats[r];
-              if (!s) return null;
-              const bullPct = s.pts.length ? (s.bull / s.pts.length * 100) : 0;
-              return (
-                <div key={r} style={{
-                  marginBottom: 12, paddingBottom: 12,
-                  borderBottom: '1px solid var(--line-0)',
+                {Object.entries(colMeta).map(([k, meta]) => {
+                  const cx = PAD.l + ((meta.x - 0.5) / cols) * IW;
+                  const bw = IW / cols;
+                  return (
+                    <rect key={k}
+                      x={cx - bw / 2} y={PAD.t}
+                      width={bw} height={IH}
+                      fill={`${meta.color}08`}
+                    />
+                  );
+                })}
+
+                {visiblePoints.map((pt, i) => {
+                  const x = xOfPoint(pt) + jitter(i);
+                  const y = yOf(pt.fwdPct);
+                  const isUp   = pt.fwdPct >  0.05;
+                  const isFlat = Math.abs(pt.fwdPct) <= 0.05;
+                  const col    = isUp ? '#22c55e' : isFlat ? '#464c56' : '#ef4444';
+                  return (
+                    <circle key={i}
+                      cx={x} cy={y} r={mode === 'pattern' ? 3 : 2.5}
+                      fill={col} opacity={mode === 'pattern' ? 0.65 : 0.5}
+                      style={{ cursor: 'crosshair' }}
+                      onMouseEnter={() => setHovered(pt)}
+                    />
+                  );
+                })}
+
+                {mode === 'regime' && Object.entries(regimeStats).map(([r, s]) => {
+                  if (s.pts.length < 3) return null;
+                  const cx  = xOfRegime(r);
+                  const y   = yOf(s.avg);
+                  const col = REGIME_META[r]?.color ?? '#fff';
+                  return (
+                    <g key={r}>
+                      <line x1={cx - 20} x2={cx + 20} y1={y} y2={y} stroke={col} strokeWidth={2} />
+                      <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
+                        fontFamily="IBM Plex Mono, monospace">
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {mode === 'pattern' && Object.entries(patternStats).map(([kind, s]) => {
+                  if (s.pts.length < 2) return null;
+                  const cx  = xOfPattern(kind);
+                  const y   = yOf(s.avg);
+                  const col = PATTERN_META[kind]?.color ?? '#fff';
+                  return (
+                    <g key={kind}>
+                      <line x1={cx - 18} x2={cx + 18} y1={y} y2={y} stroke={col} strokeWidth={2} />
+                      <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
+                        fontFamily="IBM Plex Mono, monospace">
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => (
+                  <g key={r}>
+                    <text
+                      x={PAD.l + ((meta.x - 0.5) / 6) * IW}
+                      y={H - PAD.b + 16}
+                      textAnchor="middle"
+                      fontSize={9} fill={meta.color}
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {r}
+                    </text>
+                    <text
+                      x={PAD.l + ((meta.x - 0.5) / 6) * IW}
+                      y={H - PAD.b + 28}
+                      textAnchor="middle"
+                      fontSize={8} fill="#2a2f37"
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.label.split('·')[1]?.trim()}
+                    </text>
+                  </g>
+                ))}
+
+                {mode === 'pattern' && Object.entries(PATTERN_META).map(([kind, meta]) => (
+                  <g key={kind}>
+                    <text
+                      x={xOfPattern(kind)}
+                      y={H - PAD.b + 16}
+                      textAnchor="middle"
+                      fontSize={10} fill={meta.color} fontWeight={600}
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.abbr}
+                    </text>
+                    <text
+                      x={xOfPattern(kind)}
+                      y={H - PAD.b + 28}
+                      textAnchor="middle"
+                      fontSize={7} fill="#2a2f37"
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.label.split(' ').slice(-1)[0]}
+                    </text>
+                  </g>
+                ))}
+
+                <text
+                  x={14} y={PAD.t + IH / 2}
+                  textAnchor="middle" fontSize={8} fill="#464c56"
+                  fontFamily="IBM Plex Mono, monospace"
+                  transform={`rotate(-90, 14, ${PAD.t + IH / 2})`}
+                >
+                  PRICE CHANGE {FWD_LABEL[fwdBars]} FORWARD
+                </text>
+
+                {hovered && (
+                  <circle
+                    cx={xOfPoint(hovered) + jitter(visiblePoints.indexOf(hovered))}
+                    cy={yOf(hovered.fwdPct)}
+                    r={5}
+                    fill="none" stroke="white" strokeWidth={1.5}
+                  />
+                )}
+              </svg>
+
+              {hovered && (
+                <div style={{
+                  position: 'absolute', top: 20, right: 20,
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 3, padding: '6px 10px',
+                  fontSize: 9, fontFamily: 'var(--font-mono)',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{r}</span>
-                    <span style={{
-                      fontSize: 10, fontVariantNumeric: 'tabular-nums',
-                      color: s.avg > 0.02 ? '#22c55e' : s.avg < -0.02 ? '#ef4444' : 'var(--fg-3)',
-                    }}>
-                      {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)' }}>
-                    <span>{s.pts.length} bars</span>
-                    <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
-                    <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
-                    <span>{bullPct.toFixed(0)}% bull</span>
-                  </div>
-                  <div style={{
-                    height: 3, background: '#ef4444',
-                    borderRadius: 1, marginTop: 4, overflow: 'hidden',
-                  }}>
-                    <div style={{
-                      height: '100%', background: '#22c55e',
-                      width: `${bullPct}%`, borderRadius: 1,
-                    }} />
-                  </div>
+                  {hovered.kind === 'regime' ? (
+                    <>
+                      <div style={{ color: REGIME_META[hovered.regime]?.color, marginBottom: 3 }}>
+                        {REGIME_META[hovered.regime]?.label}
+                      </div>
+                      <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
+                        {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
+                      </div>
+                      <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+                        NV {hovered.nv.toFixed(1)}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ color: PATTERN_META[hovered.pattern]?.color, marginBottom: 3 }}>
+                        {hovered.pattern}
+                      </div>
+                      <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
+                        {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
+                      </div>
+                      <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+                        PSS {hovered.pss}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                    </>
+                  )}
                 </div>
-              );
-            })}
+              )}
+            </div>
 
             <div style={{
-              fontSize: 8, color: 'var(--fg-4)',
-              lineHeight: 1.5, marginTop: 8,
+              width: 200, borderLeft: '1px solid var(--line-1)',
+              padding: '16px 14px', overflow: 'auto',
+              flexShrink: 0,
             }}>
-              Avg line = mean price change across all bars in that regime.
-              Bull/bear bar = % of bars with positive outcome.
+              <div style={{
+                fontSize: 8, letterSpacing: '0.12em',
+                color: 'var(--fg-4)', marginBottom: 12,
+              }}>
+                {mode === 'regime' ? 'REGIME SUMMARY' : 'PATTERN SUMMARY'}
+              </div>
+
+              {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => {
+                const s = regimeStats[r];
+                if (!s) return null;
+                const bullPct = s.pts.length ? (s.bull / s.pts.length * 100) : 0;
+                return (
+                  <div key={r} style={{
+                    marginBottom: 12, paddingBottom: 12,
+                    borderBottom: '1px solid var(--line-0)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{r}</span>
+                      <span style={{
+                        fontSize: 10, fontVariantNumeric: 'tabular-nums',
+                        color: s.avg > 0.02 ? '#22c55e' : s.avg < -0.02 ? '#ef4444' : 'var(--fg-3)',
+                      }}>
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)' }}>
+                      <span>{s.pts.length} bars</span>
+                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                      <span>{bullPct.toFixed(0)}% bull</span>
+                    </div>
+                    <div style={{
+                      height: 3, background: '#ef4444',
+                      borderRadius: 1, marginTop: 4, overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        height: '100%', background: '#22c55e',
+                        width: `${bullPct}%`, borderRadius: 1,
+                      }} />
+                    </div>
+                  </div>
+                );
+              })}
+
+              {mode === 'pattern' && Object.entries(PATTERN_META).map(([kind, meta]) => {
+                const s = patternStats[kind];
+                if (!s || s.pts.length === 0) {
+                  return (
+                    <div key={kind} style={{
+                      marginBottom: 8, paddingBottom: 8, opacity: 0.45,
+                      borderBottom: '1px solid var(--line-0)',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                        <span style={{ color: 'var(--fg-4)', fontSize: 9 }}>no data</span>
+                      </div>
+                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+                        {meta.label}
+                      </div>
+                    </div>
+                  );
+                }
+                const bullPct = s.pts.length ? (s.bull / s.pts.length * 100) : 0;
+                return (
+                  <div key={kind} style={{
+                    marginBottom: 10, paddingBottom: 10,
+                    borderBottom: '1px solid var(--line-0)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                      <span style={{
+                        fontSize: 11, fontVariantNumeric: 'tabular-nums',
+                        color: s.avg > 0.05 ? '#22c55e' : s.avg < -0.05 ? '#ef4444' : 'var(--fg-3)',
+                      }}>
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                      {meta.label} · {s.pts.length} occurrences
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4 }}>
+                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                      <span>{bullPct.toFixed(0)}% bullish</span>
+                    </div>
+                    <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: '#22c55e', width: `${bullPct}%`, borderRadius: 1 }} />
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div style={{
+                fontSize: 8, color: 'var(--fg-4)',
+                lineHeight: 1.5, marginTop: 8,
+              }}>
+                Avg line = mean price change.
+                Bull/bear bar = % of {mode === 'regime' ? 'bars' : 'occurrences'} with positive outcome.
+              </div>
             </div>
           </div>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
