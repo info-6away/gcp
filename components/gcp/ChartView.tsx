@@ -181,7 +181,38 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     const cutoff  = lastT - span;
     const windowed = sorted.filter(p => p.t >= cutoff);
 
-    return windowed.length > 3000 ? lttbDownsample(windowed, 800) : windowed;
+    const base = windowed.length > 3000 ? lttbDownsample(windowed, 800) : windowed;
+
+    // Fix B: bridge any > 5 minute gap between consecutive points with
+    // 1-minute carry-forward fills so the line draws across the
+    // historical/live merge boundary instead of leaving a visible hole.
+    const MIN_MS  = 60_000;
+    const GAP_MS  = 5 * MIN_MS;
+    const filled: DataPoint[] = base.length ? [base[0]] : [];
+    for (let i = 1; i < base.length; i++) {
+      const prev = base[i - 1];
+      const curr = base[i];
+      if (curr.t - prev.t > GAP_MS) {
+        for (let t = prev.t + MIN_MS; t < curr.t; t += MIN_MS) {
+          filled.push({ ...prev, t });
+        }
+      }
+      filled.push(curr);
+    }
+
+    // Fix A: extend the line to "now" so the right edge of the chart is
+    // never blank just because the last poll landed a couple of minutes
+    // back. Snaps to the nearest minute boundary and reuses the last
+    // known NV.
+    if (filled.length) {
+      const last    = filled[filled.length - 1];
+      const nowSlot = Math.floor(Date.now() / MIN_MS) * MIN_MS;
+      if (nowSlot > last.t) {
+        filled.push({ ...last, t: nowSlot });
+      }
+    }
+
+    return filled;
   }, [series, displayCandles]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
