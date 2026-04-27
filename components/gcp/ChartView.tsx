@@ -330,11 +330,10 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   }, []);
 
   // ── GCP line updates ───────────────────────────────────────────────────────
-  // LW Charts line series wants Unix seconds. DataPoint.t is stored in
-  // milliseconds throughout the app, so the conversion happens here, right
-  // at setData. Gap-fill and the now-extension run in seconds units so
-  // their thresholds (> 300 s) and synthetic timestamps (Math.floor(
-  // Date.now() / 1000)) match the unit the line series receives.
+  // DataPoint.t is already in Unix seconds throughout this app, so existing
+  // points pass straight through to setData unchanged. Date.now() is the
+  // only ms value involved, and gets divided by 1000 for the trailing
+  // extension point.
   useEffect(() => {
     const line = gcpLineRef.current;
     if (!line) return;
@@ -345,30 +344,32 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     }
 
     const base = chartGCPSeries.map(p => ({
-      time:  Math.floor(p.t / 1000),
+      time:  p.t,
       value: p.v,
     }));
 
-    // Fix B: bridge gaps > 300 seconds with 60-second carry-forward fills
-    // so the historical -> live merge boundary doesn't leave a visible hole.
+    // Gap fill (v10.15 thresholds restored): bridge gaps > 300_000 with
+    // 60_000-step carry-forward synthetic points so the merge boundary
+    // doesn't leave a visible hole.
     const filled: { time: number; value: number }[] = [base[0]];
     for (let i = 1; i < base.length; i++) {
       const prev = base[i - 1];
       const curr = base[i];
       const gap  = curr.time - prev.time;
-      if (gap > 300) {
-        for (let t = prev.time + 60; t < curr.time; t += 60) {
+      if (gap > 300_000) {
+        for (let t = prev.time + 60_000; t < curr.time; t += 60_000) {
           filled.push({ time: t, value: prev.value });
         }
       }
       filled.push(curr);
     }
 
-    // Fix A: extend the line to "now" (Unix seconds, snapped to minute)
-    // so the right edge isn't blank between live polls.
+    // Trailing extension: Math.floor(Date.now() / 1000) puts the synthetic
+    // point in the same Unix-seconds unit the existing DataPoint.t values
+    // already use, so the line draws to the right edge regardless of when
+    // the last poll completed.
     const last    = filled[filled.length - 1];
-    const nowSec  = Math.floor(Date.now() / 1000);
-    const nowSlot = Math.floor(nowSec / 60) * 60;
+    const nowSlot = Math.floor(Date.now() / 1000);
     if (nowSlot > last.time) {
       filled.push({ time: nowSlot, value: last.value });
     }
