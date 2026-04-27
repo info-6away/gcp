@@ -516,34 +516,42 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   }, [symbol, chartTF]);
 
   // ── Chart-local pattern detection on the chart's own GCP series ────────────
-  // The `patterns` prop is windowed to the Dashboard's VIEW; the Chart tab
-  // should detect on its own visible GCP slice so users see all patterns
-  // for the candle range they're scrolled to.
-  //
-  // Gap-aware: detectPatterns walks regime runs by INDEX, treating
-  // consecutive array entries as contiguous regardless of time. With the
-  // historical/live merge boundary often sitting in the middle of the
-  // windowed slice, a single regime run could span multiple days (e.g.
-  // an A/B run from Apr 24 historical end straight into Apr 26 live
-  // start) and consume detection slots that should belong to live-side
-  // patterns. Splitting at any > 5 minute time gap and detecting per
-  // segment prevents that.
   const chartPatterns = useMemo(() => {
+    // Always-on diagnostic: prints on every recompute so the production
+    // console shows the data shape without an env gate.
+    console.log(
+      '[ChartView] detect called, windowedSeries.length =',
+      chartGCPSeries.length,
+    );
+
     if (!chartGCPSeries.length) return [] as Pattern[];
 
-    const GAP_MS  = 5 * 60_000;
-    const patterns: Pattern[] = [];
-    let segStart = 0;
-
-    // Diagnostic: surface the largest inter-point gap so the data side of
-    // the issue is visible without inspecting state.
+    // Largest inter-point gap and a histogram of the > 1 min gaps so we
+    // can see exactly where the discontinuities are.
     let maxGapMs = 0;
+    let maxGapAt = -1;
+    const bigGaps: { idx: number; gapMs: number; afterT: string }[] = [];
     for (let i = 1; i < chartGCPSeries.length; i++) {
       const g = chartGCPSeries[i].t - chartGCPSeries[i - 1].t;
-      if (g > maxGapMs) maxGapMs = g;
+      if (g > maxGapMs) { maxGapMs = g; maxGapAt = i; }
+      if (g > 60_000) {
+        bigGaps.push({
+          idx:    i,
+          gapMs:  g,
+          afterT: new Date(chartGCPSeries[i - 1].t).toISOString(),
+        });
+      }
     }
 
+    // Be conservative: only split at gaps > 30 min. Smaller intra-data
+    // gaps (poll misses, single missing minutes) shouldn't fragment the
+    // series into chunks too small for detection. The historical/live
+    // merge boundary is hours/days, which this still catches.
+    const GAP_MS  = 30 * 60_000;
+    const patterns: Pattern[] = [];
     const segSizes: number[] = [];
+    let segStart = 0;
+
     for (let i = 1; i <= chartGCPSeries.length; i++) {
       const atEnd = i === chartGCPSeries.length;
       const isGap = !atEnd && chartGCPSeries[i].t - chartGCPSeries[i - 1].t > GAP_MS;
@@ -567,18 +575,19 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       }
     }
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug(
-        '[ChartView] chartPatterns:',
-        'windowed:', chartGCPSeries.length,
-        'segments:', segSizes.length,
-        'segSizes:', segSizes,
-        'maxGapMs:', maxGapMs,
-        'patterns:', patterns.length,
-        'firstT:', chartGCPSeries.length ? new Date(chartGCPSeries[0].t).toISOString() : null,
-        'lastT:',  chartGCPSeries.length ? new Date(chartGCPSeries[chartGCPSeries.length - 1].t).toISOString() : null,
-      );
-    }
+    console.log(
+      '[ChartView] chartPatterns:',
+      'windowed:', chartGCPSeries.length,
+      'GAP_MS:', GAP_MS,
+      'segments:', segSizes.length,
+      'segSizes:', segSizes,
+      'maxGapMs:', maxGapMs,
+      'maxGapAt:', maxGapAt,
+      'bigGaps:', bigGaps.slice(0, 8),
+      'patterns:', patterns.length,
+      'firstT:', chartGCPSeries[0]?.t ? new Date(chartGCPSeries[0].t).toISOString() : null,
+      'lastT:',  chartGCPSeries.length ? new Date(chartGCPSeries[chartGCPSeries.length - 1].t).toISOString() : null,
+    );
 
     return patterns;
   }, [chartGCPSeries]);
