@@ -330,10 +330,10 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   }, []);
 
   // ── GCP line updates ───────────────────────────────────────────────────────
-  // DataPoint.t is already in Unix seconds throughout this app, so existing
-  // points pass straight through to setData unchanged. Date.now() is the
-  // only ms value involved, and gets divided by 1000 for the trailing
-  // extension point.
+  // Empirically: DataPoint.t is in MILLISECONDS in this codebase
+  // (gcp_2026.json values are ~1.7e12, useGCPData multiplies end_epoch by
+  // 1000). LW Charts wants Unix seconds. Divide by 1000 here so the GCP
+  // pane lines up with the candle pane (which goes through toTime).
   useEffect(() => {
     const line = gcpLineRef.current;
     if (!line) return;
@@ -344,30 +344,25 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     }
 
     const base = chartGCPSeries.map(p => ({
-      time:  p.t,
+      time:  Math.floor(p.t / 1000),
       value: p.v,
     }));
 
-    // Gap fill (v10.15 thresholds restored): bridge gaps > 300_000 with
-    // 60_000-step carry-forward synthetic points so the merge boundary
-    // doesn't leave a visible hole.
+    // Gap fill in seconds: > 300 s threshold, 60 s step.
     const filled: { time: number; value: number }[] = [base[0]];
     for (let i = 1; i < base.length; i++) {
       const prev = base[i - 1];
       const curr = base[i];
       const gap  = curr.time - prev.time;
-      if (gap > 300_000) {
-        for (let t = prev.time + 60_000; t < curr.time; t += 60_000) {
+      if (gap > 300) {
+        for (let t = prev.time + 60; t < curr.time; t += 60) {
           filled.push({ time: t, value: prev.value });
         }
       }
       filled.push(curr);
     }
 
-    // Trailing extension: Math.floor(Date.now() / 1000) puts the synthetic
-    // point in the same Unix-seconds unit the existing DataPoint.t values
-    // already use, so the line draws to the right edge regardless of when
-    // the last poll completed.
+    // Trailing extension at "now" in Unix seconds.
     const last    = filled[filled.length - 1];
     const nowSlot = Math.floor(Date.now() / 1000);
     if (nowSlot > last.time) {
