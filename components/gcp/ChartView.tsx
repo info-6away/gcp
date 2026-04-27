@@ -181,7 +181,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     const cutoff  = lastT - span;
     const windowed = sorted.filter(p => p.t >= cutoff);
 
-    return windowed.length > 1000 ? lttbDownsample(windowed, 800) : windowed;
+    return windowed.length > 3000 ? lttbDownsample(windowed, 800) : windowed;
   }, [series, displayCandles]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────

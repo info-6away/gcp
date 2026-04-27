@@ -6,12 +6,50 @@ const TD_INTERVALS: Record<string, string> = {
   '1h': '1h',   '4h': '4h',   '1D': '1day',
 };
 
+const TF_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 300_000,
+  '15m': 900_000,
+  '1h': 3_600_000,
+  '4h': 14_400_000,
+  '1D': 86_400_000,
+};
+
 export interface Candle {
   t: number;
   o: number;
   h: number;
   l: number;
   c: number;
+}
+
+// BTC trades 24/7 so its candles never have weekend/session gaps. Gold/silver
+// (XAU/USD, XAG/USD) close on weekends, leaving multi-day holes that the
+// GCP pane's continuous time axis paints over -- making the GCP line look
+// shifted from the candle pane. Filling missing slots with flat synthetic
+// bars forces LW Charts to allocate time-axis space for those windows so
+// the two panes line up.
+function shouldFillGaps(symbol: string): boolean {
+  const s = symbol.toUpperCase();
+  return !(s === 'BTC' || s === 'BTC/USD' || s === 'BTCUSD');
+}
+
+function fillWeekendGaps(candles: Candle[], tfMs: number): Candle[] {
+  if (candles.length < 2) return candles;
+  const out: Candle[] = [candles[0]];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1];
+    const curr = candles[i];
+    const gap  = curr.t - prev.t;
+    if (gap > 2 * tfMs) {
+      const flat = prev.c;
+      for (let t = prev.t + tfMs; t < curr.t; t += tfMs) {
+        out.push({ t, o: flat, h: flat, l: flat, c: flat });
+      }
+    }
+    out.push(curr);
+  }
+  return out;
 }
 
 interface RawValue {
@@ -48,11 +86,17 @@ export async function fetchCandlesForWindow(
   if (data.status === 'error') throw new Error(data.message ?? 'TD error');
 
   const values: RawValue[] = data.values ?? [];
-  return values.slice().reverse().map(v => ({
+  const candles: Candle[] = values.slice().reverse().map(v => ({
     t: new Date(v.datetime + 'Z').getTime(),
     o: parseFloat(v.open),
     h: parseFloat(v.high),
     l: parseFloat(v.low),
     c: parseFloat(v.close),
   }));
+
+  const tfMs = TF_MS[tf] ?? 0;
+  if (tfMs > 0 && shouldFillGaps(symbol)) {
+    return fillWeekendGaps(candles, tfMs);
+  }
+  return candles;
 }
