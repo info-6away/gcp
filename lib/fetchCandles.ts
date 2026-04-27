@@ -96,11 +96,17 @@ export async function fetchCandlesForWindow(
   const interval = TD_INTERVALS[tf] ?? '15min';
   const endDate  = new Date(endMs).toISOString().replace('T', ' ').slice(0, 19);
 
+  // timezone=UTC forces Twelve Data to return UTC datetimes for every
+  // symbol. Without it, metals (XAU/USD, XAG/USD) are localized to the
+  // COMEX exchange timezone (America/New_York) while crypto pairs are
+  // already UTC -- which made gold candles render ~5 h shifted from the
+  // GCP pane. Pair with the parser below using `T` + `Z` for strict ISO.
   const url = `${TD_BASE}/time_series`
     + `?symbol=${encodeURIComponent(symbol)}`
     + `&interval=${interval}`
     + `&outputsize=${outputsize}`
     + `&end_date=${encodeURIComponent(endDate)}`
+    + `&timezone=UTC`
     + `&apikey=${TD_KEY}`;
 
   const res  = await fetch(url, { signal: AbortSignal.timeout(8_000) });
@@ -110,7 +116,11 @@ export async function fetchCandlesForWindow(
 
   const values: RawValue[] = data.values ?? [];
   const candles: Candle[] = values.slice().reverse().map(v => ({
-    t: new Date(v.datetime + 'Z').getTime(),
+    // "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SSZ" so every JS engine
+    // parses it as UTC. Just appending 'Z' to the space-separated form is
+    // implementation-defined and silently slips back to local time on
+    // some engines.
+    t: new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
     o: parseFloat(v.open),
     h: parseFloat(v.high),
     l: parseFloat(v.low),

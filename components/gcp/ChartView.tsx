@@ -67,10 +67,15 @@ async function fetchCandlesBefore(
   const sym = TD_SYMBOLS[symbol];
   if (!sym || !TD_KEY) throw new Error('No symbol or API key');
 
+  // timezone=UTC: forces Twelve Data to return UTC datetimes for every
+  // symbol. Metals are otherwise localized to the COMEX (NY) timezone
+  // while crypto pairs are already UTC, leaving gold/silver candles
+  // ~5 h shifted from the GCP pane on the shared time axis.
   let url = `${TD_BASE}/time_series`
     + `?symbol=${encodeURIComponent(sym)}`
     + `&interval=${TD_INTERVALS[tf]}`
     + `&outputsize=${outputsize}`
+    + `&timezone=UTC`
     + `&apikey=${TD_KEY}`;
 
   if (before) {
@@ -89,7 +94,9 @@ async function fetchCandlesBefore(
     .slice()
     .reverse()
     .map(v => ({
-      t: new Date(v.datetime + 'Z').getTime(),
+      // "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SSZ" for strict ISO
+      // parsing (space-separated + 'Z' is implementation-defined).
+      t: new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
       o: parseFloat(v.open),
       h: parseFloat(v.high),
       l: parseFloat(v.low),
