@@ -519,9 +519,68 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   // The `patterns` prop is windowed to the Dashboard's VIEW; the Chart tab
   // should detect on its own visible GCP slice so users see all patterns
   // for the candle range they're scrolled to.
+  //
+  // Gap-aware: detectPatterns walks regime runs by INDEX, treating
+  // consecutive array entries as contiguous regardless of time. With the
+  // historical/live merge boundary often sitting in the middle of the
+  // windowed slice, a single regime run could span multiple days (e.g.
+  // an A/B run from Apr 24 historical end straight into Apr 26 live
+  // start) and consume detection slots that should belong to live-side
+  // patterns. Splitting at any > 5 minute time gap and detecting per
+  // segment prevents that.
   const chartPatterns = useMemo(() => {
     if (!chartGCPSeries.length) return [] as Pattern[];
-    return detectPatterns(chartGCPSeries, 1);
+
+    const GAP_MS  = 5 * 60_000;
+    const patterns: Pattern[] = [];
+    let segStart = 0;
+
+    // Diagnostic: surface the largest inter-point gap so the data side of
+    // the issue is visible without inspecting state.
+    let maxGapMs = 0;
+    for (let i = 1; i < chartGCPSeries.length; i++) {
+      const g = chartGCPSeries[i].t - chartGCPSeries[i - 1].t;
+      if (g > maxGapMs) maxGapMs = g;
+    }
+
+    const segSizes: number[] = [];
+    for (let i = 1; i <= chartGCPSeries.length; i++) {
+      const atEnd = i === chartGCPSeries.length;
+      const isGap = !atEnd && chartGCPSeries[i].t - chartGCPSeries[i - 1].t > GAP_MS;
+      if (isGap || atEnd) {
+        const seg = chartGCPSeries.slice(segStart, i);
+        segSizes.push(seg.length);
+        if (seg.length >= 10) {
+          for (const p of detectPatterns(seg, 1)) {
+            // detectPatterns returns indices local to `seg`. Offset them
+            // back into the full chartGCPSeries index space so the marker
+            // and tooltip lookups hit the right point. tStart/tEnd are
+            // absolute timestamps and need no offset.
+            patterns.push({
+              ...p,
+              start: p.start + segStart,
+              end:   p.end   + segStart,
+            });
+          }
+        }
+        segStart = i;
+      }
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(
+        '[ChartView] chartPatterns:',
+        'windowed:', chartGCPSeries.length,
+        'segments:', segSizes.length,
+        'segSizes:', segSizes,
+        'maxGapMs:', maxGapMs,
+        'patterns:', patterns.length,
+        'firstT:', chartGCPSeries.length ? new Date(chartGCPSeries[0].t).toISOString() : null,
+        'lastT:',  chartGCPSeries.length ? new Date(chartGCPSeries[chartGCPSeries.length - 1].t).toISOString() : null,
+      );
+    }
+
+    return patterns;
   }, [chartGCPSeries]);
 
   useEffect(() => { chartPatternsRef.current = chartPatterns; }, [chartPatterns]);
