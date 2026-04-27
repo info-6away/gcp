@@ -81,16 +81,25 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const [W, setW] = useState(720);
   const [H, setH] = useState(400);
 
+  // Re-run when loading/error flips because the chart container only mounts
+  // once we leave the loading/error branch — observing it on initial mount
+  // (when the ref is still null) silently no-ops and leaves the SVG stuck
+  // at its initial size.
   useEffect(() => {
     if (!svgContainerRef.current) return;
+    const el = svgContainerRef.current;
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect;
       setW(Math.max(360, Math.floor(width)));
       setH(Math.max(260, Math.floor(height)));
     });
-    ro.observe(svgContainerRef.current);
+    ro.observe(el);
+    // Seed once synchronously in case ResizeObserver doesn't fire immediately.
+    const rect = el.getBoundingClientRect();
+    setW(Math.max(360, Math.floor(rect.width)));
+    setH(Math.max(260, Math.floor(rect.height)));
     return () => ro.disconnect();
-  }, []);
+  }, [loading, error]);
 
   useEffect(() => {
     let cancelled = false;
