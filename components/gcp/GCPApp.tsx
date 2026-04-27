@@ -5,6 +5,8 @@ import { buildSeries, detectPatterns, processSeries } from '@/lib/gcp-data';
 import { useGCPData } from '@/lib/useGCPData';
 import { useGoldData } from '@/lib/useGoldData';
 import { usePSSAlert } from '@/lib/usePSSAlert';
+import { useMobile } from '@/lib/useMobile';
+import MobileApp from './mobile/MobileApp';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -59,6 +61,7 @@ export default function GCPApp() {
   }, [baseSeries.length]);
 
   const goldData = useGoldData(symbol);
+  const isMobile = useMobile();
 
   // Dashboard is GCP-only. Price overlay lives on the Chart tab now;
   // ChartView consumes candleData directly so we don't need to merge
@@ -207,6 +210,19 @@ export default function GCPApp() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <MobileApp
+        gcpData={gcpData}
+        baseSeries={baseSeries}
+        displayPatterns={displayPatterns}
+        goldData={goldData}
+        symbol={symbol}
+        setSymbol={setSymbol}
+      />
     );
   }
 
