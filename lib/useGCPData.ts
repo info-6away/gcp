@@ -46,8 +46,35 @@ async function gcpFetch(endpoint: string): Promise<unknown | null> {
   }
 
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);
-  console.log('[GCP] fetch ok', res.status);
-  return res.json();
+  console.log('[GCP] fetch ok', res.status, 'content-type:', res.headers.get('content-type'));
+
+  // Read raw text first so we can log it; only then parse JSON. response.json()
+  // consumes the body and we can't read it twice without cloning.
+  const raw = await res.text();
+  console.log('[GCP] raw response (first 800 chars):', raw.slice(0, 800));
+  console.log('[GCP] raw response length:', raw.length);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('[GCP] JSON.parse failed:', e);
+    return null;
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    console.log('[GCP] response keys:', Object.keys(parsed as Record<string, unknown>));
+    const aggs = (parsed as { aggregates?: unknown }).aggregates;
+    if (Array.isArray(aggs)) {
+      console.log('[GCP] aggregates is array, length:', aggs.length, 'first:', aggs[0]);
+    } else {
+      console.log('[GCP] aggregates type:', typeof aggs, 'value:', aggs);
+    }
+  } else {
+    console.log('[GCP] parsed is not an object:', parsed);
+  }
+
+  return parsed;
 }
 
 async function loadHistoricalSeries(): Promise<DataPoint[]> {
