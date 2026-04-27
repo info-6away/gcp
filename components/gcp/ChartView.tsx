@@ -110,7 +110,8 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
 
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const gcpLineRef      = useRef<ISeriesApi<'Line'> | null>(null);
-  const markersRef      = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const markersRef       = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const candleMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const [chartTF,       setChartTF]       = useState<ChartTF>('5m');
   const [candles,       setCandles]       = useState<Candle[]>([]);
@@ -311,7 +312,8 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       chartRef.current        = null;
       gcpLineRef.current      = null;
       candleSeriesRef.current = null;
-      markersRef.current      = null;
+      markersRef.current       = null;
+      candleMarkersRef.current = null;
       setChartReady(false);
     };
   }, []);
@@ -468,13 +470,14 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   useEffect(() => { chartPatternsRef.current = chartPatterns; }, [chartPatterns]);
   useEffect(() => { chartGCPSeriesRef.current = chartGCPSeries; }, [chartGCPSeries]);
 
-  // ── Pattern markers on the GCP line (bottom pane) ──────────────────────────
+  // ── Pattern markers on the GCP line (bottom pane) + candles (top pane) ────
   useEffect(() => {
     const gcpLine = gcpLineRef.current;
-    if (!gcpLine) return;
+    const cs      = candleSeriesRef.current;
 
     if (!chartPatterns.length || !chartGCPSeries.length) {
       markersRef.current?.setMarkers([]);
+      candleMarkersRef.current?.setMarkers([]);
       return;
     }
 
@@ -488,29 +491,60 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       'Ignition Drift':      '#888780',
     };
 
-    const markers: SeriesMarker<Time>[] = chartPatterns
-      .filter(p => p.tStart > 0)
-      .map(p => {
-        const closest = chartGCPSeries.reduce((best, pt) =>
-          Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
-        );
-        return {
-          time:     toTime(closest.t),
+    // GCP-pane markers: align by nearest GCP point (always 1 m bars).
+    if (gcpLine) {
+      const gcpMarkers: SeriesMarker<Time>[] = chartPatterns
+        .filter(p => p.tStart > 0)
+        .map(p => {
+          const closest = chartGCPSeries.reduce((best, pt) =>
+            Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
+          );
+          return {
+            time:     toTime(closest.t),
+            position: 'aboveBar' as const,
+            color:    MARKER_COLORS[p.kind] ?? C.text,
+            shape:    'circle' as const,
+            text:     p.kind.split(' ').map(w => w[0]).join(''),
+            size:     1,
+          };
+        })
+        .sort((a, b) => (a.time as number) - (b.time as number));
+
+      if (markersRef.current) markersRef.current.setMarkers(gcpMarkers);
+      else                    markersRef.current = createSeriesMarkers<Time>(gcpLine, gcpMarkers);
+    }
+
+    // Candle-pane markers: snap to nearest candle timestamp so markers
+    // appear at every TF (LW Charts drops markers whose time doesn't
+    // match a series data point exactly).
+    if (cs && candles.length) {
+      const candleSecs = candles.map(c => Math.floor(c.t / 1000));
+      const snapToCandle = (tsMs: number): number => {
+        const tsSec = Math.floor(tsMs / 1000);
+        let best     = candleSecs[0];
+        let bestDiff = Infinity;
+        for (const ct of candleSecs) {
+          const diff = Math.abs(ct - tsSec);
+          if (diff < bestDiff) { bestDiff = diff; best = ct; }
+        }
+        return best;
+      };
+
+      const candleMarkers: SeriesMarker<Time>[] = chartPatterns
+        .filter(p => p.tStart > 0)
+        .map(p => ({
+          time:     snapToCandle(p.tStart) as Time,
           position: 'aboveBar' as const,
           color:    MARKER_COLORS[p.kind] ?? C.text,
-          shape:    'circle' as const,
+          shape:    'arrowDown' as const,
           text:     p.kind.split(' ').map(w => w[0]).join(''),
-          size:     1,
-        };
-      })
-      .sort((a, b) => (a.time as number) - (b.time as number));
+        }))
+        .sort((a, b) => (a.time as number) - (b.time as number));
 
-    if (markersRef.current) {
-      markersRef.current.setMarkers(markers);
-    } else {
-      markersRef.current = createSeriesMarkers<Time>(gcpLine, markers);
+      if (candleMarkersRef.current) candleMarkersRef.current.setMarkers(candleMarkers);
+      else                          candleMarkersRef.current = createSeriesMarkers<Time>(cs, candleMarkers);
     }
-  }, [chartPatterns, chartGCPSeries]);
+  }, [chartPatterns, chartGCPSeries, candles]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>

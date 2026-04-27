@@ -50,7 +50,19 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const [error,   setError]   = useState<string | null>(null);
   const [fwdBars, setFwdBars] = useState(4);
   const [hovered, setHovered] = useState<ScatterPoint | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const svgRef          = useRef<SVGSVGElement>(null);
+  const svgContainerRef = useRef<HTMLDivElement>(null);
+  const [W, setW]       = useState(720);
+
+  useEffect(() => {
+    if (!svgContainerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0].contentRect.width;
+      setW(Math.max(420, Math.floor(w) - 16));
+    });
+    ro.observe(svgContainerRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +122,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return map;
   }, [scatterPoints]);
 
-  const W = 720, H = 400;
+  const H = 400;
   const PAD = { l: 56, r: 24, t: 24, b: 60 };
   const IW  = W - PAD.l - PAD.r;
   const IH  = H - PAD.t - PAD.b;
@@ -191,12 +203,30 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       )}
 
       {!loading && !error && (
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', gap: 0 }}>
-          <div style={{ flex: 1, position: 'relative', overflow: 'hidden', padding: '16px 0 0 0' }}>
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{
+            padding: '10px 16px',
+            borderBottom: '1px solid var(--line-0)',
+            fontSize: 9, lineHeight: 1.6, color: 'var(--fg-2)',
+            flexShrink: 0,
+          }}>
+            <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>How to read this: </span>
+            Each dot = one 15 m price bar, colored by whether price went{' '}
+            <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
+            <span style={{ color: '#ef4444' }}>down ↓</span> over the next {FWD_LABEL[fwdBars]}.
+            X-axis is the GCP regime active when the bar opened; the horizontal line per column
+            is the average move in that regime.{' '}
+            <span style={{ color: '#d4a028' }}>
+              D regime trending positive would mean GCP synchronization tends to precede upward price moves.
+            </span>
+          </div>
+
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', gap: 0 }}>
+          <div ref={svgContainerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', padding: '16px 0 0 0' }}>
             <svg
               ref={svgRef}
               width={W} height={H}
-              style={{ display: 'block', maxWidth: '100%' }}
+              style={{ display: 'block' }}
               onMouseLeave={() => setHovered(null)}
             >
               {[-2, -1, 0, 1, 2].map(pct => (
@@ -393,6 +423,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
               Avg line = mean price change across all bars in that regime.
               Bull/bear bar = % of bars with positive outcome.
             </div>
+          </div>
           </div>
         </div>
       )}

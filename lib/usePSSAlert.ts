@@ -98,10 +98,10 @@ export function usePSSAlert(
     prevPatternsRef.current = patterns;
   }, [patterns, series, enabled, requestPermission, fireNotification, onAlert]);
 
-  const testAlert = useCallback(async () => {
+  const testAlert = useCallback(async (): Promise<'sent' | 'blocked' | 'focused'> => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
       console.warn('[PSS] Notifications not supported in this environment');
-      return;
+      return 'blocked';
     }
 
     // Permission must be requested directly from the user gesture; doing
@@ -111,11 +111,15 @@ export function usePSSAlert(
     if (permission === 'default') {
       permission = await Notification.requestPermission();
     }
-
     if (permission !== 'granted') {
       console.warn('[PSS] Notification permission not granted:', permission);
-      return;
+      return 'blocked';
     }
+
+    // Chrome (and most browsers) silently drop notifications for the
+    // currently focused tab. Detect that so the UI can prompt the user
+    // to switch tabs to actually see it.
+    const isFocused = document.hasFocus();
 
     try {
       const n = new Notification('GCP PRO — Test Alert', {
@@ -124,9 +128,10 @@ export function usePSSAlert(
       });
       n.onclick = () => { window.focus(); n.close(); };
       setTimeout(() => n.close(), 8_000);
-      console.log('[PSS] Test notification fired');
+      console.log('[PSS] Test notification fired (tab focused:', isFocused, ')');
     } catch (e) {
       console.error('[PSS] Notification error:', e);
+      return 'blocked';
     }
 
     const sample: Pattern = {
@@ -140,6 +145,8 @@ export function usePSSAlert(
       strength: 0.82,
     };
     onAlert?.(sample);
+
+    return isFocused ? 'focused' : 'sent';
   }, [onAlert]);
 
   return { testAlert };

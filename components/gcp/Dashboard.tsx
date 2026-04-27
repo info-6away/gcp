@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
@@ -329,6 +329,17 @@ export default function Dashboard({
   gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
+
+  const [nextRefresh, setNextRefresh] = useState(180);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNextRefresh(s => (s <= 1 ? 180 : s - 1));
+    }, 1_000);
+    return () => clearInterval(id);
+  }, []);
+  const refreshLabel = nextRefresh >= 60
+    ? `${Math.floor(nextRefresh / 60)}m ${String(nextRefresh % 60).padStart(2, '0')}s`
+    : `${nextRefresh}s`;
   const latestPattern = patterns[patterns.length - 1] ?? null;
 
   // For the sparkline / 24m delta we want the last 15 minute-resolution points.
@@ -366,7 +377,10 @@ export default function Dashboard({
             <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)' }} />
             GLOBAL EVENTS FEED · Reuters · AP · BBC
             <span style={{ marginLeft: 'auto', color: 'var(--fg-4)' }}>
-              tagged by GCP regime at publish time · updates every 3min
+              tagged by GCP regime at publish time · next refresh{' '}
+              <span style={{ color: 'var(--fg-2)', fontFamily: 'var(--font-mono)' }}>
+                {refreshLabel}
+              </span>
             </span>
           </div>
 

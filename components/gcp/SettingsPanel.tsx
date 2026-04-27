@@ -17,7 +17,7 @@ interface SettingsPanelProps {
   timeframe:        Timeframe;
   seriesLength:     number;
   historicalPoints: number;
-  onTestAlert:      () => void | Promise<void>;
+  onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
 
 const PREFS_LS_KEY = 'gcpro-settings';
@@ -130,7 +130,7 @@ function ToggleRow({
 
 export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
-  const [testFired, setTestFired] = useState(false);
+  const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
 
   useEffect(() => {
     setPrefs(loadPrefs());
@@ -204,36 +204,65 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             onChange={v => setPref('pssAlerts', v)}
           />
           {prefs.pssAlerts && (
-            <div style={{
-              display: 'flex', justifyContent: 'space-between',
-              alignItems: 'center', padding: '8px 0',
-              borderBottom: '1px solid var(--line-0)',
-            }}>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Test notification</div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
-                  Sends a sample alert to verify permissions are set
+            <div style={{ borderBottom: '1px solid var(--line-0)', padding: '8px 0' }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Test notification</div>
+                  <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                    Sends a sample alert to verify permissions are set
+                  </div>
                 </div>
+                <button
+                  onClick={async () => {
+                    const result = await props.onTestAlert();
+                    setNotifStatus(result);
+                    setTimeout(() => setNotifStatus('idle'), 5_000);
+                  }}
+                  style={{
+                    padding: '4px 12px', fontSize: 9, letterSpacing: '0.08em',
+                    fontFamily: 'var(--font-mono)',
+                    background:
+                      notifStatus === 'sent'    ? 'rgba(34,197,94,0.12)' :
+                      notifStatus === 'focused' ? 'rgba(212,160,40,0.14)' :
+                      notifStatus === 'blocked' ? 'rgba(226,75,74,0.14)' :
+                      'transparent',
+                    border: `1px solid ${
+                      notifStatus === 'sent'    ? 'var(--green)' :
+                      notifStatus === 'focused' ? '#d4a028'      :
+                      notifStatus === 'blocked' ? 'var(--red)'   :
+                      'var(--line-2)'
+                    }`,
+                    borderRadius: 2,
+                    color:
+                      notifStatus === 'sent'    ? 'var(--green)' :
+                      notifStatus === 'focused' ? '#d4a028'      :
+                      notifStatus === 'blocked' ? 'var(--red)'   :
+                      'var(--fg-2)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {notifStatus === 'sent'    ? 'SENT ✓'      :
+                   notifStatus === 'focused' ? 'SWITCH TAB →' :
+                   notifStatus === 'blocked' ? 'BLOCKED ✗'    :
+                   'SEND TEST'}
+                </button>
               </div>
-              <button
-                onClick={async () => {
-                  await props.onTestAlert();
-                  setTestFired(true);
-                  setTimeout(() => setTestFired(false), 3_000);
-                }}
-                style={{
-                  padding: '4px 12px', fontSize: 9, letterSpacing: '0.08em',
-                  fontFamily: 'var(--font-mono)',
-                  background: testFired ? 'rgba(34,197,94,0.12)' : 'transparent',
-                  border: `1px solid ${testFired ? 'var(--green)' : 'var(--line-2)'}`,
-                  borderRadius: 2,
-                  color: testFired ? 'var(--green)' : 'var(--fg-2)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {testFired ? 'SENT ✓' : 'SEND TEST'}
-              </button>
+              {notifStatus === 'focused' && (
+                <div style={{ fontSize: 9, color: '#d4a028', marginTop: 6, lineHeight: 1.5 }}>
+                  Browsers hide notifications when this tab is the active one.
+                  Switch to another window or tab to see the alert pop up.
+                </div>
+              )}
+              {notifStatus === 'blocked' && (
+                <div style={{ fontSize: 9, color: 'var(--red)', marginTop: 6, lineHeight: 1.5 }}>
+                  Notifications blocked. Enable them in your browser&rsquo;s site permissions
+                  for this URL and try again.
+                </div>
+              )}
             </div>
           )}
         </Section>

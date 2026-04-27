@@ -287,6 +287,54 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
     }
   }
 
+  // Compression Release: any sustained A/B base that is followed within
+  // a few bars by a C bar (i.e. the coil starts to release upward).
+  // Loose by design — the analytical signal is "compression ended in C".
+  const CR_LOOKAHEAD = scale(5, 2);
+  for (const [a, b] of compressions) {
+    if (b + 1 >= regs.length) continue;
+    let cIdx = -1;
+    for (let j = b + 1; j < Math.min(b + 1 + CR_LOOKAHEAD, regs.length); j++) {
+      if (regs[j] === 'C') { cIdx = j; break; }
+    }
+    if (cIdx < 0) continue;
+    const baseLen = b - a + 1;
+    const tail    = Math.min(scale(3, 1), regs.length - 1 - cIdx);
+    const strength = Math.min(0.9, 0.6 + (baseLen / Math.max(1, 400 / barsPerMinute)) * 0.3);
+    patterns.push({
+      id:    `cr-${a}`,
+      kind:  'Compression Release',
+      start: a,
+      end:   cIdx + tail,
+      tStart: 0, tEnd: 0,
+      glyph: 'AB# → C',
+      strength,
+    });
+  }
+
+  // Ignition Drift: long A/B run that's predominantly B (>=70%) and never
+  // escapes to C/D/E/F. Skips runs that already match a Compression Coil
+  // (>= MIN_COMPRESSION) — those are coils, not drifts.
+  const ID_MIN     = scale(40, 4);
+  const abRuns     = runs(r => r === 'A' || r === 'B');
+  for (const [a, b] of abRuns) {
+    const len = b - a + 1;
+    if (len < ID_MIN || len >= MIN_COMPRESSION) continue;
+    let bCount = 0;
+    for (let k = a; k <= b; k++) if (regs[k] === 'B') bCount++;
+    if (bCount / len < 0.7) continue;
+    const strength = Math.min(0.75, 0.45 + (len / Math.max(1, 200 / barsPerMinute)) * 0.3);
+    patterns.push({
+      id:    `id-${a}`,
+      kind:  'Ignition Drift',
+      start: a,
+      end:   b,
+      tStart: 0, tEnd: 0,
+      glyph: 'B ↔ B',
+      strength,
+    });
+  }
+
   patterns.sort((a, b) => a.start - b.start);
 
   // Stamp absolute timestamps from the series so callers can fetch price
@@ -294,11 +342,12 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
   // around. Clamp end to the last valid index — some patterns extend a few
   // bars past the detected region and may overflow the series.
   const lastIdx = series.length - 1;
+  const fallbackT = lastIdx >= 0 ? series[lastIdx]?.t ?? Date.now() : Date.now();
   for (const p of patterns) {
     const sIdx = Math.max(0, Math.min(p.start, lastIdx));
     const eIdx = Math.max(0, Math.min(p.end,   lastIdx));
-    p.tStart = series[sIdx]?.t ?? 0;
-    p.tEnd   = series[eIdx]?.t ?? 0;
+    p.tStart = series[sIdx]?.t ?? fallbackT;
+    p.tEnd   = series[eIdx]?.t ?? fallbackT;
   }
 
   return patterns;
