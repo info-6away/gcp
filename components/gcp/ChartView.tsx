@@ -166,12 +166,23 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   const chartGCPSeries = useMemo(() => {
     if (!series.length) return [];
     const sorted = [...series].sort((a, b) => a.t - b.t);
-    // Aim for visual density similar to the candle pane (~500 candles at
-    // 5 m). With 164 k historical points + 1.4 k live, downsampling to 800
-    // keeps the historical section from looking like a filled histogram
-    // while leaving live density essentially intact.
-    return sorted.length > 1000 ? lttbDownsample(sorted, 800) : sorted;
-  }, [series]);
+
+    // Window GCP to roughly the same time span the candles cover, anchored
+    // to the latest GCP point we have. Without this, 4 months of historical
+    // 1-minute GCP gets compressed into a tiny x-range next to ~24h of
+    // candles, and the high-frequency NV oscillation paints the historical
+    // section as a near-solid filled block. Falls back to 48h if candles
+    // haven't loaded yet.
+    const lastT = sorted[sorted.length - 1].t;
+    const candleSpan = displayCandles.length >= 2
+      ? displayCandles[displayCandles.length - 1].t - displayCandles[0].t
+      : 0;
+    const span    = candleSpan > 0 ? candleSpan : 48 * 3_600_000;
+    const cutoff  = lastT - span;
+    const windowed = sorted.filter(p => p.t >= cutoff);
+
+    return windowed.length > 1000 ? lttbDownsample(windowed, 800) : windowed;
+  }, [series, displayCandles]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {
