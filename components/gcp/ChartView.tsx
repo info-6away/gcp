@@ -19,9 +19,7 @@ import {
 } from 'lightweight-charts';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import { lttbDownsample, detectPatterns } from '@/lib/gcp-data';
-
-const TD_BASE = 'https://api.twelvedata.com';
-const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
+import { tdTimeSeries } from '@/lib/fetchCandles';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -30,10 +28,6 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
 };
 
 type ChartTF = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
-
-const TD_INTERVALS: Record<ChartTF, string> = {
-  '1m': '1min', '5m': '5min', '15m': '15min', '1h': '1h', '4h': '4h', '1D': '1day',
-};
 
 const INIT_SIZE: Record<ChartTF, number> = {
   '1m': 500, '5m': 500, '15m': 500, '1h': 500, '4h': 300, '1D': 180,
@@ -58,6 +52,11 @@ function toTime(ms: number): Time {
   return Math.floor(ms / 1000) as Time;
 }
 
+// Thin wrapper around the shared tdTimeSeries helper. The lazy-scroll
+// path doesn't want the synthetic weekend / extend-to-now passes that
+// fetchCandlesForWindow applies — backfill candles need to land at their
+// real timestamps so they merge cleanly with the existing buffer. All
+// timezone / ISO parsing concerns live in tdTimeSeries.
 async function fetchCandlesBefore(
   symbol: MarketSymbol,
   tf: ChartTF,
@@ -65,43 +64,8 @@ async function fetchCandlesBefore(
   before?: number,
 ): Promise<Candle[]> {
   const sym = TD_SYMBOLS[symbol];
-  if (!sym || !TD_KEY) throw new Error('No symbol or API key');
-
-  // timezone=UTC: forces Twelve Data to return UTC datetimes for every
-  // symbol. Metals are otherwise localized to the COMEX (NY) timezone
-  // while crypto pairs are already UTC, leaving gold/silver candles
-  // ~5 h shifted from the GCP pane on the shared time axis.
-  let url = `${TD_BASE}/time_series`
-    + `?symbol=${encodeURIComponent(sym)}`
-    + `&interval=${TD_INTERVALS[tf]}`
-    + `&outputsize=${outputsize}`
-    + `&timezone=UTC`
-    + `&apikey=${TD_KEY}`;
-
-  if (before) {
-    const d = new Date(before).toISOString().replace('T', ' ').slice(0, 19);
-    url += `&end_date=${encodeURIComponent(d)}`;
-  }
-
-  const res  = await fetch(url);
-  if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
-  const data = await res.json();
-  if (data.status === 'error') throw new Error(data.message ?? 'TD error');
-
-  const values: { datetime: string; open: string; high: string; low: string; close: string }[] =
-    data.values ?? [];
-  return values
-    .slice()
-    .reverse()
-    .map(v => ({
-      // "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SSZ" for strict ISO
-      // parsing (space-separated + 'Z' is implementation-defined).
-      t: new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
-      o: parseFloat(v.open),
-      h: parseFloat(v.high),
-      l: parseFloat(v.low),
-      c: parseFloat(v.close),
-    }));
+  if (!sym) throw new Error('No symbol');
+  return tdTimeSeries({ symbol: sym, tf, outputsize, endMs: before });
 }
 
 interface ChartViewProps {

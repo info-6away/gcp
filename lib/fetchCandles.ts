@@ -83,49 +83,63 @@ interface RawValue {
   close:    string;
 }
 
-// Fetch up to `outputsize` candles ending at `endMs` (Unix ms).
-// `symbol` is a Twelve Data slash-form ticker (e.g. 'XAU/USD').
-export async function fetchCandlesForWindow(
-  symbol:     string,
-  tf:         string,
-  outputsize: number,
-  endMs:      number,
-): Promise<Candle[]> {
+// Single source of truth for Twelve Data /time_series requests. Centralises
+// the two things that have already broken alignment once: the timezone=UTC
+// query param (without it metals localize to NY exchange time) and the ISO
+// 8601 datetime normalization (space + 'Z' is implementation-defined; T + Z
+// parses as UTC on every engine). Any new candle fetch site should call
+// through here.
+export async function tdTimeSeries(opts: {
+  symbol:     string;
+  tf:         string;
+  outputsize: number;
+  endMs?:     number;
+  signal?:    AbortSignal;
+}): Promise<Candle[]> {
   if (!TD_KEY) throw new Error('No Twelve Data API key configured');
 
-  const interval = TD_INTERVALS[tf] ?? '15min';
-  const endDate  = new Date(endMs).toISOString().replace('T', ' ').slice(0, 19);
+  const interval = TD_INTERVALS[opts.tf] ?? '15min';
+  const params: string[] = [
+    `symbol=${encodeURIComponent(opts.symbol)}`,
+    `interval=${interval}`,
+    `outputsize=${opts.outputsize}`,
+    `timezone=UTC`,
+    `apikey=${TD_KEY}`,
+  ];
+  if (opts.endMs != null) {
+    const endDate = new Date(opts.endMs).toISOString().replace('T', ' ').slice(0, 19);
+    params.push(`end_date=${encodeURIComponent(endDate)}`);
+  }
+  const url = `${TD_BASE}/time_series?${params.join('&')}`;
 
-  // timezone=UTC forces Twelve Data to return UTC datetimes for every
-  // symbol. Without it, metals (XAU/USD, XAG/USD) are localized to the
-  // COMEX exchange timezone (America/New_York) while crypto pairs are
-  // already UTC -- which made gold candles render ~5 h shifted from the
-  // GCP pane. Pair with the parser below using `T` + `Z` for strict ISO.
-  const url = `${TD_BASE}/time_series`
-    + `?symbol=${encodeURIComponent(symbol)}`
-    + `&interval=${interval}`
-    + `&outputsize=${outputsize}`
-    + `&end_date=${encodeURIComponent(endDate)}`
-    + `&timezone=UTC`
-    + `&apikey=${TD_KEY}`;
-
-  const res  = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  const res  = await fetch(url, { signal: opts.signal });
   if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
   const data = await res.json();
   if (data.status === 'error') throw new Error(data.message ?? 'TD error');
 
   const values: RawValue[] = data.values ?? [];
-  const candles: Candle[] = values.slice().reverse().map(v => ({
-    // "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DDTHH:MM:SSZ" so every JS engine
-    // parses it as UTC. Just appending 'Z' to the space-separated form is
-    // implementation-defined and silently slips back to local time on
-    // some engines.
+  return values.slice().reverse().map(v => ({
     t: new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
     o: parseFloat(v.open),
     h: parseFloat(v.high),
     l: parseFloat(v.low),
     c: parseFloat(v.close),
   }));
+}
+
+// Fetch up to `outputsize` candles ending at `endMs` (Unix ms). Adds the
+// non-BTC weekend / overnight / extend-to-now synthetic bar passes so the
+// time axis stays continuous when gold/silver markets are closed.
+export async function fetchCandlesForWindow(
+  symbol:     string,
+  tf:         string,
+  outputsize: number,
+  endMs:      number,
+): Promise<Candle[]> {
+  const candles = await tdTimeSeries({
+    symbol, tf, outputsize, endMs,
+    signal: AbortSignal.timeout(8_000),
+  });
 
   const tfMs = TF_MS[tf] ?? 0;
   if (tfMs > 0 && shouldFillGaps(symbol)) {
