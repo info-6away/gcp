@@ -156,25 +156,35 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return () => window.removeEventListener('keydown', onKey);
   }, [ctxMenu]);
 
-  const chartGCPSeries = useMemo(() => {
-    // Don't compute while candles are loading or empty — pushing a full
-    // unfiltered slice into Lightweight Charts during a symbol switch
-    // briefly renders the GCP series with the wrong scale and confuses
-    // the time axis.
-    if (isLoading || !candles.length || !series.length) return [];
+  // Common time window where both candles AND GCP have data. Clipping both
+  // panes to this intersection keeps the two visually in sync — otherwise
+  // whichever series extends further (e.g. fresh candles while live GCP is
+  // rate-limited, or live GCP arriving while gold is in a weekend close)
+  // renders past the other on the shared time axis.
+  const syncWindow = useMemo<{ start: number; end: number } | null>(() => {
+    if (isLoading || !candles.length || !series.length) return null;
+    const cStart = candles[0].t;
+    const cEnd   = candles[candles.length - 1].t;
+    const sStart = series[0].t;
+    const sEnd   = series[series.length - 1].t;
+    const start = Math.max(cStart, sStart);
+    const end   = Math.min(cEnd,   sEnd);
+    if (end <= start) return null;
+    return { start, end };
+  }, [candles, series, isLoading]);
 
-    const earliest = candles[0].t;
-    const latest   = candles[candles.length - 1].t;
-    const buffer   = (latest - earliest) * 0.05;
-    // Both bounds matter. With only a lower bound, GCP points newer than the
-    // last candle (e.g. live morning data while gold is in a weekend close)
-    // get rendered to the right of the candles on the same time axis, since
-    // LW Charts strips the date and shows the two ranges as adjacent.
+  const displayCandles = useMemo<Candle[]>(() => {
+    if (!syncWindow) return [];
+    return candles.filter(c => c.t >= syncWindow.start && c.t <= syncWindow.end);
+  }, [candles, syncWindow]);
+
+  const chartGCPSeries = useMemo(() => {
+    if (!syncWindow) return [];
     const filtered = series
-      .filter(p => p.t >= earliest - buffer && p.t <= latest + buffer)
+      .filter(p => p.t >= syncWindow.start && p.t <= syncWindow.end)
       .sort((a, b) => a.t - b.t);
     return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
-  }, [series, candles, isLoading]);
+  }, [series, syncWindow]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {
@@ -343,9 +353,9 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
   useEffect(() => {
     if (!chartReady) return;
     const cs = candleSeriesRef.current;
-    if (!cs || !candles.length) return;
+    if (!cs || !displayCandles.length) return;
 
-    const data: CandlestickData[] = candles
+    const data: CandlestickData[] = displayCandles
       .slice()
       .sort((a, b) => a.t - b.t)
       .map(c => ({
@@ -365,7 +375,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       });
       isInitRef.current = false;
     }
-  }, [chartReady, candles]);
+  }, [chartReady, displayCandles]);
 
   // ── Initial candle fetch + reset on symbol/TF change ───────────────────────
   useEffect(() => {
@@ -521,8 +531,8 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     // Candle-pane markers: snap to nearest candle timestamp so markers
     // appear at every TF (LW Charts drops markers whose time doesn't
     // match a series data point exactly).
-    if (cs && candles.length) {
-      const candleSecs = candles.map(c => Math.floor(c.t / 1000));
+    if (cs && displayCandles.length) {
+      const candleSecs = displayCandles.map(c => Math.floor(c.t / 1000));
       const snapToCandle = (tsMs: number): number => {
         const tsSec = Math.floor(tsMs / 1000);
         let best     = candleSecs[0];
@@ -548,7 +558,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       if (candleMarkersRef.current) candleMarkersRef.current.setMarkers(candleMarkers);
       else                          candleMarkersRef.current = createSeriesMarkers<Time>(cs, candleMarkers);
     }
-  }, [chartPatterns, chartGCPSeries, candles]);
+  }, [chartPatterns, chartGCPSeries, displayCandles]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
