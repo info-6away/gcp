@@ -32,7 +32,6 @@ export interface GCPDataState {
 }
 
 async function gcpFetch(endpoint: string): Promise<unknown | null> {
-  console.log('[GCP] fetch ->', endpoint);
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
@@ -44,37 +43,14 @@ async function gcpFetch(endpoint: string): Promise<unknown | null> {
     console.warn('[GCP] 429 rate limited, returning null');
     return null;
   }
-
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);
-  console.log('[GCP] fetch ok', res.status, 'content-type:', res.headers.get('content-type'));
 
-  // Read raw text first so we can log it; only then parse JSON. response.json()
-  // consumes the body and we can't read it twice without cloning.
-  const raw = await res.text();
-  console.log('[GCP] raw response (first 800 chars):', raw.slice(0, 800));
-  console.log('[GCP] raw response length:', raw.length);
-
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    return await res.json();
   } catch (e) {
-    console.warn('[GCP] JSON.parse failed:', e);
+    console.warn('[GCP] JSON parse failed:', e);
     return null;
   }
-
-  if (parsed && typeof parsed === 'object') {
-    console.log('[GCP] response keys:', Object.keys(parsed as Record<string, unknown>));
-    const aggs = (parsed as { aggregates?: unknown }).aggregates;
-    if (Array.isArray(aggs)) {
-      console.log('[GCP] aggregates is array, length:', aggs.length, 'first:', aggs[0]);
-    } else {
-      console.log('[GCP] aggregates type:', typeof aggs, 'value:', aggs);
-    }
-  } else {
-    console.log('[GCP] parsed is not an object:', parsed);
-  }
-
-  return parsed;
 }
 
 async function loadHistoricalSeries(): Promise<DataPoint[]> {
@@ -102,26 +78,13 @@ function livePointsToSeries(points: GCPPoint[], startIndex: number): DataPoint[]
 }
 
 function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
-  console.log(
-    '[GCP] mergeSeries:',
-    'hist.length:', historical.length,
-    'hist.last.t:', historical.length ? new Date(historical[historical.length - 1].t).toISOString() : null,
-    'live.length:', live.length,
-    'live.first.t:', live.length ? new Date(live[0].t).toISOString() : null,
-    'live.last.t:',  live.length ? new Date(live[live.length - 1].t).toISOString() : null,
-  );
   if (!live.length) return historical;
   const liveStart = live[0].t;
   const base = historical.filter(p => p.t < liveStart);
   const liveDP = livePointsToSeries(live, base.length);
-  const merged = [...base, ...liveDP]
+  return [...base, ...liveDP]
     .sort((a, b) => a.t - b.t)
     .map((p, i) => ({ ...p, i }));
-  console.log(
-    '[GCP] mergeSeries: merged.length:', merged.length,
-    'merged.last.t:', merged.length ? new Date(merged[merged.length - 1].t).toISOString() : null,
-  );
-  return merged;
 }
 
 function median(arr: number[]): number {
@@ -215,40 +178,26 @@ async function _loadHistoricalOnce(): Promise<void> {
 }
 
 async function _runFetchSeries(): Promise<void> {
-  console.log('[GCP] _runFetchSeries: enter');
-  if (_fetchingSeries) {
-    console.log('[GCP] _runFetchSeries: skip, already fetching');
-    return;
-  }
-  if (Date.now() - _lastSeriesFetch < MIN_FETCH_GAP && _lastSeriesFetch !== 0) {
-    console.log('[GCP] _runFetchSeries: skip, MIN_FETCH_GAP');
-    return;
-  }
+  if (_fetchingSeries) return;
+  if (Date.now() - _lastSeriesFetch < MIN_FETCH_GAP && _lastSeriesFetch !== 0) return;
   _fetchingSeries = true;
   try {
     const data = await gcpFetch('/api/getNetVarAggregate24H') as
       | { aggregates?: RawAggregate[] }
       | null;
     if (!data) {
-      console.log('[GCP] _runFetchSeries: data null, setting gcpLoading=false');
       _setState(s => ({ ...s, gcpLoading: false }));
       return;
     }
     _lastSeriesFetch = Date.now();
 
     const aggregates: RawAggregate[] = data.aggregates ?? [];
-    console.log('[GCP] _runFetchSeries: aggregates.length =', aggregates.length);
     if (!aggregates.length) throw new Error('Empty aggregates');
 
     const points: GCPPoint[] = aggregates.map(pt => {
       const v = parseFloat(String(pt.netvar_aggregate));
       return { t: pt.end_epoch * 1000, v: +v.toFixed(1), r: regimeFor(v) };
     });
-    console.log(
-      '[GCP] _runFetchSeries: live points',
-      'first.t:', new Date(points[0].t).toISOString(),
-      'last.t:',  new Date(points[points.length - 1].t).toISOString(),
-    );
 
     _livePoints = points;
 
@@ -264,7 +213,6 @@ async function _runFetchSeries(): Promise<void> {
     const last   = points[points.length - 1];
 
     setTimeout(() => {
-      console.log('[GCP] _runFetchSeries: broadcasting merged series, length:', merged.length);
       _setState(s => ({
         ...s,
         series:      merged,
@@ -278,7 +226,7 @@ async function _runFetchSeries(): Promise<void> {
       }));
     }, 0);
   } catch (e) {
-    console.warn('[GCP] _runFetchSeries: error', e);
+    console.warn('[GCP] _runFetchSeries error:', e);
     _setState(s => ({
       ...s,
       gcpLoading: false,
@@ -287,33 +235,24 @@ async function _runFetchSeries(): Promise<void> {
     }));
   } finally {
     _fetchingSeries = false;
-    console.log('[GCP] _runFetchSeries: exit');
   }
 }
 
 function _ensurePolling(): void {
-  if (_pollLoopPromise) {
-    console.log('[GCP] _ensurePolling: lock held, skip');
-    return;
-  }
-  console.log('[GCP] _ensurePolling: starting poll loop');
+  if (_pollLoopPromise) return;
   _pollLoopPromise = (async () => {
     // try/finally guarantees the lock clears no matter how the loop exits
     // (uncaught throw, listeners drain, etc.). Without this, a single
     // unhandled rejection could deadlock _ensurePolling forever.
     try {
       await new Promise(r => setTimeout(r, 3_000));
-      let iter = 0;
       while (_listeners.size > 0) {
-        iter++;
-        console.log('[GCP] poll iter', iter, 'listeners:', _listeners.size);
         try { await _runFetchSeries(); }
         catch (e) { console.warn('[GCP] poll iter threw:', e); }
         if (_listeners.size === 0) break;
         await new Promise(r => setTimeout(r, 120_000));
       }
     } finally {
-      console.log('[GCP] poll loop exiting, clearing lock');
       _pollLoopPromise = null;
     }
   })();
