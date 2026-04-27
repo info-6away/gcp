@@ -52,7 +52,7 @@ const C = {
   redCdl:  '#ef4444',
 };
 
-interface Candle { t: number; o: number; h: number; l: number; c: number; }
+interface Candle { t: number; o: number; h: number; l: number; c: number; synthetic?: boolean; }
 
 function toTime(ms: number): Time {
   return Math.floor(ms / 1000) as Time;
@@ -378,16 +378,36 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     const cs = candleSeriesRef.current;
     if (!cs || !displayCandles.length) return;
 
-    const data: CandlestickData[] = displayCandles
-      .slice()
-      .sort((a, b) => a.t - b.t)
-      .map(c => ({
+    const sortedCandles = displayCandles.slice().sort((a, b) => a.t - b.t);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(
+        '[ChartView] first 5 candle bars (synthetic flag check):',
+        sortedCandles.slice(0, 5).map(c => ({ t: c.t, synthetic: c.synthetic })),
+      );
+    }
+
+    const data: CandlestickData[] = sortedCandles.map(c => {
+      const base = {
         time:  toTime(c.t),
         open:  c.o,
         high:  c.h,
         low:   c.l,
         close: c.c,
-      }));
+      };
+      // Strict synthetic check: only apply transparent override when the
+      // flag is explicitly true. Real candles (synthetic absent/undefined)
+      // fall through with no per-bar color and inherit the series defaults.
+      if (c.synthetic === true) {
+        return {
+          ...base,
+          color:       'rgba(0,0,0,0)',
+          wickColor:   'rgba(0,0,0,0)',
+          borderColor: 'rgba(0,0,0,0)',
+        };
+      }
+      return base;
+    });
 
     try { cs.setData(data); } catch { /* time ordering harmless */ }
 

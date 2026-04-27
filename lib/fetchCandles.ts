@@ -21,6 +21,7 @@ export interface Candle {
   h: number;
   l: number;
   c: number;
+  synthetic?: boolean;
 }
 
 // BTC trades 24/7 so its candles never have weekend/session gaps. Gold/silver
@@ -44,7 +45,7 @@ function fillWeekendGaps(candles: Candle[], tfMs: number): Candle[] {
     if (gap > 2 * tfMs) {
       const flat = prev.c;
       for (let t = prev.t + tfMs; t < curr.t; t += tfMs) {
-        out.push({ t, o: flat, h: flat, l: flat, c: flat });
+        out.push({ t, o: flat, h: flat, l: flat, c: flat, synthetic: true });
       }
     }
     out.push(curr);
@@ -68,7 +69,7 @@ function extendToNow(candles: Candle[], tfMs: number): Candle[] {
   let added  = 0;
   const MAX  = 500;
   for (let t = last.t + tfMs; t <= nowSlot && added < MAX; t += tfMs) {
-    out.push({ t, o: flat, h: flat, l: flat, c: flat });
+    out.push({ t, o: flat, h: flat, l: flat, c: flat, synthetic: true });
     added++;
   }
   return out;
