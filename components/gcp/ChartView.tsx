@@ -156,25 +156,19 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     return () => window.removeEventListener('keydown', onKey);
   }, [ctxMenu]);
 
-  // Candles always render in full — never clip them, so if live GCP is
-  // missing the user still sees price action.
+  // No clipping. LW Charts shares a time axis between panes but renders
+  // each series at its own timestamps; if one ends before the other, the
+  // shorter pane simply stops where its data does. Past attempts to clip
+  // either side either blanked the whole chart (intersection clip with no
+  // overlap) or lost recent candles (clipping price to GCP). The honest
+  // representation is the right one.
   const displayCandles = candles;
 
-  // GCP is clipped to the candle window. With both bounds in place, GCP
-  // points outside the candle range can't be rendered to the side of the
-  // candles on the shared time axis. If the GCP series and candles don't
-  // overlap at all, chartGCPSeries is empty and the pane is just blank —
-  // preferable to showing stale data shifted hours away from the candles.
   const chartGCPSeries = useMemo(() => {
-    if (isLoading || !candles.length || !series.length) return [];
-    const earliest = candles[0].t;
-    const latest   = candles[candles.length - 1].t;
-    const buffer   = (latest - earliest) * 0.05;
-    const filtered = series
-      .filter(p => p.t >= earliest - buffer && p.t <= latest + buffer)
-      .sort((a, b) => a.t - b.t);
-    return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
-  }, [series, candles, isLoading]);
+    if (!series.length) return [];
+    const sorted = [...series].sort((a, b) => a.t - b.t);
+    return sorted.length > 3000 ? lttbDownsample(sorted, 2000) : sorted;
+  }, [series]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {

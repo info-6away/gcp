@@ -274,6 +274,20 @@ export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[
 
   const fruns = runs(r => r === 'F');
   for (const [a, b] of fruns) {
+    // Skip boundary artifacts: a single F-regime point that sits next to a
+    // > 5 minute data gap (e.g. historical/live boundary) is almost always
+    // an interpolation jump, not a real shock event. Real shocks span at
+    // least a couple of bars and have continuous data either side.
+    const prevT = a > 0 ? series[a - 1]?.t : null;
+    const currT = series[a]?.t;
+    const gapBefore = prevT != null && currT != null ? currT - prevT : 0;
+    const isSinglePoint = a === b;
+    if (isSinglePoint && gapBefore > 300_000) continue;
+
+    // Require the F run's actual NV to clear the F threshold. Cheap guard
+    // against detector noise where a regime label disagrees with the value.
+    if (series[a] && series[a].v < 220) continue;
+
     patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER, tStart: 0, tEnd: 0, glyph: 'B → F', strength: 0.95 });
   }
 

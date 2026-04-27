@@ -78,9 +78,24 @@ function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   // Only drop historical points whose timestamps overlap live; no buffer,
   // otherwise we lop off the end of historical and create a visible gap
   // at the boundary when live hasn't loaded yet.
-  const base   = historical.filter(p => p.t < liveStart);
-  const liveDP = livePointsToSeries(live, base.length);
-  return [...base, ...liveDP]
+  const base = historical.filter(p => p.t < liveStart);
+
+  // Bridge gaps > 5 minutes between historical end and live start by
+  // inserting one last-known point a minute before live. Without this,
+  // detectPatterns sees the abrupt regime jump across the gap as a B->F
+  // Shock Jump even when neither side actually crossed into F.
+  const lastHist = base[base.length - 1];
+  const gapFill: DataPoint[] = [];
+  if (lastHist && liveStart - lastHist.t > 300_000) {
+    gapFill.push({
+      ...lastHist,
+      i: base.length,
+      t: liveStart - 60_000,
+    });
+  }
+
+  const liveDP = livePointsToSeries(live, base.length + gapFill.length);
+  return [...base, ...gapFill, ...liveDP]
     .sort((a, b) => a.t - b.t)
     .map((p, i) => ({ ...p, i }));
 }
