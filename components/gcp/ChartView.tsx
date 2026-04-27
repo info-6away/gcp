@@ -166,8 +166,12 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     const earliest = candles[0].t;
     const latest   = candles[candles.length - 1].t;
     const buffer   = (latest - earliest) * 0.05;
+    // Both bounds matter. With only a lower bound, GCP points newer than the
+    // last candle (e.g. live morning data while gold is in a weekend close)
+    // get rendered to the right of the candles on the same time axis, since
+    // LW Charts strips the date and shows the two ranges as adjacent.
     const filtered = series
-      .filter(p => p.t >= earliest - buffer)
+      .filter(p => p.t >= earliest - buffer && p.t <= latest + buffer)
       .sort((a, b) => a.t - b.t);
     return filtered.length > 3000 ? lttbDownsample(filtered, 2000) : filtered;
   }, [series, candles, isLoading]);
