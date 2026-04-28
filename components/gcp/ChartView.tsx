@@ -722,20 +722,24 @@ export default function ChartView({
         const closest = chartGCPSeries.reduce((best, pt) =>
           Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
         );
+        const isSelected = selectedPattern?.id === p.id;
         return {
           time:     toTime(closest.t),
           position: 'aboveBar' as const,
-          color:    MARKER_COLORS[p.kind] ?? C.text,
-          shape:    'circle' as const,
+          // Selected marker: cyan-tinted color override + bumped size +
+          // arrowDown shape so it stands out from the other circles. Other
+          // markers stay at their category color and circle size 1.
+          color:    isSelected ? C.cyan : (MARKER_COLORS[p.kind] ?? C.text),
+          shape:    isSelected ? ('arrowDown' as const) : ('circle' as const),
           text:     p.patternCode ?? p.kind.split(' ').map(w => w[0]).join(''),
-          size:     1,
+          size:     isSelected ? 2 : 1,
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
 
     if (markersRef.current) markersRef.current.setMarkers(gcpMarkers);
     else                    markersRef.current = createSeriesMarkers<Time>(gcpLine, gcpMarkers);
-  }, [chartPatterns, chartGCPSeries]);
+  }, [chartPatterns, chartGCPSeries, selectedPattern]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -804,9 +808,10 @@ export default function ChartView({
 
       </div>
 
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
       <div
         ref={containerRef}
-        style={{ flex: 1, minHeight: 0, position: 'relative' }}
+        style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}
         onMouseLeave={() => setGcpTooltip(null)}
         onContextMenu={e => {
           e.preventDefault();
@@ -864,125 +869,6 @@ export default function ChartView({
               )
             )}
           </>
-        )}
-
-        {/* Pattern explanation panel. Top-right of the chart container,
-            close via X or Esc. Shows the structured Pattern fields
-            populated by enrich() in v11.3. */}
-        {selectedPattern && (
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top:    8, right: 8,
-              width:  280,
-              maxHeight: '90%',
-              overflowY: 'auto',
-              background: 'var(--bg-2)',
-              border: `1px solid ${C.cyan}`,
-              borderRadius: 4,
-              padding: '10px 12px 12px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-              boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
-              zIndex: 12,
-            }}
-          >
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-              marginBottom: 8,
-            }}>
-              <div>
-                <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)' }}>
-                  PATTERN DETECTED
-                </div>
-                <div style={{
-                  fontSize: 13, color: C.cyan, fontWeight: 600,
-                  letterSpacing: '0.02em', marginTop: 2,
-                }}>
-                  {selectedPattern.patternCode ?? ''} · {selectedPattern.patternName ?? selectedPattern.kind}
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedPattern(null)}
-                style={{
-                  width: 18, height: 18, padding: 0,
-                  background: 'transparent', border: '1px solid var(--line-2)',
-                  color: 'var(--fg-3)', cursor: 'pointer',
-                  fontSize: 10, lineHeight: 1, borderRadius: 2,
-                }}
-                title="Close (Esc)"
-              >×</button>
-            </div>
-
-            <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
-              marginBottom: 8,
-            }}>
-              <div>
-                <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>REGIME</div>
-                <div style={{ fontSize: 11, color: 'var(--fg-1)', marginTop: 2 }}>
-                  {selectedPattern.regime ?? '?'} · {selectedPattern.regimeName ?? ''}
-                </div>
-                {selectedPattern.persistence && (
-                  <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
-                    Persistence: {selectedPattern.persistence}
-                  </div>
-                )}
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>CONFIDENCE / PSS</div>
-                <div style={{ fontSize: 11, color: '#d4a028', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
-                  {Math.round((selectedPattern.confidence ?? selectedPattern.strength) * 100)}%
-                  <span style={{ color: 'var(--fg-3)' }}> / </span>
-                  {Math.round((selectedPattern.pss ?? 0) * 100)}%
-                </div>
-              </div>
-            </div>
-
-            <div style={{
-              display: 'flex', gap: 10, fontSize: 9, color: 'var(--fg-2)',
-              padding: '6px 0', borderTop: '1px solid var(--line-1)',
-              borderBottom: '1px solid var(--line-1)', marginBottom: 8,
-            }}>
-              <span><span style={{ color: 'var(--fg-3)' }}>slope</span> {selectedPattern.slope ?? '—'}</span>
-              <span><span style={{ color: 'var(--fg-3)' }}>curv</span> {selectedPattern.curvature ?? '—'}</span>
-              <span><span style={{ color: 'var(--fg-3)' }}>ced</span> {selectedPattern.ced?.toFixed(0) ?? '—'}</span>
-            </div>
-
-            <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
-              GOLD INTERPRETATION
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--fg-1)', lineHeight: 1.5, marginBottom: 8 }}>
-              {selectedPattern.goldInterpretation ?? '—'}
-            </div>
-
-            {selectedPattern.invalidators && selectedPattern.invalidators.length > 0 && (
-              <>
-                <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
-                  INVALIDATORS
-                </div>
-                <ul style={{
-                  margin: 0, padding: 0, listStyle: 'none',
-                  fontSize: 9, color: 'var(--fg-2)', lineHeight: 1.5,
-                }}>
-                  {selectedPattern.invalidators.map((s, i) => (
-                    <li key={i} style={{ paddingLeft: 10, position: 'relative' }}>
-                      <span style={{ position: 'absolute', left: 0, color: '#ef4444' }}>·</span>
-                      {s}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            <div style={{
-              fontSize: 8, color: 'var(--fg-4)', marginTop: 8, paddingTop: 6,
-              borderTop: '1px solid var(--line-1)', letterSpacing: '0.06em',
-            }}>
-              Reaction window shaded on candles · Esc to close
-            </div>
-          </div>
         )}
 
         {gcpTooltip && (
@@ -1171,6 +1057,117 @@ export default function ChartView({
             )}
           </div>
         )}
+      </div>
+
+      {/* Side panel: appears next to the chart when a pattern marker is
+          clicked. The chart container shrinks horizontally via its
+          ResizeObserver so both panes stay fully visible. */}
+      {selectedPattern && (
+        <aside style={{
+          width: 300, flexShrink: 0,
+          borderLeft: `1px solid ${C.cyan}`,
+          background: 'var(--bg-2)',
+          padding: '10px 12px 12px',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 10,
+          overflowY: 'auto',
+        }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+            marginBottom: 8,
+          }}>
+            <div>
+              <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)' }}>
+                PATTERN DETECTED
+              </div>
+              <div style={{
+                fontSize: 13, color: C.cyan, fontWeight: 600,
+                letterSpacing: '0.02em', marginTop: 2,
+              }}>
+                {selectedPattern.patternCode ?? ''} · {selectedPattern.patternName ?? selectedPattern.kind}
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedPattern(null)}
+              style={{
+                width: 18, height: 18, padding: 0,
+                background: 'transparent', border: '1px solid var(--line-2)',
+                color: 'var(--fg-3)', cursor: 'pointer',
+                fontSize: 10, lineHeight: 1, borderRadius: 2,
+              }}
+              title="Close (Esc)"
+            >×</button>
+          </div>
+
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+            marginBottom: 8,
+          }}>
+            <div>
+              <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>REGIME</div>
+              <div style={{ fontSize: 11, color: 'var(--fg-1)', marginTop: 2 }}>
+                {selectedPattern.regime ?? '?'} · {selectedPattern.regimeName ?? ''}
+              </div>
+              {selectedPattern.persistence && (
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
+                  Persistence: {selectedPattern.persistence}
+                </div>
+              )}
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>CONFIDENCE / PSS</div>
+              <div style={{ fontSize: 11, color: '#d4a028', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+                {Math.round((selectedPattern.confidence ?? selectedPattern.strength) * 100)}%
+                <span style={{ color: 'var(--fg-3)' }}> / </span>
+                {Math.round((selectedPattern.pss ?? 0) * 100)}%
+              </div>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'flex', gap: 10, fontSize: 9, color: 'var(--fg-2)',
+            padding: '6px 0', borderTop: '1px solid var(--line-1)',
+            borderBottom: '1px solid var(--line-1)', marginBottom: 8,
+          }}>
+            <span><span style={{ color: 'var(--fg-3)' }}>slope</span> {selectedPattern.slope ?? '—'}</span>
+            <span><span style={{ color: 'var(--fg-3)' }}>curv</span> {selectedPattern.curvature ?? '—'}</span>
+            <span><span style={{ color: 'var(--fg-3)' }}>ced</span> {selectedPattern.ced?.toFixed(0) ?? '—'}</span>
+          </div>
+
+          <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
+            GOLD INTERPRETATION
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--fg-1)', lineHeight: 1.5, marginBottom: 8 }}>
+            {selectedPattern.goldInterpretation ?? '—'}
+          </div>
+
+          {selectedPattern.invalidators && selectedPattern.invalidators.length > 0 && (
+            <>
+              <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
+                INVALIDATORS
+              </div>
+              <ul style={{
+                margin: 0, padding: 0, listStyle: 'none',
+                fontSize: 9, color: 'var(--fg-2)', lineHeight: 1.5,
+              }}>
+                {selectedPattern.invalidators.map((s, i) => (
+                  <li key={i} style={{ paddingLeft: 10, position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: 0, color: '#ef4444' }}>·</span>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <div style={{
+            fontSize: 8, color: 'var(--fg-4)', marginTop: 8, paddingTop: 6,
+            borderTop: '1px solid var(--line-1)', letterSpacing: '0.06em',
+          }}>
+            Reaction window shaded on candles · Esc to close
+          </div>
+        </aside>
+      )}
       </div>
     </div>
   );
