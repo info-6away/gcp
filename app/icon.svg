@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-32 -32 64 64" width="64" height="64">
+  <!-- Self-contained dark backdrop so the mark is visible on light
+       browser tab/favorites bars as well as dark ones. -->
+  <circle r="31" fill="#07080a"/>
+  <circle r="26" fill="none" stroke="#4dd9e8" stroke-width="0.8" stroke-dasharray="1.8 3.2" opacity="0.7"/>
+  <circle r="18" fill="none" stroke="#4dd9e8" stroke-width="1.2"/>
+  <!-- Coherence waveform spiking up to the amber marker -->
+  <path d="M -22 0 Q -16 0 -10 0 T -5 -1 Q -2 -3 0 -22 Q 2 -3 5 -1 T 10 0 T 22 0"
+        fill="none" stroke="#4dd9e8" stroke-width="1.8"/>
+  <circle cx="0" cy="-22" r="2.4" fill="#d4a028"/>
+  <circle r="2.0" fill="#4dd9e8"/>
+</svg>
