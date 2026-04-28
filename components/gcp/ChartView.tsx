@@ -166,7 +166,13 @@ export default function ChartView({
     if (!chart) return;
     const ts0 = chart.timeScale();
 
-    const startSec = Math.floor(selectedPattern.tEnd / 1000);
+    // Anchor at the pattern's tStart (the timestamp the marker is drawn
+    // at), not tEnd. The marker effect places each marker at the GCP
+    // point closest to tStart, so the +15/+30/+60 lines should fan out
+    // from that same x position. Using tEnd put the band at the END of
+    // the pattern's window, which can be hours past the marker for
+    // long-running patterns.
+    const startSec = Math.floor(selectedPattern.tStart / 1000);
     const update = () => {
       const px = (sec: number): number | null => {
         const c = ts0.timeToCoordinate(sec as Time);
@@ -1163,8 +1169,18 @@ export default function ChartView({
           <div style={{
             fontSize: 8, color: 'var(--fg-4)', marginTop: 8, paddingTop: 6,
             borderTop: '1px solid var(--line-1)', letterSpacing: '0.06em',
+            lineHeight: 1.55,
           }}>
-            Reaction window shaded on candles · Esc to close
+            Reaction window anchored at{' '}
+            <span style={{ color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+              {(() => {
+                const d = new Date(selectedPattern.tStart);
+                const p = (n: number) => String(n).padStart(2, '0');
+                return `${p(d.getHours())}:${p(d.getMinutes())}`;
+              })()}
+            </span>
+            <br />
+            Esc to close
           </div>
         </aside>
       )}
