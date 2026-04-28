@@ -19,6 +19,16 @@ const REGIME_TAG_LABEL: Record<string, string> = {
   D: 'D SYNC',    E: 'E CLIMAX', F: 'F SHOCK',
 };
 
+const PATTERN_ONELINER: Record<string, string> = {
+  'Alignment Ladder':    'Stepwise sync building. Strongest continuation setup.',
+  'Compression Coil':    'Energy coiling in A/B. Watching for release trigger.',
+  'Compression Release': 'Coil released into alignment. Catalyst likely in play.',
+  'Failed Alignment':    'Sync attempt failed. Mean-reversion / fade setup.',
+  'Coherence Volcano':   'Single spike, fast return. Sharp move then reversal.',
+  'Ignition Drift':      'Sustained ignition, no escalation. Slow drift likely.',
+  'Shock Jump':          'Shock jump detected. Extreme volatility — both directions.',
+};
+
 const PATTERN_INTERPRETATIONS: Record<string, string> = {
   'Compression Coil':    'Energy accumulating. Range-building. Expansion likely if PSS > 70.',
   'Alignment Ladder':    'Trend environment forming. Highest continuation probability.',
@@ -417,23 +427,56 @@ export default function Dashboard({
           <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
             PATTERN FEED · {patterns.length} DETECTED
           </div>
-          {patterns.slice().reverse().map((p, i) => (
-            <div key={i} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '5px 0', borderBottom: '1px solid var(--bg-0)', fontSize: 9,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          {patterns.slice().reverse().map((p, i) => {
+            const dotColor   = p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--cyan)';
+            const regime     = regimeOfPattern(p, series) ?? '?';
+            const regimeMeta = REGIME_META[regime];
+            const regimeTag  = REGIME_TAG_LABEL[regime] ?? regime;
+            const time       = p.tStart > 0
+              ? new Date(p.tStart).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+              : '—';
+            return (
+              <div key={i} style={{
+                padding: '8px 0', borderBottom: '1px solid var(--bg-0)', fontSize: 9,
+              }}>
                 <div style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--cyan)',
-                }} />
-                <span style={{ color: 'var(--fg-1)' }}>{p.kind}</span>
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+                      background: dotColor,
+                    }} />
+                    <span style={{
+                      color: 'var(--fg-1)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{p.kind}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                    <span style={{
+                      color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>{time}</span>
+                    {regimeMeta && (
+                      <span style={{
+                        padding: '1px 4px', borderRadius: 2,
+                        fontSize: 7, letterSpacing: '0.08em',
+                        background: regimeMeta.color + '22',
+                        color:      regimeMeta.color,
+                        border:    `1px solid ${regimeMeta.color}44`,
+                      }}>{regimeTag}</span>
+                    )}
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.45,
+                  marginTop: 2, paddingLeft: 10,
+                }}>
+                  {PATTERN_ONELINER[p.kind] ?? '—'}
+                </div>
               </div>
-              <span style={{ color: p.kind === 'Failed Alignment' ? '#d946ef' : 'var(--fg-3)' }}>
-                {pssOf(p)}
-              </span>
-            </div>
-          ))}
+            );
+          })}
           {!patterns.length && (
             <div style={{ fontSize: 9, color: 'var(--fg-4)' }}>No patterns detected</div>
           )}
