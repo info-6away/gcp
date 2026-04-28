@@ -2,7 +2,11 @@ import type {
   RegimeId, RegimeDef, DataPoint, Dataset,
   Pattern, EnergyMetrics, PersistenceInfo,
 } from '@/types/gcp';
-import { windowMetrics } from '@/lib/energy';
+import { windowMetrics, ced } from '@/lib/energy';
+import {
+  PATTERN_CODE, PATTERN_GOLD_INTERP, PATTERN_INVALIDATORS,
+  REGIME_NAME, regimeForValue,
+} from '@/lib/patterns-meta';
 
 export const REGIMES: RegimeDef[] = [
   { id: 'A', name: 'Silence',         min: 0,   max: 50,  color: 'var(--r-a)' },
@@ -357,12 +361,213 @@ export function detectPatterns(
     });
   }
 
+  // ── v11.3 new patterns ───────────────────────────────────────────────────
+
+  // Synchronization Plateau: sustained D regime (140-170) of >= minCOrDHold.
+  // The spec calls this one of the most important patterns -- gold trend
+  // continuation zone.
+  const SP_MIN = scale(_thresholds?.minCOrDHold ?? 10, 2);
+  const dRuns  = runs(r => r === 'D');
+  for (const [a, b] of dRuns) {
+    const len = b - a + 1;
+    if (len < SP_MIN) continue;
+    const strength = Math.min(0.92, 0.6 + (len / Math.max(1, 60 / barsPerMinute)) * 0.3);
+    patterns.push({
+      id: `sp-${a}`, kind: 'Synchronization Plateau',
+      start: a, end: b, tStart: 0, tEnd: 0,
+      glyph: 'C → D# sustained', strength,
+    });
+  }
+
+  // Ignition Rise: AB# base followed by upward push into B but NOT into C.
+  // Half-step of Compression Release; fires when the coil started releasing
+  // but hasn't confirmed alignment yet.
+  const IR_LOOKAHEAD = scale(8, 2);
+  for (const [a, b] of compressions) {
+    if (b + 1 >= regs.length) continue;
+    // Skip if a CR already fires here (CR detector above looks ahead 5 bars
+    // for a C; if there's a C within IR_LOOKAHEAD it's a CR, not an IR).
+    let sawC = false;
+    let sawRising = false;
+    let endIdx = b;
+    const stop = Math.min(b + 1 + IR_LOOKAHEAD, regs.length);
+    for (let j = b + 1; j < stop; j++) {
+      if (regs[j] === 'C') { sawC = true; break; }
+      if (regs[j] === 'B' && series[j].v > 60) { sawRising = true; endIdx = j; }
+    }
+    if (sawC || !sawRising) continue;
+    const baseLen = b - a + 1;
+    const strength = Math.min(0.7, 0.45 + (baseLen / Math.max(1, 400 / barsPerMinute)) * 0.25);
+    patterns.push({
+      id: `ir-${a}`, kind: 'Ignition Rise',
+      start: a, end: endIdx, tStart: 0, tEnd: 0,
+      glyph: 'AB# → B↑', strength,
+    });
+  }
+
+  // Discharge Wave: A → E → A short-duration spike, similar to CV but at E
+  // (climax) range and with rapid collapse on both sides.
+  const DW_HALF = scale(15, 2);
+  const DW_SKIP = scale(60, 5);
+  for (let i = DW_HALF; i < regs.length - DW_HALF; i++) {
+    if (regs[i] !== 'E' && regs[i] !== 'F') continue;
+    const left  = regs.slice(Math.max(0, i - DW_HALF), i)
+      .filter(r => r === 'A' || r === 'B').length;
+    const right = regs.slice(i + 1, Math.min(regs.length, i + 1 + DW_HALF))
+      .filter(r => r === 'A' || r === 'B').length;
+    if (left < DW_HALF * 0.6 || right < DW_HALF * 0.6) continue;
+    patterns.push({
+      id: `dw-${i}`, kind: 'Discharge Wave',
+      start: Math.max(0, i - DW_HALF), end: Math.min(regs.length - 1, i + DW_HALF),
+      tStart: 0, tEnd: 0, glyph: 'A → E → A', strength: 0.55,
+    });
+    i += DW_SKIP;
+  }
+
+  // Double Spike Exhaustion: two E-or-higher peaks within proximity, each
+  // surrounded by A/B, with the second of similar magnitude to the first.
+  const DSE_GAP_MIN = scale(20, 3);
+  const DSE_GAP_MAX = scale(180, 12);
+  const ePeaks: number[] = [];
+  for (let i = 1; i < regs.length - 1; i++) {
+    if ((regs[i] === 'E' || regs[i] === 'F') && regs[i - 1] !== regs[i]) ePeaks.push(i);
+  }
+  for (let k = 1; k < ePeaks.length; k++) {
+    const i1 = ePeaks[k - 1];
+    const i2 = ePeaks[k];
+    const gap = i2 - i1;
+    if (gap < DSE_GAP_MIN || gap > DSE_GAP_MAX) continue;
+    const v1 = series[i1].v, v2 = series[i2].v;
+    if (v1 < 170 || v2 < 170) continue;
+    const ratio = v2 / v1;
+    if (ratio < 0.7 || ratio > 1.3) continue;
+    patterns.push({
+      id: `dse-${i1}`, kind: 'Double Spike Exhaustion',
+      start: Math.max(0, i1 - DSE_GAP_MIN), end: Math.min(regs.length - 1, i2 + DSE_GAP_MIN),
+      tStart: 0, tEnd: 0, glyph: 'A → E → A → E → A',
+      strength: Math.min(0.85, 0.6 + (1 - Math.abs(1 - ratio)) * 0.2),
+    });
+  }
+
+  // Echo Spike: a D/E/F peak followed by a smaller (and meaningfully so)
+  // D-or-higher peak. Ratio-bound below DSE so the two don't double-tag.
+  const ES_GAP_MIN = scale(15, 2);
+  const ES_GAP_MAX = scale(240, 15);
+  const dePeaks: number[] = [];
+  for (let i = 1; i < regs.length - 1; i++) {
+    const r = regs[i];
+    if ((r === 'D' || r === 'E' || r === 'F') && regs[i - 1] !== r) dePeaks.push(i);
+  }
+  for (let k = 1; k < dePeaks.length; k++) {
+    const i1 = dePeaks[k - 1];
+    const i2 = dePeaks[k];
+    const gap = i2 - i1;
+    if (gap < ES_GAP_MIN || gap > ES_GAP_MAX) continue;
+    const v1 = series[i1].v, v2 = series[i2].v;
+    if (v1 < 140 || v2 < 100) continue;
+    if (v2 >= v1 * 0.85) continue;       // not enough decay -> let DSE handle
+    if (v2 < v1 * 0.45) continue;        // too small a relative echo, noisy
+    patterns.push({
+      id: `es-${i1}`, kind: 'Echo Spike',
+      start: i1, end: i2, tStart: 0, tEnd: 0, glyph: 'peak → smaller peak',
+      strength: Math.min(0.7, 0.45 + (1 - v2 / v1) * 0.4),
+    });
+  }
+
+  // Discharge Break: D or E run that ends abruptly with a strong drop into
+  // A/B within a few bars (negative slope, alignment lost).
+  const DB_DROP = scale(8, 2);
+  for (const [a, b] of [...dRuns, ...runs(r => r === 'E')]) {
+    if (b - a + 1 < scale(8, 2)) continue;
+    const after = regs.slice(b + 1, Math.min(regs.length, b + 1 + DB_DROP));
+    const lowAfter = after.filter(r => r === 'A' || r === 'B').length;
+    if (lowAfter < after.length * 0.6 || after.length === 0) continue;
+    patterns.push({
+      id: `db-${b}`, kind: 'Discharge Break',
+      start: a, end: Math.min(regs.length - 1, b + DB_DROP),
+      tStart: 0, tEnd: 0, glyph: 'D/E → B/A', strength: 0.65,
+    });
+  }
+
+  // Pulse Train: 3+ alternating low/mid pulses (A->B->A->B...) within a
+  // window, each failing to reach C. Watches for repeated sync attempts.
+  const PT_WINDOW = scale(60, 5);
+  const PT_MIN_PULSES = 3;
+  for (let i = 0; i < regs.length - PT_WINDOW; i += scale(15, 3)) {
+    const w = regs.slice(i, i + PT_WINDOW);
+    if (w.some(r => r === 'C' || r === 'D' || r === 'E' || r === 'F')) continue;
+    let pulses = 0;
+    let last = '';
+    for (const r of w) {
+      if ((r === 'A' || r === 'B') && r !== last) {
+        if (last === 'A' && r === 'B') pulses++;
+        last = r;
+      }
+    }
+    if (pulses < PT_MIN_PULSES) continue;
+    patterns.push({
+      id: `pt-${i}`, kind: 'Pulse Train',
+      start: i, end: i + PT_WINDOW - 1, tStart: 0, tEnd: 0,
+      glyph: 'A → B → A → B …',
+      strength: Math.min(0.7, 0.4 + pulses * 0.06),
+    });
+    i += PT_WINDOW; // dedupe
+  }
+
+  // Staircase Alignment: rolling-mean baseline rises monotonically across
+  // sub-windows and eventually reaches C without a violent spike.
+  const SA_WIN  = scale(80, 6);
+  const SA_STEP = scale(20, 3);
+  for (let i = 0; i < regs.length - SA_WIN; i += SA_STEP) {
+    const slice = series.slice(i, i + SA_WIN);
+    if (slice.some(s => s.r === 'E' || s.r === 'F')) continue;
+    const buckets = 4;
+    const bucketLen = Math.floor(SA_WIN / buckets);
+    if (bucketLen < 5) continue;
+    let monotonic = true;
+    let prevAvg = -Infinity;
+    let endsHigh = false;
+    for (let bi = 0; bi < buckets; bi++) {
+      const bucket = slice.slice(bi * bucketLen, (bi + 1) * bucketLen);
+      const avg = bucket.reduce((s, p) => s + p.v, 0) / bucket.length;
+      if (avg <= prevAvg) { monotonic = false; break; }
+      prevAvg = avg;
+      if (bi === buckets - 1 && avg >= 100) endsHigh = true;
+    }
+    if (!monotonic || !endsHigh) continue;
+    patterns.push({
+      id: `sa-${i}`, kind: 'Staircase Alignment',
+      start: i, end: i + SA_WIN - 1, tStart: 0, tEnd: 0,
+      glyph: 'B↑ → C↑', strength: 0.78,
+    });
+    i += SA_WIN;
+  }
+
+  // Dead Drift: long A regime with low CED. No tension, no slope — distinct
+  // from a Compression Coil (which has energy accumulation).
+  const DD_MIN = scale(40, 4);
+  const aRuns  = runs(r => r === 'A');
+  for (const [a, b] of aRuns) {
+    const len = b - a + 1;
+    if (len < DD_MIN) continue;
+    const slice = series.slice(a, b + 1).map(s => s.v);
+    const cedRaw = ced(slice);
+    const cedPerBar = cedRaw / Math.max(1, len);
+    if (cedPerBar > 4) continue;        // too much movement to be drift
+    patterns.push({
+      id: `dd-${a}`, kind: 'Dead Drift',
+      start: a, end: b, tStart: 0, tEnd: 0, glyph: 'A chop',
+      strength: Math.min(0.6, 0.35 + (1 - cedPerBar / 4) * 0.25),
+    });
+  }
+
   patterns.sort((a, b) => a.start - b.start);
 
-  // Stamp absolute timestamps from the series so callers can fetch price
-  // candles for the pattern window without having to keep the series array
-  // around. Clamp end to the last valid index — some patterns extend a few
-  // bars past the detected region and may overflow the series.
+  // Stamp absolute timestamps + enrich each pattern with the structured
+  // fields from spec §8 (patternCode, regime, persistence, slope label,
+  // gold interpretation, invalidators, etc.). Existing visual fields
+  // (kind, start, end, glyph, strength) are preserved so all current UI
+  // consumers keep working.
   const lastIdx = series.length - 1;
   const fallbackT = lastIdx >= 0 ? series[lastIdx]?.t ?? Date.now() : Date.now();
   for (const p of patterns) {
@@ -370,9 +575,48 @@ export function detectPatterns(
     const eIdx = Math.max(0, Math.min(p.end,   lastIdx));
     p.tStart = series[sIdx]?.t ?? fallbackT;
     p.tEnd   = series[eIdx]?.t ?? fallbackT;
+
+    // Window metrics over the pattern's own slice.
+    const slice = series.slice(sIdx, eIdx + 1).map(s => s.v);
+    const m     = slice.length >= 3
+      ? windowMetrics(slice)
+      : { slope: 0, curvature: 0, ced: 0, compressionDuration: 0, oscillationTightness: 0, pss: 0 };
+
+    const startV  = series[sIdx]?.v ?? 0;
+    const regime  = series[sIdx]?.r ?? regimeForValue(startV);
+    const persist =
+      regime === 'A' || regime === 'B' ? 'AB#' :
+      regime === 'C' ? 'C#' :
+      regime === 'D' ? 'D#' :
+      regime === 'E' ? 'E#' : '';
+
+    const slopeLabel: 'positive' | 'negative' | 'flat' =
+      m.slope >  0.05 ? 'positive' :
+      m.slope < -0.05 ? 'negative' : 'flat';
+    const curvLabel: 'positive' | 'negative' | 'flat' =
+      m.curvature >  0.02 ? 'positive' :
+      m.curvature < -0.02 ? 'negative' : 'flat';
+
+    p.patternCode        = PATTERN_CODE[p.kind];
+    p.patternName        = p.kind;
+    p.regime             = regime;
+    p.regimeName         = REGIME_NAME[regime];
+    p.persistence        = persist;
+    p.confidence         = +Math.max(0, Math.min(1, p.strength)).toFixed(3);
+    p.pss                = +m.pss.toFixed(3);
+    p.slope              = slopeLabel;
+    p.curvature          = curvLabel;
+    p.ced                = +m.ced.toFixed(2);
+    p.goldInterpretation = PATTERN_GOLD_INTERP[p.kind];
+    p.invalidators       = PATTERN_INVALIDATORS[p.kind] ?? [];
   }
 
-  return patterns;
+  // Sensitivity threshold: drop patterns below the configured minimum
+  // confidence. Default to Medium (0.60) when no thresholds passed.
+  const minConf = _thresholds?.minPatternConfidence ?? 0.60;
+  const filtered = patterns.filter(p => (p.confidence ?? p.strength) >= minConf);
+
+  return filtered;
 }
 
 // v11.2: delegates to lib/energy.ts. Public API and EnergyMetrics shape

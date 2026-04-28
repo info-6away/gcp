@@ -50,15 +50,78 @@ const LIB_META: Record<string, {
     summary: 'Abrupt jump into the shock band. Typically news/geopolitical origin.',
     market:  'Expect extreme volatility. Reduce size. Price often spikes then retraces violently.',
   },
+  'Ignition Rise': {
+    glyph:   'AB# → B↑',
+    color:   '#4dd9e8',
+    summary: 'Coil energy starting to release upward into B without confirming C yet.',
+    market:  'Early breakout environment. Wait for C confirmation before sizing up.',
+  },
+  'Pulse Train': {
+    glyph:   'A → B → A → B …',
+    color:   '#5b8cc0',
+    summary: 'Repeated low/mid pulses, none holding C. Pressure accumulating.',
+    market:  'Sync attempts in progress. Resolution often follows; direction unconfirmed.',
+  },
+  'Staircase Alignment': {
+    glyph:   'B↑ → C↑',
+    color:   '#16a34a',
+    summary: 'Rising baseline through B into C without violent spikes.',
+    market:  'Stealth trend build. High-quality continuation precursor.',
+  },
+  'Dead Drift': {
+    glyph:   'A chop',
+    color:   'var(--fg-3)',
+    summary: 'Low-energy A regime with no compression tension and no slope.',
+    market:  'Low signal environment. No GCP edge — defer to price-only setups.',
+  },
+  'Echo Spike': {
+    glyph:   'D/E peak → smaller D/E',
+    color:   '#fb923c',
+    summary: 'A second, smaller D/E peak following an earlier larger peak.',
+    market:  'Aftershock. Original move likely fading; lower continuation probability.',
+  },
+  'Discharge Break': {
+    glyph:   'D/E → B/A',
+    color:   '#dc2626',
+    summary: 'Elevated regime collapses rapidly into A/B with strong negative slope.',
+    market:  'Trend exhaustion. Momentum fading; watch for reversal.',
+  },
+  'Discharge Wave': {
+    glyph:   'A → E → A',
+    color:   '#ea580c',
+    summary: 'Sharp climax spike followed by rapid collapse.',
+    market:  'Volatility burst. Possible exhaustion event.',
+  },
+  'Double Spike Exhaustion': {
+    glyph:   'A → E → A → E → A',
+    color:   '#9333ea',
+    summary: 'Two similar-magnitude E spikes separated by reset.',
+    market:  'Coherence discharge complete. Likely post-event vacuum.',
+  },
+  'Synchronization Plateau': {
+    glyph:   'C → D# sustained',
+    color:   '#15803d',
+    summary: 'Sustained D regime hold; minimal collapse below C.',
+    market:  'One of the highest-quality gold trend continuation zones.',
+  },
 };
 
 const PATTERN_ORDER = [
   'Alignment Ladder',
+  'Synchronization Plateau',
   'Compression Release',
   'Compression Coil',
+  'Ignition Rise',
+  'Staircase Alignment',
   'Failed Alignment',
   'Coherence Volcano',
+  'Echo Spike',
+  'Discharge Wave',
+  'Discharge Break',
+  'Double Spike Exhaustion',
   'Ignition Drift',
+  'Pulse Train',
+  'Dead Drift',
   'Shock Jump',
 ];
 

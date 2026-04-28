@@ -125,9 +125,22 @@ export type PatternKind =
   | 'Failed Alignment'
   | 'Coherence Volcano'
   | 'Ignition Drift'
-  | 'Shock Jump';
+  | 'Shock Jump'
+  | 'Ignition Rise'
+  | 'Pulse Train'
+  | 'Staircase Alignment'
+  | 'Dead Drift'
+  | 'Echo Spike'
+  | 'Discharge Break'
+  | 'Discharge Wave'
+  | 'Double Spike Exhaustion'
+  | 'Synchronization Plateau';
+
+export type SlopeLabel     = 'positive' | 'negative' | 'flat';
+export type CurvatureLabel = 'positive' | 'negative' | 'flat';
 
 export interface Pattern {
+  // Original fields (kept for back-compat with all existing consumers).
   id: string;
   kind: PatternKind;
   start: number;
@@ -135,7 +148,22 @@ export interface Pattern {
   tStart: number;
   tEnd: number;
   glyph: string;
-  strength: number;
+  strength: number;            // 0..1, mirrors `confidence` for back-compat
+
+  // v11.3 structured fields (per spec §8). All optional so the existing
+  // Pattern shape still type-checks; populated by enrich() in gcp-data.ts.
+  patternCode?:        string;        // 'AL', 'CC', 'CR', ...
+  patternName?:        string;        // human-readable kind
+  regime?:             RegimeId;      // regime at pattern start
+  regimeName?:         string;        // 'Silence', 'Ignition', ...
+  persistence?:        string;        // 'AB#' | 'C#' | 'D#' | 'E#' | ''
+  confidence?:         number;        // 0..1 -- strength of the shape match
+  pss?:                number;        // 0..1 -- composite from windowMetrics
+  slope?:              SlopeLabel;
+  curvature?:          CurvatureLabel;
+  ced?:                number;        // raw CED value over the window
+  goldInterpretation?: string;
+  invalidators?:       string[];
 }
 
 export interface EnergyMetrics {

@@ -5,18 +5,33 @@ import { MobileStatus } from '../MobileChrome';
 import type { Pattern } from '@/types/gcp';
 
 const PATTERN_COLORS: Record<string, string> = {
-  'Alignment Ladder':    '#4dd9e8',
-  'Compression Coil':    '#aeb4bf',
-  'Compression Release': '#22c55e',
-  'Failed Alignment':    '#d946ef',
-  'Coherence Volcano':   '#f59e0b',
-  'Ignition Drift':      '#888780',
-  'Shock Jump':          '#e24b4a',
+  'Alignment Ladder':         '#4dd9e8',
+  'Compression Coil':         '#aeb4bf',
+  'Compression Release':      '#22c55e',
+  'Failed Alignment':         '#d946ef',
+  'Coherence Volcano':        '#f59e0b',
+  'Ignition Drift':           '#888780',
+  'Shock Jump':               '#e24b4a',
+  'Ignition Rise':            '#4dd9e8',
+  'Pulse Train':              '#5b8cc0',
+  'Staircase Alignment':      '#16a34a',
+  'Dead Drift':               '#3a3f47',
+  'Echo Spike':               '#fb923c',
+  'Discharge Break':          '#dc2626',
+  'Discharge Wave':           '#ea580c',
+  'Double Spike Exhaustion':  '#9333ea',
+  'Synchronization Plateau':  '#15803d',
 };
 
 const KINDS = [
-  'Alignment Ladder', 'Compression Coil', 'Compression Release',
-  'Failed Alignment', 'Coherence Volcano', 'Ignition Drift', 'Shock Jump',
+  'Alignment Ladder',         'Synchronization Plateau',
+  'Compression Release',      'Compression Coil',
+  'Ignition Rise',            'Staircase Alignment',
+  'Failed Alignment',         'Coherence Volcano',
+  'Echo Spike',               'Discharge Wave',
+  'Discharge Break',          'Double Spike Exhaustion',
+  'Ignition Drift',           'Pulse Train',
+  'Dead Drift',               'Shock Jump',
 ];
 
 const pssOf = (p: Pattern) => Math.round(p.strength * 100);

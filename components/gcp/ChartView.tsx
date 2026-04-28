@@ -536,13 +536,27 @@ export default function ChartView({
     }
 
     const MARKER_COLORS: Record<string, string> = {
-      'Alignment Ladder':    C.cyan,
-      'Shock Jump':          C.red,
-      'Failed Alignment':    '#d946ef',
-      'Coherence Volcano':   '#f59e0b',
-      'Compression Coil':    '#6b7280',
-      'Compression Release': '#22c55e',
-      'Ignition Drift':      '#888780',
+      // Compression / ignition family — cyan / grey
+      'Compression Coil':         '#6b7280',
+      'Ignition Drift':           '#888780',
+      'Ignition Rise':            '#4dd9e8',
+      'Pulse Train':              '#5b8cc0',
+      'Dead Drift':               '#3a3f47',
+      // Alignment / continuation family — green
+      'Alignment Ladder':         C.cyan,
+      'Compression Release':      '#22c55e',
+      'Staircase Alignment':      '#16a34a',
+      'Synchronization Plateau':  '#15803d',
+      // Climax / spike family — yellow / orange
+      'Coherence Volcano':        '#f59e0b',
+      'Echo Spike':               '#fb923c',
+      // Failed / discharge family — red / magenta
+      'Failed Alignment':         '#d946ef',
+      'Discharge Break':          '#dc2626',
+      'Discharge Wave':           '#ea580c',
+      'Double Spike Exhaustion':  '#9333ea',
+      // Shock — red
+      'Shock Jump':               C.red,
     };
 
     const gcpMarkers: SeriesMarker<Time>[] = chartPatterns
@@ -556,7 +570,7 @@ export default function ChartView({
           position: 'aboveBar' as const,
           color:    MARKER_COLORS[p.kind] ?? C.text,
           shape:    'circle' as const,
-          text:     p.kind.split(' ').map(w => w[0]).join(''),
+          text:     p.patternCode ?? p.kind.split(' ').map(w => w[0]).join(''),
           size:     1,
         };
       })
