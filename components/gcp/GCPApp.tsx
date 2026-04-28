@@ -7,6 +7,10 @@ import { useGoldData } from '@/lib/useGoldData';
 import { usePSSAlert } from '@/lib/usePSSAlert';
 import { useMobile } from '@/lib/useMobile';
 import MobileApp from './mobile/MobileApp';
+import {
+  loadSensitivity, SENSITIVITY_THRESHOLDS, SENSITIVITY_LABEL,
+  type Sensitivity,
+} from '@/lib/sensitivity';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -64,6 +68,21 @@ export default function GCPApp() {
   const goldData = useGoldData(symbol);
   const isMobile = useMobile();
 
+  // Sensitivity: drives detector thresholds (v11.2+) and is shown in the
+  // status bar. Persisted to gcpro-settings.sensitivity. Re-read on the
+  // browser `storage` event so changes propagate across tabs and from
+  // SettingsPanel without a full reload.
+  const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
+  useEffect(() => {
+    setSensitivity(loadSensitivity());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'gcpro-settings') setSensitivity(loadSensitivity());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const sensitivityThresholds = SENSITIVITY_THRESHOLDS[sensitivity];
+
   // Dashboard is GCP-only. Price overlay lives on the Chart tab now;
   // ChartView consumes candleData directly so we don't need to merge
   // gold/BTC closes into the GCP series anymore.
@@ -85,8 +104,8 @@ export default function GCPApp() {
   // 80 minutes); running them on TF-bucketed analysisSeries (24 h at
   // 15 m = 96 bars) starves the detector and yields zero patterns.
   const displayPatterns = useMemo(
-    () => detectPatterns(windowedSeries, 1),
-    [windowedSeries]
+    () => detectPatterns(windowedSeries, 1, sensitivityThresholds),
+    [windowedSeries, sensitivityThresholds]
   );
 
   useEffect(() => {
@@ -269,6 +288,7 @@ export default function GCPApp() {
               patterns={displayPatterns}
               symbol={symbol}
               timeframe={timeframe}
+              sensitivityThresholds={sensitivityThresholds}
             />
           )}
           {page === 'research' && (
@@ -300,7 +320,13 @@ export default function GCPApp() {
           )}
         </main>
       </div>
-      <Chrome.StatusBar cursorInfo={cursorInfo} series={displaySeries} symbol={symbol} timeframe={timeframe} />
+      <Chrome.StatusBar
+        cursorInfo={cursorInfo}
+        series={displaySeries}
+        symbol={symbol}
+        timeframe={timeframe}
+        sensitivityLabel={SENSITIVITY_LABEL[sensitivity]}
+      />
     </div>
   );
 }

@@ -68,14 +68,19 @@ async function fetchCandlesBefore(
   return tdTimeSeries({ symbol: sym, tf, outputsize, endMs: before });
 }
 
+import type { SensitivityThresholds } from '@/lib/sensitivity';
+
 interface ChartViewProps {
   series:    DataPoint[];
   patterns:  Pattern[];
   symbol:    MarketSymbol;
   timeframe: Timeframe;
+  sensitivityThresholds?: SensitivityThresholds;
 }
 
-export default function ChartView({ series, patterns, symbol, timeframe }: ChartViewProps) {
+export default function ChartView({
+  series, patterns, symbol, timeframe, sensitivityThresholds,
+}: ChartViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
 
@@ -496,7 +501,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
       if (isGap || atEnd) {
         const seg = chartGCPSeries.slice(segStart, i);
         if (seg.length >= 10) {
-          for (const p of detectPatterns(seg, 1)) {
+          for (const p of detectPatterns(seg, 1, sensitivityThresholds)) {
             // detectPatterns returns indices local to `seg`. Offset them
             // back into the full chartGCPSeries index space; tStart/tEnd
             // are absolute timestamps and need no offset.
@@ -512,7 +517,7 @@ export default function ChartView({ series, patterns, symbol, timeframe }: Chart
     }
 
     return patterns;
-  }, [chartGCPSeries]);
+  }, [chartGCPSeries, sensitivityThresholds]);
 
   useEffect(() => { chartPatternsRef.current = chartPatterns; }, [chartPatterns]);
   useEffect(() => { chartGCPSeriesRef.current = chartGCPSeries; }, [chartGCPSeries]);

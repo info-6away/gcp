@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
 import { PageHeader } from '@/components/gcp/Chrome';
 import { PSS_THRESHOLD } from '@/lib/usePSSAlert';
+import {
+  loadSensitivity, saveSensitivity, SENSITIVITY_LABEL,
+  type Sensitivity,
+} from '@/lib/sensitivity';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 
 interface SettingsPanelProps {
@@ -131,10 +135,21 @@ function ToggleRow({
 export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
+  const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
 
   useEffect(() => {
     setPrefs(loadPrefs());
+    setSensitivity(loadSensitivity());
   }, []);
+
+  const updateSensitivity = (s: Sensitivity) => {
+    setSensitivity(s);
+    saveSensitivity(s);
+    // Storage events don't fire in the same tab; nudge listeners directly.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new StorageEvent('storage', { key: PREFS_LS_KEY }));
+    }
+  };
 
   const setPref = (key: keyof Prefs, value: boolean) => {
     const next = { ...prefs, [key]: value };
@@ -179,6 +194,41 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </Section>
 
         <Section title="Preferences">
+          <div style={{
+            padding: '10px 0', borderBottom: '1px solid var(--line-0)',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: 1, paddingRight: 12 }}>
+                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Pattern Sensitivity</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                  Low = fewer, higher-confidence patterns. High = early warnings, more noise.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 0 }}>
+                {(['low','medium','high'] as Sensitivity[]).map(s => {
+                  const active = sensitivity === s;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => updateSensitivity(s)}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: 9, letterSpacing: '0.08em',
+                        fontFamily: 'var(--font-mono)',
+                        background: active ? 'var(--bg-3)' : 'transparent',
+                        border: `1px solid ${active ? 'var(--cyan)' : 'var(--line-2)'}`,
+                        color: active ? 'var(--cyan)' : 'var(--fg-3)',
+                        cursor: 'pointer',
+                        marginLeft: -1,
+                      }}
+                    >
+                      {SENSITIVITY_LABEL[s].toUpperCase()}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
           <ToggleRow
             label="Regime color bands"
             sub="Show colored bands behind Dashboard widgets"

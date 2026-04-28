@@ -195,7 +195,14 @@ export function resampleSeries(series: DataPoint[], barsPerBucket: number): Data
   return processSeries(series, barsPerBucket).display;
 }
 
-export function detectPatterns(series: DataPoint[], barsPerMinute = 1): Pattern[] {
+// v11.1: thresholds is accepted as the third arg (sensitivity wiring) but
+// not yet read by the detection logic. v11.2 will plug it in once energy
+// metrics are split out.
+export function detectPatterns(
+  series: DataPoint[],
+  barsPerMinute = 1,
+  _thresholds?: import('./sensitivity').SensitivityThresholds,
+): Pattern[] {
   const regs = series.map(s => s.r);
   const patterns: Pattern[] = [];
 

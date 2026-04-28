@@ -359,9 +359,10 @@ interface StatusBarProps {
   series: DataPoint[];
   symbol?: MarketSymbol;
   timeframe?: Timeframe;
+  sensitivityLabel?: string;
 }
 
-function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusBarProps) {
+function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe, sensitivityLabel }: StatusBarProps) {
   const [utcTime, setUtcTime] = useState('');
   const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>('unsupported');
   useEffect(() => {
@@ -445,6 +446,15 @@ function StatusBar({ cursorInfo, series, symbol = 'XAUUSD', timeframe }: StatusB
         <div className="divider-v" style={{ height: 12 }} />
         <span className="hairline">Model</span>
         <span>{APP_MODEL}</span>
+        {sensitivityLabel && (
+          <>
+            <div className="divider-v" style={{ height: 12 }} />
+            <span className="hairline">Sensitivity</span>
+            <span style={{ color: 'var(--cyan)', fontFamily: 'var(--font-mono)' }}>
+              {sensitivityLabel}
+            </span>
+          </>
+        )}
       </div>
     </footer>
   );
