@@ -2,6 +2,7 @@ import type {
   RegimeId, RegimeDef, DataPoint, Dataset,
   Pattern, EnergyMetrics, PersistenceInfo,
 } from '@/types/gcp';
+import { windowMetrics } from '@/lib/energy';
 
 export const REGIMES: RegimeDef[] = [
   { id: 'A', name: 'Silence',         min: 0,   max: 50,  color: 'var(--r-a)' },
@@ -374,29 +375,25 @@ export function detectPatterns(
   return patterns;
 }
 
+// v11.2: delegates to lib/energy.ts. Public API and EnergyMetrics shape
+// preserved so existing callers (none active today, but the export is
+// part of the surface) keep working. PSS now uses the spec §6 formula
+// with real compression duration / oscillation tightness rather than
+// the window-size approximation we had before.
 export function energyAt(series: DataPoint[], i: number, window = 30): EnergyMetrics {
   if (!series.length) return { slope: 0, curv: 0, ced: 0, pss: 0 };
   const idx = Math.max(0, Math.min(i, series.length - 1));
-  const a = Math.max(0, idx - window);
-  const slice = series.slice(a, idx + 1);
-  if (slice.length < 3) return { slope: 0, curv: 0, ced: 0, pss: 0 };
-  const xs = slice.map(s => s.v);
-  const n = xs.length;
-  let sx = 0, sy = 0, sxy = 0, sxx = 0;
-  for (let k = 0; k < n; k++) { sx += k; sy += xs[k]; sxy += k * xs[k]; sxx += k * k; }
-  const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx);
-  let curv = 0;
-  for (let k = 2; k < n; k++) curv += xs[k] - 2 * xs[k - 1] + xs[k - 2];
-  curv /= (n - 2);
-  let ced = 0;
-  for (let k = 1; k < n; k++) ced += Math.abs(xs[k] - xs[k - 1]);
-  ced = Math.min(1, ced / 400);
-  const compDur = Math.min(1, window / 60);
-  const osc = 1 - Math.min(1, Math.abs(slope) / 2);
-  const pss = 0.35 * compDur + 0.25 * osc + 0.25 * ced + 0.15 * Math.min(1, Math.abs(curv) / 0.5);
+  const a   = Math.max(0, idx - window);
+  const xs  = series.slice(a, idx + 1).map(s => s.v);
+  if (xs.length < 3) return { slope: 0, curv: 0, ced: 0, pss: 0 };
+  const m = windowMetrics(xs);
+  // Match the historical EnergyMetrics shape: slope/curv unscaled, ced
+  // normalized to 0-1 (callers expected that), pss already 0-1.
   return {
-    slope: +slope.toFixed(3), curv: +curv.toFixed(3),
-    ced: +ced.toFixed(3), pss: +Math.max(0, Math.min(1, pss)).toFixed(3),
+    slope: +m.slope.toFixed(3),
+    curv:  +m.curvature.toFixed(3),
+    ced:   +Math.min(1, m.ced / 400).toFixed(3),
+    pss:   +m.pss.toFixed(3),
   };
 }
 
