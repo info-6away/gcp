@@ -64,10 +64,14 @@ async function tryYahoo(symbol: MarketSymbol): Promise<number> {
   return d.lastPrice;
 }
 
+// Twelve Data is the primary live-price source for all three symbols
+// (XAU/USD, XAG/USD, BTC/USD) on the TD Grow plan. gold-api stays as a
+// fallback when TD errors or times out, and the Yahoo proxy is the last
+// resort behind both.
 async function fetchPrice(symbol: MarketSymbol): Promise<{ price: number; source: string }> {
   const sources = [
-    { name: 'gold-api',    fn: () => tryGoldApi(symbol)   },
     { name: 'twelve-data', fn: () => tryTwelveData(symbol) },
+    { name: 'gold-api',    fn: () => tryGoldApi(symbol)    },
     { name: 'yahoo',       fn: () => tryYahoo(symbol)      },
   ];
 
@@ -84,7 +88,9 @@ async function fetchPrice(symbol: MarketSymbol): Promise<{ price: number; source
   throw new Error(`All sources failed: ${errors.join(' | ')}`);
 }
 
-const REFRESH_MS = 60_000;
+// 15 s poll. TD Grow allows a single-symbol /price call at this rate
+// without rate limiting; gold-api / Yahoo only fire when TD fails.
+const REFRESH_MS = 15_000;
 
 export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
   const [state, setState] = useState<GoldState>({
