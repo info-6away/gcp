@@ -88,9 +88,11 @@ async function fetchPrice(symbol: MarketSymbol): Promise<{ price: number; source
   throw new Error(`All sources failed: ${errors.join(' | ')}`);
 }
 
-// 15 s poll. TD Grow allows a single-symbol /price call at this rate
-// without rate limiting; gold-api / Yahoo only fire when TD fails.
-const REFRESH_MS = 15_000;
+// 2 s poll for TradingView-like live feel. TD Grow allows a single-symbol
+// /price call at this rate without rate limiting; gold-api / Yahoo only
+// fire when TD fails. This drives the chart's live-bar update too:
+// ChartView mutates the rightmost candle's close on every tick.
+const REFRESH_MS = 2_000;
 
 export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
   const [state, setState] = useState<GoldState>({

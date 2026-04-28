@@ -289,6 +289,8 @@ export default function GCPApp() {
               symbol={symbol}
               timeframe={timeframe}
               sensitivityThresholds={sensitivityThresholds}
+              livePrice={goldData.price}
+              livePriceTime={goldData.lastFetch}
             />
           )}
           {page === 'research' && (

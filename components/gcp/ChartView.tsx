@@ -7,6 +7,7 @@ import {
   LineSeries,
   CrosshairMode,
   LineStyle,
+  LineType,
   ColorType,
   createSeriesMarkers,
   type IChartApi,
@@ -76,10 +77,18 @@ interface ChartViewProps {
   symbol:    MarketSymbol;
   timeframe: Timeframe;
   sensitivityThresholds?: SensitivityThresholds;
+  livePrice?:     number | null;     // most recent spot tick from useGoldData
+  livePriceTime?: Date   | null;     // when that tick landed
 }
+
+const CHART_TF_MS: Record<string, number> = {
+  '1m': 60_000, '5m': 300_000, '15m': 900_000,
+  '1h': 3_600_000, '4h': 14_400_000, '1D': 86_400_000,
+};
 
 export default function ChartView({
   series, patterns, symbol, timeframe, sensitivityThresholds,
+  livePrice, livePriceTime,
 }: ChartViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
@@ -256,6 +265,11 @@ export default function ChartView({
     const gcpLine = chart.addSeries(LineSeries, {
       color:                      C.cyan,
       lineWidth:                  1,
+      // Curved line type: visually smooths between consecutive 1-min
+      // points so the line reads as continuous rather than jagged.
+      // Original data frequency is preserved; this is a render-time
+      // bezier smoothing only, no data fabrication.
+      lineType:                   LineType.Curved,
       lastValueVisible:           true,
       priceLineVisible:           false,
       crosshairMarkerVisible:     true,
@@ -385,15 +399,22 @@ export default function ChartView({
       value: p.v,
     }));
 
-    // Gap fill in seconds: > 300 s threshold, 60 s step.
+    // Gap fill via linear interpolation (was carry-forward earlier).
+    // Carry-forward produced flat plateaus that read as step jumps; a
+    // straight-line interpolation between prev and curr keeps the line
+    // smooth across the merge boundary while preserving original data
+    // frequency at the actual sample points.
     const filled: { time: number; value: number }[] = [base[0]];
     for (let i = 1; i < base.length; i++) {
       const prev = base[i - 1];
       const curr = base[i];
       const gap  = curr.time - prev.time;
       if (gap > 300) {
-        for (let t = prev.time + 60; t < curr.time; t += 60) {
-          filled.push({ time: t, value: prev.value });
+        const steps = Math.floor((curr.time - prev.time) / 60);
+        for (let k = 1; k < steps; k++) {
+          const t = prev.time + k * 60;
+          const f = k / steps;
+          filled.push({ time: t, value: prev.value + (curr.value - prev.value) * f });
         }
       }
       filled.push(curr);
@@ -449,6 +470,54 @@ export default function ChartView({
       isInitRef.current = false;
     }
   }, [chartReady, displayCandles]);
+
+  // Live-bar update: every spot-price tick mutates the rightmost candle's
+  // close (and updates high/low if the tick exceeds them). When the tick
+  // crosses into a new TF slot, a fresh bar is appended and starts
+  // tracking. Uses cs.update() so the chart paints immediately without
+  // a full setData rebuild. The 60 s candle-fetch loop continues to land
+  // and replaces the live bar's OHLC with the API's official values
+  // when its slot has fully closed -- live updates are an approximation
+  // for the currently-forming bar only.
+  useEffect(() => {
+    if (!chartReady) return;
+    if (livePrice == null || !livePriceTime) return;
+    const cs = candleSeriesRef.current;
+    if (!cs || !allCandlesRef.current.length) return;
+
+    const tfMs = CHART_TF_MS[chartTF] ?? 60_000;
+    const slot = Math.floor(livePriceTime.getTime() / tfMs) * tfMs;
+    const last = allCandlesRef.current[allCandlesRef.current.length - 1];
+
+    if (slot > last.t) {
+      const bar: Candle = {
+        t: slot,
+        o: livePrice, h: livePrice, l: livePrice, c: livePrice,
+      };
+      allCandlesRef.current.push(bar);
+      try {
+        cs.update({
+          time:  toTime(slot),
+          open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
+        });
+      } catch { /* */ }
+    } else if (slot === last.t) {
+      const bar: Candle = {
+        ...last,
+        h: Math.max(last.h, livePrice),
+        l: Math.min(last.l, livePrice),
+        c: livePrice,
+      };
+      allCandlesRef.current[allCandlesRef.current.length - 1] = bar;
+      try {
+        cs.update({
+          time:  toTime(slot),
+          open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
+        });
+      } catch { /* */ }
+    }
+    // slot < last.t: out-of-order tick, ignore.
+  }, [chartReady, livePrice, livePriceTime, chartTF]);
 
   // ── Initial candle fetch + reset on symbol/TF change ───────────────────────
   useEffect(() => {
@@ -688,6 +757,21 @@ export default function ChartView({
         {!hasMoreLeft && !isLoading && (
           <span style={{ fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em' }}>
             ← history limit
+          </span>
+        )}
+
+        {livePriceTime && (
+          <span style={{
+            fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.06em',
+            fontFamily: 'var(--font-mono)', marginLeft: 8,
+          }}>
+            Last update <span style={{ color: 'var(--fg-1)' }}>
+              {(() => {
+                const d = livePriceTime;
+                const p = (n: number) => String(n).padStart(2, '0');
+                return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+              })()}
+            </span>
           </span>
         )}
 
