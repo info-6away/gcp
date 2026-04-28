@@ -121,6 +121,13 @@ export default function ChartView({
     | { mode: 'pattern'; x: number; kind: string; pss: number; regime: string; bars: number; time: string };
 
   const [gcpTooltip, setGcpTooltip] = useState<GcpTooltipState | null>(null);
+
+  // Pattern selected by clicking its marker -- drives the explanation
+  // panel and the +15/+30/+60 min reaction shading on the candle pane.
+  const [selectedPattern, setSelectedPattern] = useState<Pattern | null>(null);
+  const [reactionPx, setReactionPx] = useState<{
+    start: number | null; p15: number | null; p30: number | null; p60: number | null;
+  }>({ start: null, p15: null, p30: null, p60: null });
   const chartPatternsRef            = useRef<Pattern[]>([]);
   const chartGCPSeriesRef           = useRef<DataPoint[]>([]);
 
@@ -130,6 +137,43 @@ export default function ChartView({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [ctxMenu]);
+
+  // Esc dismisses the explanation panel.
+  useEffect(() => {
+    if (!selectedPattern) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedPattern(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedPattern]);
+
+  // Recompute the +15/+30/+60 min reaction-window x-coordinates whenever
+  // the selected pattern changes or the chart's visible range scrolls.
+  useEffect(() => {
+    if (!selectedPattern || !chartReady) {
+      setReactionPx({ start: null, p15: null, p30: null, p60: null });
+      return;
+    }
+    const chart = chartRef.current;
+    if (!chart) return;
+    const ts0 = chart.timeScale();
+
+    const startSec = Math.floor(selectedPattern.tEnd / 1000);
+    const update = () => {
+      const px = (sec: number): number | null => {
+        const c = ts0.timeToCoordinate(sec as Time);
+        return typeof c === 'number' ? c : null;
+      };
+      setReactionPx({
+        start: px(startSec),
+        p15:   px(startSec + 15 * 60),
+        p30:   px(startSec + 30 * 60),
+        p60:   px(startSec + 60 * 60),
+      });
+    };
+    update();
+    ts0.subscribeVisibleTimeRangeChange(update);
+    return () => ts0.unsubscribeVisibleTimeRangeChange(update);
+  }, [selectedPattern, chartReady]);
 
   // No clipping. LW Charts shares a time axis between panes but renders
   // each series at its own timestamps; if one ends before the other, the
@@ -290,6 +334,23 @@ export default function ChartView({
         regimeLabel: REGIME_LABELS[regime] ?? '',
         time,
       });
+    });
+
+    // Click-to-select: if the click lands within ±2 minutes of a pattern's
+    // tStart, open the explanation panel for that pattern. Off-marker
+    // clicks are ignored so the user has to dismiss explicitly (Esc / X).
+    chart.subscribeClick(param => {
+      if (param.time == null) return;
+      const ts  = (param.time as number) * 1000;
+      const HIT = 2 * 60_000;
+      let best: Pattern | null = null;
+      let bestDiff = Infinity;
+      for (const p of chartPatternsRef.current) {
+        if (p.tStart <= 0) continue;
+        const d = Math.abs(p.tStart - ts);
+        if (d < HIT && d < bestDiff) { bestDiff = d; best = p; }
+      }
+      if (best) setSelectedPattern(best);
     });
 
     setChartReady(true);
@@ -656,6 +717,163 @@ export default function ChartView({
         }}
         onClick={() => setCtxMenu(null)}
       >
+        {/* Reaction-window shading + +15 / +30 / +60 min markers for the
+            selected pattern. Spans the candle pane only (top 67% of the
+            chart container, which matches the 68/32 pane stretch). */}
+        {selectedPattern && reactionPx.start != null && reactionPx.p60 != null && (
+          <>
+            <div style={{
+              position: 'absolute',
+              left:   Math.min(reactionPx.start, reactionPx.p60),
+              top:    0,
+              width:  Math.abs(reactionPx.p60 - reactionPx.start),
+              height: '67%',
+              background: 'rgba(77,217,232,0.06)',
+              borderLeft:  `1px solid ${C.cyan}`,
+              pointerEvents: 'none',
+              zIndex: 6,
+            }} />
+            {([['+15m', reactionPx.p15], ['+30m', reactionPx.p30], ['+60m', reactionPx.p60]] as const).map(([label, x]) =>
+              x == null ? null : (
+                <div key={label} style={{
+                  position: 'absolute',
+                  left: x, top: 0, height: '67%',
+                  width: 1, background: `${C.cyan}66`,
+                  pointerEvents: 'none', zIndex: 7,
+                }}>
+                  <div style={{
+                    position: 'absolute', top: 4, left: 3,
+                    fontSize: 8, letterSpacing: '0.06em',
+                    color: C.cyan, fontFamily: 'var(--font-mono)',
+                    background: 'var(--bg-1)',
+                    padding: '1px 4px', borderRadius: 2,
+                    whiteSpace: 'nowrap',
+                  }}>{label}</div>
+                </div>
+              )
+            )}
+          </>
+        )}
+
+        {/* Pattern explanation panel. Top-right of the chart container,
+            close via X or Esc. Shows the structured Pattern fields
+            populated by enrich() in v11.3. */}
+        {selectedPattern && (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top:    8, right: 8,
+              width:  280,
+              maxHeight: '90%',
+              overflowY: 'auto',
+              background: 'var(--bg-2)',
+              border: `1px solid ${C.cyan}`,
+              borderRadius: 4,
+              padding: '10px 12px 12px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+              boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+              zIndex: 12,
+            }}
+          >
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+              marginBottom: 8,
+            }}>
+              <div>
+                <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)' }}>
+                  PATTERN DETECTED
+                </div>
+                <div style={{
+                  fontSize: 13, color: C.cyan, fontWeight: 600,
+                  letterSpacing: '0.02em', marginTop: 2,
+                }}>
+                  {selectedPattern.patternCode ?? ''} · {selectedPattern.patternName ?? selectedPattern.kind}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedPattern(null)}
+                style={{
+                  width: 18, height: 18, padding: 0,
+                  background: 'transparent', border: '1px solid var(--line-2)',
+                  color: 'var(--fg-3)', cursor: 'pointer',
+                  fontSize: 10, lineHeight: 1, borderRadius: 2,
+                }}
+                title="Close (Esc)"
+              >×</button>
+            </div>
+
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+              marginBottom: 8,
+            }}>
+              <div>
+                <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>REGIME</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-1)', marginTop: 2 }}>
+                  {selectedPattern.regime ?? '?'} · {selectedPattern.regimeName ?? ''}
+                </div>
+                {selectedPattern.persistence && (
+                  <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2 }}>
+                    Persistence: {selectedPattern.persistence}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>CONFIDENCE / PSS</div>
+                <div style={{ fontSize: 11, color: '#d4a028', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+                  {Math.round((selectedPattern.confidence ?? selectedPattern.strength) * 100)}%
+                  <span style={{ color: 'var(--fg-3)' }}> / </span>
+                  {Math.round((selectedPattern.pss ?? 0) * 100)}%
+                </div>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex', gap: 10, fontSize: 9, color: 'var(--fg-2)',
+              padding: '6px 0', borderTop: '1px solid var(--line-1)',
+              borderBottom: '1px solid var(--line-1)', marginBottom: 8,
+            }}>
+              <span><span style={{ color: 'var(--fg-3)' }}>slope</span> {selectedPattern.slope ?? '—'}</span>
+              <span><span style={{ color: 'var(--fg-3)' }}>curv</span> {selectedPattern.curvature ?? '—'}</span>
+              <span><span style={{ color: 'var(--fg-3)' }}>ced</span> {selectedPattern.ced?.toFixed(0) ?? '—'}</span>
+            </div>
+
+            <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
+              GOLD INTERPRETATION
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--fg-1)', lineHeight: 1.5, marginBottom: 8 }}>
+              {selectedPattern.goldInterpretation ?? '—'}
+            </div>
+
+            {selectedPattern.invalidators && selectedPattern.invalidators.length > 0 && (
+              <>
+                <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-3)', marginBottom: 4 }}>
+                  INVALIDATORS
+                </div>
+                <ul style={{
+                  margin: 0, padding: 0, listStyle: 'none',
+                  fontSize: 9, color: 'var(--fg-2)', lineHeight: 1.5,
+                }}>
+                  {selectedPattern.invalidators.map((s, i) => (
+                    <li key={i} style={{ paddingLeft: 10, position: 'relative' }}>
+                      <span style={{ position: 'absolute', left: 0, color: '#ef4444' }}>·</span>
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            <div style={{
+              fontSize: 8, color: 'var(--fg-4)', marginTop: 8, paddingTop: 6,
+              borderTop: '1px solid var(--line-1)', letterSpacing: '0.06em',
+            }}>
+              Reaction window shaded on candles · Esc to close
+            </div>
+          </div>
+        )}
+
         {gcpTooltip && (
           <div style={{
             position: 'absolute',
