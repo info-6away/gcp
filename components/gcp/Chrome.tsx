@@ -159,12 +159,13 @@ function Header({
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
 }: HeaderProps) {
-  const showTFView = page === 'pattern';
   // On Patterns we only expose VIEW. Pattern detection always runs at 1m
   // resolution (compression coils etc. are meaningless at 4h/1D), so the
   // TF selector is hidden there.
-  const showTF   = false;
-  const showView = showTFView;
+  // On Trading we expose TF (5m, 15m, 1h, etc) but not VIEW -- the chart
+  // owns its own scroll history.
+  const showTF   = page === 'trading';
+  const showView = page === 'pattern';
   return (
     <header className="app-header">
       <div className="brand" style={{ gap: 8 }}>
@@ -326,6 +327,7 @@ function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
     { id: 'chart'     as const, label: 'Chart',     hint: 'C' },
     { id: 'research'  as const, label: 'Research',  hint: 'R' },
+    { id: 'trading'   as const, label: 'TRD',       hint: 'T' },
     { id: 'settings'  as const, label: 'Settings',  hint: 'S' },
   ];
   return (

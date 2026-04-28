@@ -21,6 +21,7 @@ export interface Candle {
   h: number;
   l: number;
   c: number;
+  v?: number;          // volume; absent for some symbols (forex spot, metals)
   synthetic?: boolean;
 }
 
@@ -81,6 +82,7 @@ interface RawValue {
   high:     string;
   low:      string;
   close:    string;
+  volume?:  string;
 }
 
 // Single source of truth for Twelve Data /time_series requests. Centralises
@@ -124,6 +126,7 @@ export async function tdTimeSeries(opts: {
     h: parseFloat(v.high),
     l: parseFloat(v.low),
     c: parseFloat(v.close),
+    v: v.volume != null ? parseFloat(v.volume) : 0,
   }));
 }
 
