@@ -210,8 +210,35 @@ export default function ChartView({
     const cutoff  = lastT - span;
     const windowed = sorted.filter(p => p.t >= cutoff);
 
-    return windowed.length > 3000 ? lttbDownsample(windowed, 800) : windowed;
-  }, [series, displayCandles]);
+    // Market-window alignment for gold/silver. GCP runs 24/7 but XAU/USD
+    // and XAG/USD have weekend / overnight gaps. When LW Charts shares a
+    // time axis between panes and GCP has points inside those gaps, the
+    // candle pane gets empty horizontal stripes. Drop GCP points that
+    // sit further than ~2 bars from any real candle so the shared axis
+    // only allocates time for periods both sides have data. BTC trades
+    // 24/7 so it skips this filter and shows GCP continuously.
+    let aligned = windowed;
+    if (symbol !== 'BTC' && displayCandles.length >= 2) {
+      const tfMs        = CHART_TF_MS[chartTF] ?? 300_000;
+      const candleTs    = displayCandles.map(c => c.t);
+      const allowance   = 2 * tfMs;
+      // Binary search the nearest candle timestamp for each GCP point.
+      const nearest = (target: number): number => {
+        let lo = 0, hi = candleTs.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (candleTs[mid] < target) lo = mid + 1;
+          else hi = mid;
+        }
+        const a = lo > 0 ? candleTs[lo - 1] : Infinity;
+        const b = lo < candleTs.length ? candleTs[lo] : Infinity;
+        return Math.min(Math.abs(a - target), Math.abs(b - target));
+      };
+      aligned = windowed.filter(p => nearest(p.t) <= allowance);
+    }
+
+    return aligned.length > 3000 ? lttbDownsample(aligned, 800) : aligned;
+  }, [series, displayCandles, symbol, chartTF]);
 
   // ── Create chart + 3 panes (once) ──────────────────────────────────────────
   useEffect(() => {
