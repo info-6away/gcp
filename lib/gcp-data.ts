@@ -279,7 +279,7 @@ export function detectPatterns(
     const backB = w.slice(FA_B_START, FA_B_END).includes('B');
     const backA = w.slice(FA_A_START, FA_A_END).includes('A');
     if (hasAB && hasC && backB && backA) {
-      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + FA_SPAN, tStart: 0, tEnd: 0, glyph: 'AB# → B → C → B → A', strength: 0.28 });
+      patterns.push({ id: `fa-${i}`, kind: 'Failed Alignment', start: i, end: i + FA_SPAN, tStart: 0, tEnd: 0, glyph: 'AB# → B → C → B → A', strength: 0.62 });
       i += FA_SPAN;
     }
   }
@@ -308,7 +308,7 @@ export function detectPatterns(
     const peak  = regs.slice(i, i + CV_HALF);
     const right = regs.slice(i + CV_HALF, i + CV_LOOP_END).filter(r => r === 'A').length;
     if (left > CV_MIN_A && right > CV_MIN_A && peak.includes('C') && !peak.includes('D')) {
-      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - CV_PRE_PAD, end: i + CV_POST_PAD, tStart: 0, tEnd: 0, glyph: 'A → B → C → B → A', strength: 0.38 });
+      patterns.push({ id: `cv-${i}`, kind: 'Coherence Volcano', start: i - CV_PRE_PAD, end: i + CV_POST_PAD, tStart: 0, tEnd: 0, glyph: 'A → B → C → B → A', strength: 0.62 });
       i += CV_SKIP;
     }
   }
@@ -416,10 +416,16 @@ export function detectPatterns(
     const right = regs.slice(i + 1, Math.min(regs.length, i + 1 + DW_HALF))
       .filter(r => r === 'A' || r === 'B').length;
     if (left < DW_HALF * 0.6 || right < DW_HALF * 0.6) continue;
+    // Strength scales with how clean the surrounding A/B walls are.
+    // A "structurally clean" wave (both halves >=80% low-regime) sits at
+    // ~0.68; a borderline match at the 60% floor stays at ~0.55. Floor
+    // bumped to 0.60 per spec so a clean wave survives Medium sensitivity.
+    const wallRatio = (left + right) / (DW_HALF * 2);
+    const dwStrength = Math.max(0.60, Math.min(0.78, 0.55 + (wallRatio - 0.6) * 0.6));
     patterns.push({
       id: `dw-${i}`, kind: 'Discharge Wave',
       start: Math.max(0, i - DW_HALF), end: Math.min(regs.length - 1, i + DW_HALF),
-      tStart: 0, tEnd: 0, glyph: 'A → E → A', strength: 0.55,
+      tStart: 0, tEnd: 0, glyph: 'A → E → A', strength: dwStrength,
     });
     i += DW_SKIP;
   }
