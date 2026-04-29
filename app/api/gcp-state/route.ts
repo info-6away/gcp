@@ -42,8 +42,10 @@ export async function POST(req: Request) {
     const upstream = await fetch(`${baseUrl}${ENGINE_PATH}`, {
       method:  'POST',
       headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        // Engine authenticates via X-API-Key, not Authorization: Bearer.
+        // Sending Bearer made every upstream call 401 silently.
+        'X-API-Key':    apiKey,
       },
       body:   JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
