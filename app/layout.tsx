@@ -1,9 +1,28 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'GCP Pro — Coherence Regime Terminal',
+  title:       'GCP Pro — Coherence Regime Terminal',
   description: 'Global Consciousness Project regime analysis for XAUUSD',
+  applicationName: 'GCP Pro',
+  appleWebApp: {
+    capable:        true,
+    title:          'GCP Pro',
+    statusBarStyle: 'black-translucent',
+  },
+  // Manifest is wired up automatically by Next.js once app/manifest.ts
+  // exists, but declaring it explicitly here is harmless and keeps the
+  // intent visible in one place.
+  manifest: '/manifest.webmanifest',
+};
+
+export const viewport: Viewport = {
+  themeColor:       '#07080a',
+  // Stops iOS Safari from auto-zooming on input focus and prevents the
+  // user pinch-zooming the chart out of position when running as PWA.
+  width:            'device-width',
+  initialScale:     1,
+  viewportFit:      'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
