@@ -125,6 +125,17 @@ export default function GCPApp() {
 
   const [pssFlash, setPssFlash] = useState(false);
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Alert-freshness window scales with the active TF: tighter on 1m so
+  // a single missed minute doesn't count as historical, looser on 5m and
+  // above where each bar covers more wall-clock time.
+  const alertRecentWindowMs = (() => {
+    switch (timeframe) {
+      case '1m': return 3  * 60_000;
+      case '5m': return 10 * 60_000;
+      default:   return 10 * 60_000;
+    }
+  })();
+
   const { testAlert } = usePSSAlert(
     displayPatterns,
     displaySeries,
@@ -134,6 +145,7 @@ export default function GCPApp() {
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
       flashTimerRef.current = setTimeout(() => setPssFlash(false), 3_000);
     },
+    alertRecentWindowMs,
   );
 
   useEffect(() => {
