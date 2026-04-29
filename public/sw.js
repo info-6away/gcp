@@ -1,15 +1,17 @@
-// GCP Pro service worker -- v11.12.
+// GCP Pro service worker -- v11.13.
 // v11.11 added static-asset cache + offline shell.
-// v11.12 adds last-good-response fallback for same-origin /api/* GET
-// requests: network-first, only successful 200 responses get cached,
-// fetch failures fall back to the last cached good response.
-// Cross-origin APIs (gcp2.net, twelvedata.com, gold-api) stay
-// untouched; their cache headers / CORS rules remain authoritative.
+// v11.12 added last-good-response fallback for same-origin /api/* GET.
+// v11.13 wires the update-toast handshake: removes the in-install
+// skipWaiting() so a new SW lands in the waiting state on every
+// deploy, and adds a message listener that activates on demand when
+// the client posts { type: 'SKIP_WAITING' }. PWARegister surfaces
+// the prompt and reloads the page on controllerchange.
 //
 // Bump SW_VERSION on every shipped change to invalidate the previous
-// cache. v11.13 will surface this as a "New version available" toast.
+// cache. The activate handler purges any cache key that doesn't start
+// with the current SW_VERSION.
 
-const SW_VERSION  = 'gcppro-v11.12';
+const SW_VERSION  = 'gcppro-v11.13';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 
@@ -36,7 +38,19 @@ self.addEventListener('install', (event) => {
       })
     )
   );
-  self.skipWaiting();
+  // v11.13: deliberately NOT calling skipWaiting() here. New SWs sit in
+  // the waiting state until the client postMessages SKIP_WAITING
+  // (triggered by the user clicking REFRESH on the update toast). This
+  // prevents silent activations during an active session.
+});
+
+self.addEventListener('message', (event) => {
+  // The client (PWARegister) calls this when the user clicks REFRESH on
+  // the toast. skipWaiting() promotes the waiting SW to active; the
+  // browser then fires controllerchange on the client, which reloads.
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {
