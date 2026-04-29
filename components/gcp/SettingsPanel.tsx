@@ -9,6 +9,7 @@ import {
   type Sensitivity,
 } from '@/lib/sensitivity';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
@@ -21,6 +22,10 @@ interface SettingsPanelProps {
   timeframe:        Timeframe;
   seriesLength:     number;
   historicalPoints: number;
+  aiEnabled:        boolean;
+  aiState:          GcpStateResponse | null;
+  aiLastSuccess:    Date | null;
+  aiLastError:      Date | null;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
 
@@ -61,6 +66,25 @@ function StatusDot({ ok }: { ok: boolean }) {
       boxShadow: ok ? '0 0 5px var(--green)' : 'none',
     }} />
   );
+}
+
+function NeutralDot() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      width: 7, height: 7, borderRadius: '50%',
+      background: 'var(--fg-3)', marginRight: 6,
+    }} />
+  );
+}
+
+function formatRelative(d: Date | null): string {
+  if (!d) return 'never';
+  const secs = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (secs < 60)    return `${secs}s ago`;
+  if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -136,11 +160,30 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
   const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
+  // Re-render every 5 s so the AI Engine "Xs ago" stamp grows in real time
+  // even when no new data arrives.
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     setPrefs(loadPrefs());
     setSensitivity(loadSensitivity());
+    const id = setInterval(() => setTick(t => t + 1), 5_000);
+    return () => clearInterval(id);
   }, []);
+
+  const aiConnected =
+    props.aiEnabled &&
+    props.aiState != null &&
+    props.aiLastSuccess != null &&
+    (props.aiLastError == null || props.aiLastError <= props.aiLastSuccess);
+
+  const aiStatusLabel = !props.aiEnabled
+    ? 'Disabled'
+    : aiConnected
+      ? 'Connected'
+      : props.aiLastSuccess
+        ? 'Stale'
+        : 'Disconnected';
 
   const updateSensitivity = (s: Sensitivity) => {
     setSensitivity(s);
@@ -191,6 +234,48 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             sub="Jan 1 – Apr 24 2026 · local JSON"
             value={`${props.historicalPoints.toLocaleString()} min`}
           />
+        </Section>
+
+        <Section title="AI Engine">
+          <Row
+            label="Engine Connection"
+            sub="6away Engine · /v1/coherence/gcp-state · 25s poll via /api/gcp-state proxy"
+            value={
+              <>
+                {props.aiEnabled
+                  ? <StatusDot ok={aiConnected} />
+                  : <NeutralDot />}
+                {aiStatusLabel}
+              </>
+            }
+          />
+          <Row
+            label="Last Classification"
+            sub={
+              props.aiEnabled
+                ? (props.aiLastError && (!props.aiLastSuccess || props.aiLastError > props.aiLastSuccess))
+                    ? `Last error ${formatRelative(props.aiLastError)} — keeping prior state`
+                    : 'Time since the last successful Engine response'
+                : 'Polling is off — toggle aiState in localStorage to enable'
+            }
+            value={formatRelative(props.aiLastSuccess)}
+          />
+          {props.aiState && (
+            <>
+              <Row
+                label="Current State"
+                value={`${props.aiState.stateCode} · ${props.aiState.state}`}
+              />
+              <Row
+                label="Direction / Phase"
+                value={`${props.aiState.direction} · ${props.aiState.phase}`}
+              />
+              <Row
+                label="Strength / Confidence"
+                value={`${props.aiState.strength.toFixed(2)} · ${(props.aiState.confidence * 100).toFixed(0)}%`}
+              />
+            </>
+          )}
         </Section>
 
         <Section title="Preferences">

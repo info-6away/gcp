@@ -220,9 +220,9 @@ export default function GCPApp() {
 
   // Held for v11.15 (Dashboard AI STATE card). The hook polls and
   // refreshes its internal state whether or not anything renders the
-  // result -- no flicker, no UI change in v11.14.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _aiState = useGcpState(aiStateInputs);
+  // result. v11.14b surfaces the connection meta into Settings so the
+  // user can see whether the Engine proxy chain is healthy.
+  const aiState = useGcpState(aiStateInputs);
 
   useEffect(() => {
     if (!live) return;
@@ -405,6 +405,10 @@ export default function GCPApp() {
               timeframe={timeframe}
               seriesLength={displaySeries.length}
               historicalPoints={baseSeries.length}
+              aiEnabled={aiState.enabled}
+              aiState={aiState.state}
+              aiLastSuccess={aiState.lastSuccessAt}
+              aiLastError={aiState.lastErrorAt}
               onTestAlert={testAlert}
             />
           )}

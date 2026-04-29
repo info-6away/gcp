@@ -7,6 +7,12 @@
 // server, the payload is too short, or the network call fails, the hook
 // preserves its prior state and returns it. UI never blanks on a
 // transient Engine outage.
+//
+// v11.14b: hook now returns connection meta alongside the classification
+// (enabled flag, last-success timestamp, last-error timestamp) so the
+// Settings panel can render an Engine connection indicator. State value
+// itself still carries forward on errors -- meta lets the user see
+// staleness without blanking the displayed state.
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -36,9 +42,18 @@ function loadAiStatePref(): boolean {
   }
 }
 
-export function useGcpState(inputs: GcpStateInputs | null): GcpStateResponse | null {
-  const [state, setState] = useState<GcpStateResponse | null>(null);
-  const [enabled, setEnabled] = useState<boolean>(true);
+export interface UseGcpStateResult {
+  state:         GcpStateResponse | null;
+  enabled:       boolean;
+  lastSuccessAt: Date | null;
+  lastErrorAt:   Date | null;
+}
+
+export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
+  const [state, setState]                 = useState<GcpStateResponse | null>(null);
+  const [enabled, setEnabled]             = useState<boolean>(true);
+  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
+  const [lastErrorAt, setLastErrorAt]     = useState<Date | null>(null);
 
   const inputsRef   = useRef<GcpStateInputs | null>(inputs);
   const stateRef    = useRef<GcpStateResponse | null>(null);
@@ -99,13 +114,15 @@ export function useGcpState(inputs: GcpStateInputs | null): GcpStateResponse | n
             console.log('[AI STATE] response', result);
           }
           setState(result);
+          setLastSuccessAt(new Date());
         } else {
           if (isDev()) {
             console.log('[AI STATE] error, keeping last state');
           }
           // null result -> leave state untouched. UI never blanks on a
           // transient failure or a 503 from the proxy when env is
-          // missing.
+          // missing. Stamp lastErrorAt so Settings can show staleness.
+          setLastErrorAt(new Date());
         }
       } finally {
         inflightRef.current = false;
@@ -117,5 +134,5 @@ export function useGcpState(inputs: GcpStateInputs | null): GcpStateResponse | n
     return () => { cancelled = true; clearInterval(id); };
   }, [enabled]);
 
-  return state;
+  return { state, enabled, lastSuccessAt, lastErrorAt };
 }
