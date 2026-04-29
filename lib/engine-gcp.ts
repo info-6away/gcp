@@ -98,6 +98,10 @@ export async function classifyGcpState(
     if (!res.ok) return null;
     const data = await res.json();
     if (!data || typeof data !== 'object') return null;
+    // v11.14a: the proxy returns { ok: false, error } envelopes on
+    // failure paths. Recognise the envelope shape and treat it as
+    // null even if it arrives with a 2xx status.
+    if ((data as { ok?: boolean }).ok === false) return null;
     return data as GcpStateResponse;
   } catch {
     return null;
