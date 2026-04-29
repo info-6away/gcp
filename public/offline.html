@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GCP Pro — Offline</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07080a">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #07080a;
+      color: #aeb4bf;
+      font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    }
+    h1 {
+      color: #4dd9e8;
+      font-size: 14px;
+      letter-spacing: 0.18em;
+      font-weight: 600;
+      margin: 0;
+    }
+    p {
+      color: #6b7280;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      max-width: 320px;
+      text-align: center;
+      line-height: 1.6;
+      margin: 0;
+    }
+    button {
+      margin-top: 4px;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: #aeb4bf;
+      background: transparent;
+      border: 1px solid #1c2026;
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    button:hover { border-color: #4dd9e8; color: #4dd9e8; }
+  </style>
+</head>
+<body>
+  <div class="badge">
+    <span class="dot"></span>
+    <h1>GCP PRO — OFFLINE</h1>
+  </div>
+  <p>No network connection. Cached data is unavailable for this page.<br>Reconnect to load live coherence and price data.</p>
+  <button onclick="location.reload()">RETRY</button>
+</body>
+</html>

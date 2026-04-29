@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import PWARegister  from '@/components/gcp/PWARegister';
+import OfflineBanner from '@/components/gcp/OfflineBanner';
 
 export const metadata: Metadata = {
   title:       'GCP Pro — Coherence Regime Terminal',
@@ -36,7 +38,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <PWARegister />
+        <OfflineBanner />
+        {children}
+      </body>
     </html>
   );
 }
