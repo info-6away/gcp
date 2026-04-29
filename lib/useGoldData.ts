@@ -94,6 +94,44 @@ async function fetchPrice(symbol: MarketSymbol): Promise<{ price: number; source
 // ChartView mutates the rightmost candle's close on every tick.
 const REFRESH_MS = 2_000;
 
+// v11.12.1 localStorage warm-start. Per-symbol cache so switching XAUUSD
+// <-> BTC <-> XAGUSD doesn't bleed the wrong last-known price into the
+// new symbol's UI on reload. marketStatus is intentionally NOT cached --
+// hydrating "live" from disk would lie to the user; the freshness cue
+// stays the OfflineBanner + the existing source label.
+const LS_GOLD_KEY = (symbol: MarketSymbol) => `gcpro-cache-gold-${symbol}`;
+
+interface CachedGold {
+  price:     number | null;
+  prevPrice: number | null;
+  change:    number | null;
+  changePct: number | null;
+  source:    string | null;
+  lastFetch: number;     // Date.now() when the cache was written
+}
+
+function loadCachedGold(symbol: MarketSymbol): CachedGold | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(LS_GOLD_KEY(symbol));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj.price !== 'number') return null;
+    return obj as CachedGold;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedGold(symbol: MarketSymbol, c: CachedGold): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LS_GOLD_KEY(symbol), JSON.stringify(c));
+  } catch {
+    /* ignore quota / serialization */
+  }
+}
+
 export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
   const [state, setState] = useState<GoldState>({
     price: null, prevPrice: null, change: null, changePct: null,
@@ -109,7 +147,7 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
         const prev    = s.price ?? price;
         const change  = price - prev;
         const chgPct  = prev > 0 ? (change / prev) * 100 : 0;
-        return {
+        const next: GoldState = {
           price,
           prevPrice:    prev,
           change:       +change.toFixed(2),
@@ -120,24 +158,63 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
           error:        null,
           lastFetch:    new Date(),
         };
+        // v11.12.1: persist last-known so the next reload can warm-start.
+        // saveCachedGold runs synchronously inside the updater and is safe
+        // because localStorage writes are sync; React isn't fussed about
+        // side-effects in the updater here since we're not depending on
+        // its return value for anything other than the next state.
+        saveCachedGold(symbol, {
+          price:     next.price,
+          prevPrice: next.prevPrice,
+          change:    next.change,
+          changePct: next.changePct,
+          source:    next.source,
+          lastFetch: next.lastFetch ? next.lastFetch.getTime() : Date.now(),
+        });
+        return next;
       });
     } catch (e) {
-      setState({
-        price: null, prevPrice: null, change: null, changePct: null,
-        marketStatus: 'error', source: null,
+      // Don't blow away the last-known price on a single failed poll.
+      // Keep the previous value visible, mark error, let the next tick
+      // (2 s away) try again. If the user is fully offline the value
+      // stays in place + OfflineBanner from v11.11 indicates state.
+      setState(s => ({
+        ...s,
+        marketStatus: 'error',
         loading:      false,
         error:        String(e),
         lastFetch:    new Date(),
-      });
+      }));
     }
   }, [symbol]);
 
   useEffect(() => {
-    setState({
-      price: null, prevPrice: null, change: null, changePct: null,
-      marketStatus: 'live', source: null,
-      loading: true, error: null, lastFetch: null,
-    });
+    // Hydrate from localStorage so the dashboard shows last-known price
+    // immediately on reload (offline or online). marketStatus stays
+    // 'closed' because we cannot prove this value is currently live --
+    // the OfflineBanner from v11.11 covers the freshness cue. The first
+    // successful fetchGold below flips marketStatus to 'live' and
+    // overwrites with a fresh price.
+    const cached = loadCachedGold(symbol);
+    if (cached) {
+      setState({
+        price:        cached.price,
+        prevPrice:    cached.prevPrice,
+        change:       cached.change,
+        changePct:    cached.changePct,
+        marketStatus: 'closed',
+        source:       cached.source,
+        loading:      true,
+        error:        null,
+        lastFetch:    cached.lastFetch ? new Date(cached.lastFetch) : null,
+      });
+    } else {
+      setState({
+        price: null, prevPrice: null, change: null, changePct: null,
+        marketStatus: 'live', source: null,
+        loading: true, error: null, lastFetch: null,
+      });
+    }
     fetchGold();
   }, [fetchGold, symbol]);
 

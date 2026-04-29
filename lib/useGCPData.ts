@@ -77,6 +77,45 @@ function livePointsToSeries(points: GCPPoint[], startIndex: number): DataPoint[]
   }));
 }
 
+// ── localStorage warm-start (v11.12.1) ─────────────────────────────────────
+// Persist the live tail of the GCP series + scale factor + last NV/regime
+// after every successful poll, then hydrate from cache on _loadHistoricalOnce
+// so an offline reload shows last-known terminal state rather than a blank
+// dashboard. Historical comes from /data/gcp_2026.json which the v11.11 SW
+// caches as a static asset; only the live-API portion needs LS persistence.
+
+const LS_GCP_KEY = 'gcpro-cache-gcp';
+
+interface CachedGCP {
+  livePoints:  GCPPoint[];
+  liveNetvar:  number    | null;
+  liveRegime:  RegimeId  | null;
+  scaleFactor: number    | null;
+  lastUpdate:  number;     // Date.now() when the cache was written
+}
+
+function loadCachedGCP(): CachedGCP | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(LS_GCP_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !Array.isArray(obj.livePoints)) return null;
+    return obj as CachedGCP;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedGCP(c: CachedGCP): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LS_GCP_KEY, JSON.stringify(c));
+  } catch {
+    /* quota / serialization failure -- not worth surfacing */
+  }
+}
+
 function mergeSeries(historical: DataPoint[], live: GCPPoint[]): DataPoint[] {
   if (!live.length) return historical;
   const liveStart = live[0].t;
@@ -159,6 +198,20 @@ async function _loadHistoricalOnce(): Promise<void> {
     _scaledHistorical = hist;
     _historicalLoaded = true;
 
+    // Warm-start: hydrate live tail + scale factor from localStorage (if any
+    // previous session left them) BEFORE the first live poll lands. Historical
+    // alone gives the chart its full backbone; the cached live points fill the
+    // last 24 h gap so NV / regime / pattern feed all show real values
+    // immediately on reload, online or offline.
+    const cached = loadCachedGCP();
+    if (cached && cached.livePoints.length) {
+      _livePoints = cached.livePoints;
+      if (cached.scaleFactor !== null) {
+        _scale            = cached.scaleFactor;
+        _scaledHistorical = rescaleHistorical(_historical, _scale);
+      }
+    }
+
     const merged = mergeSeries(_scaledHistorical, _livePoints);
     const last   = merged[merged.length - 1];
     _setState(s => ({
@@ -167,10 +220,14 @@ async function _loadHistoricalOnce(): Promise<void> {
       // Keep gcpLoading=false once we have something to render — historical
       // alone is a reasonable fallback while live retries in the background.
       gcpLoading: hist.length === 0 && s.series.length === 0,
-      // Seed liveNetvar/liveRegime from historical so Dashboard widgets
-      // show something even before the live API responds.
-      liveNetvar: s.liveNetvar ?? (last ? last.v : null),
-      liveRegime: s.liveRegime ?? (last ? last.r : null),
+      // Cached values take precedence over the historical-tail seed so a
+      // reload mid-session shows the most recent live NV / regime, not the
+      // last historical bar. isLive is intentionally NOT set here -- only a
+      // live API success in _runFetchSeries flips it true. Stale cached
+      // values must not look live (per spec).
+      liveNetvar:  cached?.liveNetvar ?? s.liveNetvar ?? (last ? last.v : null),
+      liveRegime:  cached?.liveRegime ?? s.liveRegime ?? (last ? last.r : null),
+      scaleFactor: _scale,
     }));
   } finally {
     _historicalLoading = false;
@@ -225,6 +282,15 @@ async function _runFetchSeries(): Promise<void> {
         liveRegime:  last ? last.r : s.liveRegime,
       }));
     }, 0);
+
+    // v11.12.1: persist live tail for offline / reload warm-start.
+    saveCachedGCP({
+      livePoints:  points,
+      liveNetvar:  last ? last.v : null,
+      liveRegime:  last ? last.r : null,
+      scaleFactor: scale,
+      lastUpdate:  Date.now(),
+    });
   } catch (e) {
     console.warn('[GCP] _runFetchSeries error:', e);
     _setState(s => ({
