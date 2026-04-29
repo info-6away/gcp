@@ -1,15 +1,17 @@
-// GCP Pro service worker -- v11.11.
-// Static-cache shell only. Navigation requests are network-first with
-// cache fallback; same-origin static assets are cache-first; /api/* routes
-// pass through unchanged so the existing v11.9 dedup, GCP poll loop, and
-// gold poll behaviour are untouched. v11.12 will add API last-good fallback.
+// GCP Pro service worker -- v11.12.
+// v11.11 added static-asset cache + offline shell.
+// v11.12 adds last-good-response fallback for same-origin /api/* GET
+// requests: network-first, only successful 200 responses get cached,
+// fetch failures fall back to the last cached good response.
+// Cross-origin APIs (gcp2.net, twelvedata.com, gold-api) stay
+// untouched; their cache headers / CORS rules remain authoritative.
 //
-// Bump SW_VERSION on every shipped change to invalidate the previous cache
-// and force re-precache. v11.13 will surface this as a "New version
-// available" toast; for now the SW silently activates the new version.
+// Bump SW_VERSION on every shipped change to invalidate the previous
+// cache. v11.13 will surface this as a "New version available" toast.
 
-const SW_VERSION  = 'gcppro-v11.11';
+const SW_VERSION  = 'gcppro-v11.12';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
+const API_CACHE   = `${SW_VERSION}-api`;
 
 // Static asset paths to precache on install. Next.js fingerprints
 // /_next/static chunks so they can't be precached by name; those land
@@ -62,8 +64,14 @@ self.addEventListener('fetch', (event) => {
   // want to take responsibility for them in the SW.
   if (url.origin !== self.location.origin) return;
 
-  // /api/* routes pass through. v11.12 will add last-good fallback.
-  if (url.pathname.startsWith('/api/')) return;
+  // Same-origin /api/* GET: network-first with last-good fallback.
+  // POST / PUT / DELETE were already filtered by the GET-only check
+  // at the top of the handler, so /api/gcp-state (POST) passes through
+  // unchanged.
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(apiNetworkFirst(req));
+    return;
+  }
 
   // Navigation -> HTML document. Network-first so deploys land
   // immediately when online; cache fallback when offline; offline.html
@@ -100,6 +108,31 @@ async function cacheFirst(req) {
     return res;
   } catch {
     return new Response('', { status: 504, statusText: 'Offline' });
+  }
+}
+
+async function apiNetworkFirst(req) {
+  // Network-first: always attempt the live request, only fall back to
+  // cache when fetch itself throws (offline, DNS failure, TLS error).
+  // Non-OK responses (5xx / 4xx) propagate to the client untouched so
+  // server-side errors remain visible -- spec was explicit on "do not
+  // cache failed responses". v11.12 priority is fallback correctness
+  // when offline; freshness gating via TTL is left to v11.13+ if ever
+  // needed.
+  const cache = await caches.open(API_CACHE);
+  try {
+    const res = await fetch(req);
+    if (res && res.ok && res.status === 200) {
+      // Clone before consuming -- both the client and the cache need
+      // a usable body stream.
+      cache.put(req, res.clone());
+    }
+    return res;
+  } catch {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    // No cache, no network -- mirror the static-asset offline path.
+    return new Response(null, { status: 504, statusText: 'Offline' });
   }
 }
 
