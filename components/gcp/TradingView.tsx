@@ -20,6 +20,7 @@ import {
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import { tdTimeSeries, type Candle } from '@/lib/fetchCandles';
 import { sma, ema, rsi } from '@/lib/indicators';
+import { sanitizeCandles, nearZeroFloorFor } from '@/lib/sanity';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -257,29 +258,49 @@ export default function TradingView({ symbol, timeframe }: TradingViewProps) {
         !rsiRef.current || !volRef.current) return;
     if (!candles.length || !computed) return;
 
-    const candleData: CandlestickData[] = candles
-      .filter(c => c.o > 0 && c.c > 0)
-      .map(c => ({
-        time:  toTime(c.t),
-        open:  c.o, high: c.h, low: c.l, close: c.c,
-      }));
+    // v11.13.2: full OHLC sanity gate (NaN, <=0, OHLC consistency,
+    // unrealistic jumps) replaces the previous "o > 0 && c > 0" check.
+    // nearZeroFloor surfaces a console warn for the first few suspicious
+    // bars per symbol so the source of any future spike is locatable.
+    const cleanCandles = sanitizeCandles(
+      candles,
+      `TradingView.setData(${symbol},${timeframe})`,
+      {
+        filterJumps:    true,
+        nearZeroFloor:  nearZeroFloorFor(symbol),
+      },
+    );
+    const candleData: CandlestickData[] = cleanCandles.map(c => ({
+      time:  toTime(c.t),
+      open:  c.o, high: c.h, low: c.l, close: c.c,
+    }));
     try { candleRef.current.setData(candleData); } catch { /* */ }
 
     const lineFor = (vals: (number | null)[]): LineData[] =>
+      // vals are indexed against the original `candles` array so
+      // SMA/EMA/RSI windowing still aligns. Drop points whose source
+      // candle didn't pass sanity so a bad bar can't paint a NaN
+      // point on the indicator overlay.
       candles
-        .map((c, i) => ({ t: c.t, v: vals[i] }))
-        .filter(p => p.v != null)
+        .map((c, i) => ({ t: c.t, v: vals[i], ok: c.o > 0 && c.c > 0 && Number.isFinite(c.o) && Number.isFinite(c.c) }))
+        .filter(p => p.v != null && p.ok && Number.isFinite(p.v))
         .map(p => ({ time: toTime(p.t), value: p.v as number }));
 
     try { smaRef.current.setData(lineFor(computed.sma20)); } catch { /* */ }
     try { emaRef.current.setData(lineFor(computed.ema50)); } catch { /* */ }
     try { rsiRef.current.setData(lineFor(computed.rsi14)); } catch { /* */ }
 
-    const volData: HistogramData[] = candles.map(c => ({
-      time:  toTime(c.t),
-      value: c.v ?? 0,
-      color: c.c >= c.o ? C.upBar : C.dnBar,
-    }));
+    // Volume bars: only render where the underlying OHLC is valid.
+    // Otherwise a NaN close > NaN open comparison evaluates false and
+    // the bar gets the down color, but the bar's value is also NaN
+    // which LW Charts paints unpredictably on the histogram axis.
+    const volData: HistogramData[] = candles
+      .filter(c => Number.isFinite(c.o) && Number.isFinite(c.c) && c.o > 0 && c.c > 0)
+      .map(c => ({
+        time:  toTime(c.t),
+        value: Number.isFinite(c.v) ? (c.v as number) : 0,
+        color: c.c >= c.o ? C.upBar : C.dnBar,
+      }));
     try { volRef.current.setData(volData); } catch { /* */ }
 
     if (isInitRef.current) {

@@ -1,3 +1,5 @@
+import { sanitizeCandles } from '@/lib/sanity';
+
 const TD_BASE = 'https://api.twelvedata.com';
 const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
 
@@ -45,8 +47,14 @@ function fillWeekendGaps(candles: Candle[], tfMs: number): Candle[] {
     const gap  = curr.t - prev.t;
     if (gap > 2 * tfMs) {
       const flat = prev.c;
-      for (let t = prev.t + tfMs; t < curr.t; t += tfMs) {
-        out.push({ t, o: flat, h: flat, l: flat, c: flat, synthetic: true });
+      // v11.13.2: never propagate a NaN / 0 / negative seed across a
+      // gap. If prev's close is bad, skip the synthetic fill -- the
+      // chart will render the gap as empty space which is preferable
+      // to a string of zero bars on the price axis.
+      if (Number.isFinite(flat) && flat > 0) {
+        for (let t = prev.t + tfMs; t < curr.t; t += tfMs) {
+          out.push({ t, o: flat, h: flat, l: flat, c: flat, synthetic: true });
+        }
       }
     }
     out.push(curr);
@@ -66,6 +74,12 @@ function extendToNow(candles: Candle[], tfMs: number): Candle[] {
   if (nowSlot <= last.t) return candles;
 
   const flat = last.c;
+  // v11.13.2: refuse to extend if the last candle's close is bad --
+  // synthetic bars built on a NaN / 0 seed would propagate the spike
+  // forward to "now" and stamp the entire post-close period with
+  // invalid bars.
+  if (!Number.isFinite(flat) || flat <= 0) return candles;
+
   const out  = candles.slice();
   let added  = 0;
   const MAX  = 500;
@@ -120,7 +134,7 @@ export async function tdTimeSeries(opts: {
   if (data.status === 'error') throw new Error(data.message ?? 'TD error');
 
   const values: RawValue[] = data.values ?? [];
-  return values.slice().reverse().map(v => ({
+  const parsed: Candle[] = values.slice().reverse().map(v => ({
     t: new Date(v.datetime.replace(' ', 'T') + 'Z').getTime(),
     o: parseFloat(v.open),
     h: parseFloat(v.high),
@@ -128,6 +142,11 @@ export async function tdTimeSeries(opts: {
     c: parseFloat(v.close),
     v: v.volume != null ? parseFloat(v.volume) : 0,
   }));
+  // v11.13.2: drop any candle that fails the OHLC contract before it
+  // leaves the helper. Synthetic gap-fill / extend-to-now then operate
+  // on a guaranteed-clean array so a single bad upstream tick can't
+  // poison the seed for an entire post-close period.
+  return sanitizeCandles(parsed, `tdTimeSeries(${opts.symbol})`);
 }
 
 // Fetch up to `outputsize` candles ending at `endMs` (Unix ms). Adds the

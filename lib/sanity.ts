@@ -39,3 +39,105 @@ export function isReasonableJump(prev: number | null, next: number, maxPct = 0.1
   const jump = Math.abs(next - prev) / prev;
   return jump <= maxPct;
 }
+
+// ── v11.13.2 OHLC candle integrity ────────────────────────────────────────
+//
+// Structural type so sanity.ts doesn't need to import the Candle type from
+// fetchCandles (which would create a cycle when fetchCandles imports here).
+interface CandleShape {
+  t: number; o: number; h: number; l: number; c: number;
+}
+
+// Reject any candle that violates the OHLC contract: timestamp finite,
+// every OHLC field finite + > 0, high >= max(o, c, l), low <= min(o, c, h).
+// One bad value here used to spike the chart vertically because LW Charts
+// renders NaN as 0 on the price scale.
+export function isValidCandle(c: CandleShape | null | undefined): boolean {
+  if (!c) return false;
+  if (!Number.isFinite(c.t)) return false;
+  if (!Number.isFinite(c.o) || !Number.isFinite(c.h) ||
+      !Number.isFinite(c.l) || !Number.isFinite(c.c)) return false;
+  if (c.o <= 0 || c.h <= 0 || c.l <= 0 || c.c <= 0) return false;
+  if (c.h < Math.max(c.o, c.c, c.l)) return false;
+  if (c.l > Math.min(c.o, c.c, c.h)) return false;
+  return true;
+}
+
+// Compare consecutive candle closes; > maxPct in a single bar is almost
+// always a feed glitch on the symbols we trade. Real overnight gaps fall
+// well under 10% on XAU/XAG/BTC.
+export function isReasonableCandleJump(
+  prev: CandleShape | null | undefined,
+  next: CandleShape,
+  maxPct = 0.10,
+): boolean {
+  if (!prev) return true;
+  if (!Number.isFinite(prev.c) || !Number.isFinite(next.c) || prev.c <= 0) return true;
+  return Math.abs(next.c - prev.c) / prev.c <= maxPct;
+}
+
+// Per-symbol "this is impossible" floor for the debug locator. Logs a
+// warning if any OHLC field falls below the floor so we can identify
+// the source of a near-zero spike without spamming healthy feeds.
+// Pass 0 / undefined to disable the check.
+const NEAR_ZERO_FLOOR: Record<string, number> = {
+  XAUUSD:    100,    // gold spot has not been below $100 historically
+  'XAU/USD': 100,
+  BTC:       1000,   // BTC has not been below $1000 since 2017
+  'BTC/USD': 1000,
+  XAGUSD:    1,      // silver spot floor (rough)
+  'XAG/USD': 1,
+};
+
+export function nearZeroFloorFor(symbol: string | undefined): number {
+  if (!symbol) return 0;
+  return NEAR_ZERO_FLOOR[symbol] ?? 0;
+}
+
+// Filter a candle array through the OHLC + jump gates and emit a
+// single warning per call summarising rejections. Returns the clean
+// array. Use at every boundary where candles enter the chart pipeline
+// (initial fetch, lazy backfill, live append, setData / update calls).
+export function sanitizeCandles<T extends CandleShape>(
+  candles: T[],
+  source: string,
+  opts: {
+    filterJumps?:   boolean;
+    jumpMaxPct?:    number;
+    nearZeroFloor?: number;
+  } = {},
+): T[] {
+  if (!Array.isArray(candles) || candles.length === 0) return [];
+  let invalid    = 0;
+  let jumpReject = 0;
+  let nearZero   = 0;
+  const out: T[]    = [];
+  let prev: T | null = null;
+  for (const c of candles) {
+    if (!isValidCandle(c)) { invalid++; continue; }
+    if (opts.filterJumps && !isReasonableCandleJump(prev, c, opts.jumpMaxPct ?? 0.10)) {
+      jumpReject++;
+      continue;
+    }
+    out.push(c);
+    prev = c;
+    if (opts.nearZeroFloor && opts.nearZeroFloor > 0) {
+      const floor = opts.nearZeroFloor;
+      if (c.o < floor || c.h < floor || c.l < floor || c.c < floor) {
+        nearZero++;
+        // First few logs only -- enough to identify a glitch source
+        // without flooding the console if the feed is genuinely off.
+        if (nearZero <= 3) {
+          console.warn(
+            `[CHART] suspicious near-zero OHLC at ${source}`,
+            'time:', new Date(c.t).toISOString(),
+            'OHLC:', { o: c.o, h: c.h, l: c.l, c: c.c },
+          );
+        }
+      }
+    }
+  }
+  if (invalid > 0)    console.warn(`[CHART] filtered ${invalid} invalid candles before ${source}`);
+  if (jumpReject > 0) console.warn(`[CHART] unreasonable candle jump rejected (${jumpReject}) at ${source}`);
+  return out;
+}

@@ -13,6 +13,7 @@ import {
 } from 'lightweight-charts';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import { fetchCandlesForWindow, type Candle } from '@/lib/fetchCandles';
+import { sanitizeCandles, nearZeroFloorFor } from '@/lib/sanity';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -118,9 +119,12 @@ export default function PatternPriceChart({ symbol, tf, tStart, tEnd }: PatternP
       wickDownColor:   '#ef4444',
     });
 
+    // v11.13.2: full OHLC sanitize replaces the partial > 0 filter.
     cs.setData(
-      candles
-        .filter(c => c.o > 0 && c.c > 0)
+      sanitizeCandles(candles, `PatternPriceChart(${symbol})`, {
+        filterJumps:   true,
+        nearZeroFloor: nearZeroFloorFor(symbol),
+      })
         .map(c => ({
           time:  Math.floor(c.t / 1000) as Time,
           open:  c.o, high: c.h, low: c.l, close: c.c,

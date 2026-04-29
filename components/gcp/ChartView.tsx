@@ -21,6 +21,7 @@ import {
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import { lttbDownsample, detectPatterns } from '@/lib/gcp-data';
 import { tdTimeSeries } from '@/lib/fetchCandles';
+import { sanitizeCandles, isValidCandle, nearZeroFloorFor } from '@/lib/sanity';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -469,7 +470,19 @@ export default function ChartView({
     const cs = candleSeriesRef.current;
     if (!cs || !displayCandles.length) return;
 
-    const sortedCandles = displayCandles.slice().sort((a, b) => a.t - b.t);
+    // v11.13.2: sanitize before mapping to LW Charts shape. Drops any
+    // candle with invalid OHLC + filters >10% single-bar jumps as a
+    // feed-glitch guard. nearZeroFloor surfaces a console warn for the
+    // first few suspicious bars on this symbol so we can identify the
+    // source of any future near-zero spike without spamming logs.
+    const sortedCandles = sanitizeCandles(
+      displayCandles.slice().sort((a, b) => a.t - b.t),
+      `ChartView.setData(${symbol},${chartTF})`,
+      {
+        filterJumps:    true,
+        nearZeroFloor:  nearZeroFloorFor(symbol),
+      },
+    );
 
     const data: CandlestickData[] = sortedCandles.map(c => {
       const base = {
@@ -531,6 +544,10 @@ export default function ChartView({
         t: slot,
         o: livePrice, h: livePrice, l: livePrice, c: livePrice,
       };
+      // v11.13.2: validate the synthesised bar before pushing. livePrice
+      // already passed the v11.13.1 finite + > 0 gate above, but defense
+      // in depth keeps the candle pipeline self-consistent.
+      if (!isValidCandle(bar)) return;
       allCandlesRef.current.push(bar);
       try {
         cs.update({
@@ -539,12 +556,21 @@ export default function ChartView({
         });
       } catch { /* */ }
     } else if (slot === last.t) {
-      const bar: Candle = {
-        ...last,
-        h: Math.max(last.h, livePrice),
-        l: Math.min(last.l, livePrice),
-        c: livePrice,
-      };
+      // v11.13.2: if the existing last candle is corrupt (h/l NaN from
+      // a bad upstream bar), Math.max(NaN, livePrice) propagates NaN
+      // into the live bar's high/low and paints a vertical spike.
+      // Replace a bad last candle outright with a fresh synthetic bar
+      // built from livePrice alone -- safer than letting NaN compound.
+      const useLast = isValidCandle(last);
+      const bar: Candle = useLast
+        ? {
+            ...last,
+            h: Math.max(last.h, livePrice),
+            l: Math.min(last.l, livePrice),
+            c: livePrice,
+          }
+        : { t: slot, o: livePrice, h: livePrice, l: livePrice, c: livePrice };
+      if (!isValidCandle(bar)) return;
       allCandlesRef.current[allCandlesRef.current.length - 1] = bar;
       try {
         cs.update({
