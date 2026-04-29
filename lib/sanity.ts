@@ -49,9 +49,14 @@ interface CandleShape {
 }
 
 // Reject any candle that violates the OHLC contract: timestamp finite,
-// every OHLC field finite + > 0, high >= max(o, c, l), low <= min(o, c, h).
-// One bad value here used to spike the chart vertically because LW Charts
-// renders NaN as 0 on the price scale.
+// every OHLC field finite + > 0, high >= max(o, c, l), low <= min(o, c, h),
+// AND intra-bar spread h/l <= MAX_SPREAD_RATIO. The spread check catches
+// the v11.13.2 outage symptom -- Twelve Data was returning XAU 5m bars
+// with l=0.00022 while o/h/c were ~4534. Both v11.13.2 checks passed
+// (0.00022 > 0, 0.00022 <= min(...)) so the bar survived sanitize and
+// painted a vertical spike to ~0.
+const MAX_SPREAD_RATIO = 2;
+
 export function isValidCandle(c: CandleShape | null | undefined): boolean {
   if (!c) return false;
   if (!Number.isFinite(c.t)) return false;
@@ -60,6 +65,10 @@ export function isValidCandle(c: CandleShape | null | undefined): boolean {
   if (c.o <= 0 || c.h <= 0 || c.l <= 0 || c.c <= 0) return false;
   if (c.h < Math.max(c.o, c.c, c.l)) return false;
   if (c.l > Math.min(c.o, c.c, c.h)) return false;
+  // v11.13.3 intra-bar spread guard. Real XAU / XAG / BTC bars at any
+  // TF rarely exceed h/l = 1.05; 2.0 leaves enormous margin so this
+  // only catches true glitches where one field is wildly off.
+  if (c.h / c.l > MAX_SPREAD_RATIO) return false;
   return true;
 }
 
