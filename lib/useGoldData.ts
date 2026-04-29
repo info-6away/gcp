@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import type { MarketSymbol } from '@/types/gcp';
+import { isValidPrice, isReasonableJump } from '@/lib/sanity';
 
 const TD_BASE = 'https://api.twelvedata.com';
 const TD_KEY  = process.env.NEXT_PUBLIC_TWELVE_DATA_KEY ?? '';
@@ -143,7 +144,25 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
     try {
       const { price, source } = await fetchPrice(symbol);
 
+      // v11.13.1 sanity gate. tryTwelveData / tryGoldApi / tryYahoo
+      // already throw on parse failure / non-positive prices, but
+      // defense in depth: re-validate at the boundary so any future
+      // source helper that forgets the check can't poison state.
+      if (!isValidPrice(price)) {
+        console.warn('[GOLD] invalid price rejected:', price);
+        return; // keep prior state
+      }
+
       setState(s => {
+        // Reject unrealistic single-tick jumps (>10%). Real markets
+        // don't move 10% in 2 seconds, even on BTC; a tick that
+        // large is almost always a feed glitch. Returning `s` keeps
+        // the previous state and skips the cache write.
+        if (!isReasonableJump(s.price, price)) {
+          console.warn('[GOLD] unrealistic jump rejected:', s.price, '->', price);
+          return s;
+        }
+
         const prev    = s.price ?? price;
         const change  = price - prev;
         const chgPct  = prev > 0 ? (change / prev) * 100 : 0;
@@ -158,11 +177,10 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
           error:        null,
           lastFetch:    new Date(),
         };
-        // v11.12.1: persist last-known so the next reload can warm-start.
-        // saveCachedGold runs synchronously inside the updater and is safe
-        // because localStorage writes are sync; React isn't fussed about
-        // side-effects in the updater here since we're not depending on
-        // its return value for anything other than the next state.
+        // v11.12.1 + v11.13.1: persist last-known so the next reload
+        // can warm-start. Cache write only fires on the success path
+        // where we KNOW price passed both isValidPrice and the jump
+        // guard, so the persisted value is always sane.
         saveCachedGold(symbol, {
           price:     next.price,
           prevPrice: next.prevPrice,

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { regimeFor } from '@/lib/gcp-data';
+import { isValidNV, isValidNumber } from '@/lib/sanity';
 import type { DataPoint, RegimeId } from '@/types/gcp';
 
 const GCP2_BEARER = 'Bearer 5|M1bz2cXL3YLdmuArrI2KaySF0Cl8UxtiDznzK7Mk';
@@ -32,6 +33,11 @@ export interface GCPDataState {
 }
 
 async function gcpFetch(endpoint: string): Promise<unknown | null> {
+  // Returning null from this helper is the signal to _runFetchSeries
+  // that "this poll yielded no usable data -- keep prior state, do
+  // NOT broadcast or cache". The system's last-known values stay in
+  // place. v11.13.1 sanity layer downstream rejects any per-aggregate
+  // bad values that survive this layer.
   const res = await fetch(`${GCP2_BASE}${endpoint}`, {
     headers: {
       'Authorization': GCP2_BEARER,
@@ -40,7 +46,7 @@ async function gcpFetch(endpoint: string): Promise<unknown | null> {
   });
 
   if (res.status === 429) {
-    console.warn('[GCP] 429 rate limited, returning null');
+    console.warn('[GCP] 429 rate limited -- using last-known state');
     return null;
   }
   if (!res.ok) throw new Error(`GCP2 returned ${res.status}`);
@@ -251,16 +257,45 @@ async function _runFetchSeries(): Promise<void> {
     const aggregates: RawAggregate[] = data.aggregates ?? [];
     if (!aggregates.length) throw new Error('Empty aggregates');
 
-    const points: GCPPoint[] = aggregates.map(pt => {
-      const v = parseFloat(String(pt.netvar_aggregate));
-      return { t: pt.end_epoch * 1000, v: +v.toFixed(1), r: regimeFor(v) };
-    });
+    // v11.13.1 sanity gate: reject NaN, <=0, non-finite, or non-numeric
+    // aggregates BEFORE they reach _livePoints / merged series / chart /
+    // detector. One bad value used to spike the chart vertically and
+    // poison Compression Coil detection (NaN passed regimeFor() and
+    // landed as 'F').
+    let rejected = 0;
+    const points: GCPPoint[] = [];
+    for (const pt of aggregates) {
+      const raw = parseFloat(String(pt.netvar_aggregate));
+      if (!isValidNV(raw)) {
+        rejected++;
+        continue;
+      }
+      const v = +raw.toFixed(1);
+      points.push({ t: pt.end_epoch * 1000, v, r: regimeFor(v) });
+    }
+    if (rejected > 0) {
+      console.warn(`[GCP] invalid value rejected (${rejected} of ${aggregates.length} aggregates)`);
+    }
+    if (!points.length) {
+      // Every aggregate was bad -- treat as a failed poll, keep
+      // last-known state, don't overwrite cache.
+      console.warn('[GCP] all aggregates rejected, keeping last-known state');
+      return;
+    }
 
     _livePoints = points;
 
     if (_scale === null && _historical.length) {
-      _scale            = computeHistoricalScale(_historical, points);
-      _scaledHistorical = rescaleHistorical(_historical, _scale);
+      const candidate = computeHistoricalScale(_historical, points);
+      // computeHistoricalScale already clamps implausible ratios to 1
+      // and warns; this extra guard catches any future code path that
+      // returns NaN / <=0 / non-finite.
+      if (isValidNumber(candidate) && candidate > 0) {
+        _scale            = candidate;
+        _scaledHistorical = rescaleHistorical(_historical, _scale);
+      } else {
+        console.warn('[SCALE] invalid scale rejected:', candidate);
+      }
     }
 
     const merged = mergeSeries(_scaledHistorical, points);
@@ -283,14 +318,18 @@ async function _runFetchSeries(): Promise<void> {
       }));
     }, 0);
 
-    // v11.12.1: persist live tail for offline / reload warm-start.
-    saveCachedGCP({
-      livePoints:  points,
-      liveNetvar:  last ? last.v : null,
-      liveRegime:  last ? last.r : null,
-      scaleFactor: scale,
-      lastUpdate:  Date.now(),
-    });
+    // v11.12.1 + v11.13.1: persist live tail for offline / reload
+    // warm-start. Skip the write if the last point is invalid -- the
+    // cache must only ever hold values that survived the sanity gate.
+    if (last && isValidNV(last.v)) {
+      saveCachedGCP({
+        livePoints:  points,
+        liveNetvar:  last.v,
+        liveRegime:  last.r,
+        scaleFactor: isValidNumber(scale) && scale !== null && scale > 0 ? scale : null,
+        lastUpdate:  Date.now(),
+      });
+    }
   } catch (e) {
     console.warn('[GCP] _runFetchSeries error:', e);
     _setState(s => ({

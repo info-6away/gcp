@@ -515,6 +515,10 @@ export default function ChartView({
   useEffect(() => {
     if (!chartReady) return;
     if (livePrice == null || !livePriceTime) return;
+    // v11.13.1 sanity gate: never let a NaN / Infinity / <=0 livePrice
+    // mutate the live bar. cs.update() with a NaN close paints a vertical
+    // spike on the candle pane.
+    if (!Number.isFinite(livePrice) || livePrice <= 0) return;
     const cs = candleSeriesRef.current;
     if (!cs || !allCandlesRef.current.length) return;
 
