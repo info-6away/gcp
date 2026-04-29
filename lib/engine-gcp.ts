@@ -93,7 +93,11 @@ export async function classifyGcpState(
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
-      signal:  AbortSignal.timeout(10_000),
+      // Has to exceed the proxy + Engine ceiling. Engine maxDuration=45s,
+      // proxy timeout=35s, so 40s here means the client waits long enough
+      // for the proxy's own 35s timeout to fire and return a clean 502
+      // envelope rather than the client aborting first and discarding it.
+      signal:  AbortSignal.timeout(40_000),
     });
     if (!res.ok) return null;
     const data = await res.json();

@@ -12,7 +12,16 @@ import { NextResponse } from 'next/server';
 // cached -- exactly the spec requirement.
 
 const ENGINE_PATH = '/v1/coherence/gcp-state';
-const TIMEOUT_MS  = 10_000;
+// Sonnet calls genuinely take 5-20s; 10s was too tight even for the
+// happy path. With one corrective retry on schema fail the Engine
+// route caps at ~40s. Give the proxy 35s + the function ceiling 40s
+// so a slow-but-successful classification still reaches the client.
+const TIMEOUT_MS  = 35_000;
+
+// Without an explicit cap, Vercel kills the function at 10s on Hobby and
+// the user sees an empty response. 40s matches the Engine route ceiling
+// + a small buffer.
+export const maxDuration = 40;
 
 function fail(status: number, error = 'engine_unavailable', extra?: Record<string, unknown>) {
   return NextResponse.json(
