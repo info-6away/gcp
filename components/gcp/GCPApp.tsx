@@ -11,6 +11,10 @@ import {
   loadSensitivity, SENSITIVITY_THRESHOLDS, SENSITIVITY_LABEL,
   type Sensitivity,
 } from '@/lib/sensitivity';
+import { useGcpState } from '@/lib/useGcpState';
+import type { GcpStateInputs } from '@/lib/gcp-state-payload';
+import { windowMetrics } from '@/lib/energy';
+import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
 import PatternDetail from './PatternDetail';
@@ -147,6 +151,78 @@ export default function GCPApp() {
     },
     alertRecentWindowMs,
   );
+
+  // v11.14: Engine AI state classification. Inputs assembled from the
+  // existing live data; useGcpState polls /api/gcp-state on a 25 s
+  // cadence with overlapping-request prevention. Result held but NOT
+  // displayed yet -- v11.15 will surface it on the Dashboard.
+  const aiStateInputs = useMemo<GcpStateInputs | null>(() => {
+    if (!baseSeries.length) return null;
+    const last = baseSeries[baseSeries.length - 1];
+    if (!last) return null;
+
+    // Recent series tail (per spec: last 50-100 points). 100 keeps
+    // enough context for the Engine to see a real window without
+    // bloating the request body.
+    const tail = baseSeries.slice(-100).map(p => ({ t: p.t, v: p.v }));
+    if (tail.length < 10) return null; // engine validates >= 10
+
+    // Energy metrics computed locally so the Engine sees the same
+    // numbers the chart / detector see. Window covers the recent slice.
+    const slice = tail.map(p => p.v);
+    const m     = windowMetrics(slice);
+
+    const regimeCode = last.r ?? regimeForValue(last.v);
+    const regimeName = REGIME_NAME[regimeCode] ?? '';
+
+    const recentPatterns = displayPatterns.slice(-3).map(p => ({
+      patternCode: p.patternCode ?? PATTERN_CODE[p.kind] ?? '',
+      patternName: p.patternName ?? p.kind,
+      tStart:      p.tStart,
+      confidence:  p.confidence ?? p.strength,
+      pss:         p.pss,
+    }));
+
+    // Coarse short-term trend label from goldData.changePct. Engine
+    // owns the actual interpretation; we just hand it a tag.
+    const cp = goldData.changePct;
+    const trend: 'up' | 'down' | 'sideways' | 'unknown' =
+      cp == null ?  'unknown' :
+      cp >  0.10 ?  'up'      :
+      cp < -0.10 ?  'down'    :
+                    'sideways';
+
+    return {
+      symbol,
+      timeframe,
+      series:  tail,
+      metrics: {
+        slope:                m.slope,
+        curvature:            m.curvature,
+        ced:                  m.ced,
+        compressionDuration:  m.compressionDuration,
+        oscillationTightness: m.oscillationTightness,
+        pss:                  m.pss,
+      },
+      regime:         { code: regimeCode, name: regimeName },
+      recentPatterns,
+      goldContext:    { trend },
+      windowMinutes:  100,
+    };
+  }, [
+    baseSeries[baseSeries.length - 1]?.t,
+    baseSeries.length,
+    symbol,
+    timeframe,
+    goldData.changePct,
+    displayPatterns.length,
+  ]);
+
+  // Held for v11.15 (Dashboard AI STATE card). The hook polls and
+  // refreshes its internal state whether or not anything renders the
+  // result -- no flicker, no UI change in v11.14.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _aiState = useGcpState(aiStateInputs);
 
   useEffect(() => {
     if (!live) return;

@@ -1,10 +1,12 @@
 'use client';
 
-// Polls the Engine /v1/coherence/gcp-state classifier on a 60 s cadence.
-// Designed to be safe to mount before any UI consumes the result: if the
-// feature flag is off, the env vars are missing on the server, the
-// payload is too short, or the network call fails, the hook simply
-// returns null and the UI hides itself.
+// v11.14: polls the Engine /v1/coherence/gcp-state classifier on a 25 s
+// cadence with overlapping-request prevention and previous-state carry-
+// forward. Designed to be safe to mount before any UI consumes the
+// result: if the feature flag is off, the env vars are missing on the
+// server, the payload is too short, or the network call fails, the hook
+// preserves its prior state and returns it. UI never blanks on a
+// transient Engine outage.
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -15,7 +17,9 @@ import {
 } from '@/lib/gcp-state-payload';
 
 const PREFS_LS_KEY = 'gcpro-settings';
-const INTERVAL_MS  = 60_000;
+const INTERVAL_MS  = 25_000;     // v11.14: 60 s -> 25 s per spec.
+
+const isDev = (): boolean => process.env.NODE_ENV !== 'production';
 
 // Default ON so a fresh deploy can verify the proxy chain end-to-end via
 // the dev console; flip { aiState: false } in localStorage gcpro-settings
@@ -35,11 +39,17 @@ function loadAiStatePref(): boolean {
 export function useGcpState(inputs: GcpStateInputs | null): GcpStateResponse | null {
   const [state, setState] = useState<GcpStateResponse | null>(null);
   const [enabled, setEnabled] = useState<boolean>(true);
-  const inputsRef = useRef<GcpStateInputs | null>(inputs);
 
-  // Keep latest inputs in a ref so the interval callback always sees the
-  // current series / metrics / patterns without re-creating the timer.
+  const inputsRef   = useRef<GcpStateInputs | null>(inputs);
+  const stateRef    = useRef<GcpStateResponse | null>(null);
+  const inflightRef = useRef<boolean>(false);
+
+  // Latest inputs go into a ref so the timer doesn't re-create on every
+  // input change. State also mirrored into a ref so the tick callback
+  // can carry the prior classification forward as priorState in the
+  // payload without forcing the effect to re-subscribe.
   useEffect(() => { inputsRef.current = inputs; }, [inputs]);
+  useEffect(() => { stateRef.current = state;   }, [state]);
 
   // Read the feature-flag pref once + refresh on cross-tab storage events.
   useEffect(() => {
@@ -61,18 +71,45 @@ export function useGcpState(inputs: GcpStateInputs | null): GcpStateResponse | n
     let cancelled = false;
 
     const tick = async () => {
+      // v11.14 in-flight guard: if a previous request is still running
+      // (Engine slow / network slow), skip this tick rather than firing
+      // a second concurrent request. Only one /api/gcp-state call in
+      // flight at a time.
+      if (inflightRef.current) return;
+
       const cur = inputsRef.current;
       if (!cur) return;
-      const payload = buildGcpStatePayload(cur);
+
+      const payload = buildGcpStatePayload({
+        ...cur,
+        previousState: stateRef.current,
+      });
       if (!payload) return;
-      const result = await classifyGcpState(payload);
-      if (cancelled) return;
-      if (result) {
-        console.log('[AI STATE]', result);
-        setState(result);
+
+      if (isDev()) {
+        console.log('[AI STATE] request payload', payload);
       }
-      // null result: leave previous state in place so a transient Engine
-      // failure doesn't blank a working classification.
+
+      inflightRef.current = true;
+      try {
+        const result = await classifyGcpState(payload);
+        if (cancelled) return;
+        if (result) {
+          if (isDev()) {
+            console.log('[AI STATE] response', result);
+          }
+          setState(result);
+        } else {
+          if (isDev()) {
+            console.log('[AI STATE] error, keeping last state');
+          }
+          // null result -> leave state untouched. UI never blanks on a
+          // transient failure or a 503 from the proxy when env is
+          // missing.
+        }
+      } finally {
+        inflightRef.current = false;
+      }
     };
 
     tick();

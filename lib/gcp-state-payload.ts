@@ -3,7 +3,7 @@
 // (e.g. fewer than 10 series points), so the hook can skip the call
 // entirely instead of triggering a 400.
 
-import type { GcpStatePayload } from './engine-gcp';
+import type { GcpStatePayload, GcpStateResponse } from './engine-gcp';
 
 export interface GcpStateInputs {
   symbol:    string;
@@ -38,6 +38,12 @@ export interface GcpStateInputs {
   };
 
   windowMinutes?: number; // override; default = min(120, series.length)
+
+  // v11.14: previous Engine classification, injected by useGcpState
+  // from its own state via a ref. The builder forwards a flattened
+  // priorState struct so the Engine sees the prior label without
+  // having to ingest the full prior response.
+  previousState?: GcpStateResponse | null;
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -83,5 +89,12 @@ export function buildGcpStatePayload(
       pss:         p.pss,
     })),
     goldContext,
+    priorState: inputs.previousState ? {
+      state:      inputs.previousState.state,
+      stateCode:  inputs.previousState.stateCode,
+      direction:  inputs.previousState.direction,
+      phase:      inputs.previousState.phase,
+      confidence: inputs.previousState.confidence,
+    } : undefined,
   };
 }

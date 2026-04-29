@@ -40,6 +40,16 @@ export type GcpStatePayload = {
     return30m?: number;
     return60m?: number;
   };
+
+  // v11.14: prior classification carried forward so the Engine can
+  // detect state transitions instead of only point-in-time labels.
+  priorState?: {
+    state:      string;
+    stateCode:  string;
+    direction:  string;
+    phase:      string;
+    confidence: number;
+  };
 };
 
 export type GcpStateResponse = {
