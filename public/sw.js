@@ -11,7 +11,7 @@
 // cache. The activate handler purges any cache key that doesn't start
 // with the current SW_VERSION.
 
-const SW_VERSION  = 'gcppro-v11.13';
+const SW_VERSION  = 'gcppro-v11.14d';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 
