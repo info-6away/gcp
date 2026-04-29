@@ -52,8 +52,13 @@ export async function POST(req: Request) {
     });
 
     if (!upstream.ok) {
-      console.warn('[gcp-state] engine returned', upstream.status);
-      return fail(502, 'engine_unavailable', { upstreamStatus: upstream.status });
+      let upstreamBody = '';
+      try { upstreamBody = (await upstream.text()).slice(0, 200); } catch {}
+      console.warn('[gcp-state] engine returned', upstream.status, upstreamBody);
+      return fail(502, 'engine_unavailable', {
+        upstreamStatus: upstream.status,
+        upstreamBody,
+      });
     }
 
     // Engine success body is the GcpStateResponse shape -- forward as-is.
