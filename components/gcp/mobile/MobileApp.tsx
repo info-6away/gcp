@@ -40,11 +40,13 @@ interface MobileAppProps {
   setSymbol:       (s: MarketSymbol) => void;
   aiState:         GcpStateResponse | null;
   aiEnabled:       boolean;
+  aiLastSuccess:   Date | null;
+  aiLastError:     Date | null;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
-  aiState, aiEnabled,
+  aiState, aiEnabled, aiLastSuccess, aiLastError,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -97,6 +99,8 @@ export default function MobileApp({
         <SettingsScreen {...shared}
           settings={settings} updateSetting={updateSetting}
           seriesLength={baseSeries.length}
+          aiLastSuccess={aiLastSuccess}
+          aiLastError={aiLastError}
         />
       );
     }

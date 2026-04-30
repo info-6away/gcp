@@ -326,6 +326,8 @@ export default function GCPApp() {
         setSymbol={setSymbol}
         aiState={stableState}
         aiEnabled={aiState.enabled}
+        aiLastSuccess={aiState.lastSuccessAt}
+        aiLastError={aiState.lastErrorAt}
       />
     );
   }
