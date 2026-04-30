@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import { useCountdown } from '@/lib/useCountdown';
+
+type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
 
 function formatRelative(d: Date | null): string {
-  if (!d) return 'never';
+  if (!d) return '—';
   const secs = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
   if (secs < 60)    return `${secs}s ago`;
   if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
@@ -33,7 +35,8 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 
 export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
-  aiState, aiEnabled, aiLastSuccess, aiLastError,
+  aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
+  gcpLastUpdate, gcpNextPollAt,
 }: {
   liveNV: number | null; liveRegime: string | null; connected: boolean;
   settings: Record<string, boolean>; updateSetting: (k: string, v: boolean) => void;
@@ -42,32 +45,45 @@ export function SettingsScreen({
   aiEnabled:     boolean;
   aiLastSuccess: Date | null;
   aiLastError:   Date | null;
+  aiNextPollAt:  Date | null;
+  gcpLastUpdate: Date | null;
+  gcpNextPollAt: Date | null;
 }) {
-  // Tick once every 5 s so the AI Engine "Xs ago" stamp grows in real
-  // time even when no new data arrives between 25 s polls.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 5_000);
-    return () => clearInterval(id);
-  }, []);
+  // v11.15.3: state-machine derivation + 1 Hz countdowns shared across
+  // both connection rows. The countdown hook re-renders this screen
+  // every second; that's fine for a tab-level surface and avoids any
+  // bespoke timer plumbing on top of the polling loops.
+  const aiNextSecs  = useCountdown(aiNextPollAt);
+  const gcpNextSecs = useCountdown(gcpNextPollAt);
 
-  const aiConnected =
-    aiEnabled &&
-    aiState != null &&
-    aiLastSuccess != null &&
-    (aiLastError == null || aiLastError <= aiLastSuccess);
-  const aiStatusLabel = !aiEnabled
-    ? 'Disabled'
-    : aiConnected
-      ? 'Connected'
+  const aiPhase: ConnPhase = !aiEnabled
+    ? 'disabled'
+    : aiLastError && (!aiLastSuccess || aiLastError > aiLastSuccess)
+      ? 'reconnecting'
       : aiLastSuccess
-        ? 'Stale'
-        : 'Disconnected';
-  const aiStatusColor = !aiEnabled
-    ? C.fg3
-    : aiConnected
-      ? C.green
-      : C.red;
+        ? 'connected'
+        : 'initial';
+
+  const gcpPhase: ConnPhase = connected
+    ? 'connected'
+    : gcpLastUpdate
+      ? 'reconnecting'
+      : 'initial';
+
+  const aiStatusLabel = aiPhase === 'initial' ? 'Initializing…'
+    : aiPhase === 'connected' ? 'Connected'
+    : aiPhase === 'reconnecting' ? 'Reconnecting…'
+    : 'Disabled';
+  const aiStatusColor = aiPhase === 'connected' ? C.green
+    : aiPhase === 'reconnecting' ? C.red
+    : C.fg3;
+
+  const gcpStatusLabel = gcpPhase === 'initial' ? 'Loading data…'
+    : gcpPhase === 'connected' ? 'Live'
+    : 'Reconnecting…';
+  const gcpStatusColor = gcpPhase === 'connected' ? C.green
+    : gcpPhase === 'reconnecting' ? C.red
+    : C.fg3;
 
   const prefRows = [
     { key: 'pssAlerts',          label: 'PSS Alerts',         sub: 'Notify when PSS ≥ 70' },
@@ -76,23 +92,27 @@ export function SettingsScreen({
   ];
 
   const aiRows: { label: string; val: string; valColor: string; sub?: string }[] = [
-    {
-      label: 'Engine Connection',
-      val:    aiStatusLabel,
-      valColor: aiStatusColor,
-      sub:    '6away Engine · 25s poll via /api/gcp-state',
-    },
-    {
-      label: 'Last Classification',
-      val:    formatRelative(aiLastSuccess),
-      valColor: C.fg2,
-      sub:    aiEnabled
-        ? (aiLastError && (!aiLastSuccess || aiLastError > aiLastSuccess))
-            ? `Last error ${formatRelative(aiLastError)} — keeping prior state`
-            : 'Time since last successful Engine response'
-        : 'Polling is off',
-    },
+    { label: 'Status', val: aiStatusLabel, valColor: aiStatusColor,
+      sub: aiPhase === 'initial'      ? '6away Engine · 25s poll · waiting for first response'
+         : aiPhase === 'reconnecting' ? '6away Engine · 25s poll · keeping prior state'
+         : aiPhase === 'disabled'     ? 'Polling is off'
+         : '6away Engine · /v1/coherence/gcp-state' },
   ];
+  if (aiPhase === 'initial') {
+    aiRows.push({ label: 'Next check in', val: `${aiNextSecs}s`, valColor: C.fg1,
+      sub: 'First Engine classification will arrive shortly' });
+  } else if (aiPhase === 'connected') {
+    aiRows.push(
+      { label: 'Last update',    val: formatRelative(aiLastSuccess), valColor: C.fg2 },
+      { label: 'Next update in', val: `${aiNextSecs}s`,              valColor: C.fg1 },
+    );
+  } else if (aiPhase === 'reconnecting') {
+    aiRows.push(
+      { label: 'Last error', val: formatRelative(aiLastError), valColor: C.red,
+        sub: aiLastSuccess ? `Last success ${formatRelative(aiLastSuccess)}` : 'No successful classification yet' },
+      { label: 'Retry in',   val: `${aiNextSecs}s`,            valColor: C.fg1 },
+    );
+  }
   if (aiState) {
     aiRows.push(
       { label: 'Current State',         val: `${aiState.stateCode} · ${aiState.state}`,                              valColor: C.fg1 },
@@ -101,8 +121,21 @@ export function SettingsScreen({
     );
   }
 
+  const cohRows: { label: string; val: string; valColor: string; sub?: string }[] = [
+    { label: 'Status', val: gcpStatusLabel, valColor: gcpStatusColor,
+      sub: gcpPhase === 'initial'      ? 'gcp2.net · 120s poll · fetching first sample'
+         : gcpPhase === 'reconnecting' ? 'gcp2.net · 120s poll · last fetch failed, will retry'
+         : 'gcp2.net · 120s poll · browser direct' },
+    { label: 'Last update',
+      val:  gcpPhase === 'initial' ? '—' : formatRelative(gcpLastUpdate),
+      valColor: C.fg2 },
+    { label: 'Next update in', val: `${gcpNextSecs}s`, valColor: C.fg1 },
+  ];
+  if (liveNV != null) {
+    cohRows.push({ label: 'Net Variance', val: `${liveNV.toFixed(1)} NV`, valColor: C.fg1 });
+  }
+
   const sysRows = [
-    { label: 'GCP Network',     val: connected ? '● Live' : '○ Offline', valColor: connected ? C.green : C.red },
     { label: 'Historical GCP',  val: `${seriesLength.toLocaleString()} pts`, valColor: C.fg2 },
     { label: 'Version',         val: APP_VERSION, valColor: C.fg2 },
   ];
@@ -134,6 +167,31 @@ export function SettingsScreen({
                 value={settings[row.key] ?? true}
                 onChange={v => updateSetting(row.key, v)}
               />
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>COHERENCE (GCP)</div>
+        <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, marginBottom: 16 }}>
+          {cohRows.map((row, i) => (
+            <div key={row.label} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 14px', gap: 10,
+              borderBottom: i < cohRows.length - 1 ? `1px solid ${C.line0}` : 'none',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: C.fg1 }}>{row.label}</div>
+                {row.sub && (
+                  <div style={{ fontSize: 9, color: C.fg4, marginTop: 2 }}>{row.sub}</div>
+                )}
+              </div>
+              <div style={{
+                fontSize: 11, color: row.valColor,
+                fontVariantNumeric: 'tabular-nums',
+                textAlign: 'right', flexShrink: 0,
+              }}>
+                {row.val}
+              </div>
             </div>
           ))}
         </div>

@@ -328,6 +328,7 @@ export default function GCPApp() {
         aiEnabled={aiState.enabled}
         aiLastSuccess={aiState.lastSuccessAt}
         aiLastError={aiState.lastErrorAt}
+        aiNextPollAt={aiState.nextPollAt}
       />
     );
   }
@@ -410,6 +411,8 @@ export default function GCPApp() {
               gcpLive={gcpIsLive}
               gcpNetvar={liveNetvar}
               gcpScale={gcpScaleFactor}
+              gcpLastUpdate={gcpData.lastUpdate}
+              gcpNextPollAt={gcpData.nextPollAt}
               goldStatus={goldData.marketStatus}
               goldPrice={goldData.price}
               goldSource={goldData.source}
@@ -421,6 +424,7 @@ export default function GCPApp() {
               aiState={aiState.state}
               aiLastSuccess={aiState.lastSuccessAt}
               aiLastError={aiState.lastErrorAt}
+              aiNextPollAt={aiState.nextPollAt}
               onTestAlert={testAlert}
             />
           )}

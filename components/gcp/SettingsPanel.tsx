@@ -10,11 +10,14 @@ import {
 } from '@/lib/sensitivity';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import { useCountdown } from '@/lib/useCountdown';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
   gcpNetvar:        number | null;
   gcpScale:         number | null;
+  gcpLastUpdate:    Date | null;
+  gcpNextPollAt:    Date | null;
   goldStatus:       string;
   goldPrice:        number | null;
   goldSource:       string | null;
@@ -26,6 +29,7 @@ interface SettingsPanelProps {
   aiState:          GcpStateResponse | null;
   aiLastSuccess:    Date | null;
   aiLastError:      Date | null;
+  aiNextPollAt:     Date | null;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
 
@@ -156,34 +160,39 @@ function ToggleRow({
   );
 }
 
+type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
+
 export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
   const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
-  // Re-render every 5 s so the AI Engine "Xs ago" stamp grows in real time
-  // even when no new data arrives.
-  const [, setTick] = useState(0);
 
   useEffect(() => {
     setPrefs(loadPrefs());
     setSensitivity(loadSensitivity());
-    const id = setInterval(() => setTick(t => t + 1), 5_000);
-    return () => clearInterval(id);
   }, []);
 
-  const aiConnected =
-    props.aiEnabled &&
-    props.aiState != null &&
-    props.aiLastSuccess != null &&
-    (props.aiLastError == null || props.aiLastError <= props.aiLastSuccess);
-
-  const aiStatusLabel = !props.aiEnabled
-    ? 'Disabled'
-    : aiConnected
-      ? 'Connected'
+  // v11.15.3: derive a clean state machine for both connection rows
+  // and feed nextPollAt into a 1 Hz countdown. Boot state ("Initializing
+  // …" / "Loading data…") removes the false-disconnected impression on
+  // first load; reconnecting state distinguishes a transient failure
+  // from a never-succeeded connection.
+  const aiPhase: ConnPhase = !props.aiEnabled
+    ? 'disabled'
+    : props.aiLastError && (!props.aiLastSuccess || props.aiLastError > props.aiLastSuccess)
+      ? 'reconnecting'
       : props.aiLastSuccess
-        ? 'Stale'
-        : 'Disconnected';
+        ? 'connected'
+        : 'initial';
+
+  const gcpPhase: ConnPhase = props.gcpLive
+    ? 'connected'
+    : props.gcpLastUpdate
+      ? 'reconnecting'
+      : 'initial';
+
+  const aiNextSecs  = useCountdown(props.aiNextPollAt);
+  const gcpNextSecs = useCountdown(props.gcpNextPollAt);
 
   const updateSensitivity = (s: Sensitivity) => {
     setSensitivity(s);
@@ -216,8 +225,34 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Section title="Data Sources">
           <Row
             label="GCP2 Network Coherence"
-            sub="gcp2.net — 120s poll — browser direct"
-            value={<><StatusDot ok={props.gcpLive} />{props.gcpLive ? `${props.gcpNetvar?.toFixed(1)} NV` : 'Disconnected'}</>}
+            sub={
+              gcpPhase === 'initial'      ? 'gcp2.net — 120s poll — fetching first sample…'
+              : gcpPhase === 'reconnecting' ? 'gcp2.net — 120s poll — last fetch failed, will retry'
+              : 'gcp2.net — 120s poll — browser direct'
+            }
+            value={
+              <>
+                {gcpPhase === 'connected' && <StatusDot ok={true} />}
+                {gcpPhase === 'reconnecting' && <StatusDot ok={false} />}
+                {gcpPhase === 'initial' && <NeutralDot />}
+                {gcpPhase === 'connected'      ? `${props.gcpNetvar?.toFixed(1)} NV` :
+                 gcpPhase === 'reconnecting'   ? 'Reconnecting…' :
+                                                 'Loading data…'}
+              </>
+            }
+          />
+          <Row
+            label="Last Update"
+            sub={
+              gcpPhase === 'initial'
+                ? `Next update in ${gcpNextSecs}s`
+                : `Last update ${formatRelative(props.gcpLastUpdate)} · Next update in ${gcpNextSecs}s`
+            }
+            value={
+              gcpPhase === 'initial'
+                ? '—'
+                : formatRelative(props.gcpLastUpdate)
+            }
           />
           <Row
             label="Gold / BTC / Silver Spot Price"
@@ -238,28 +273,57 @@ export default function SettingsPanel(props: SettingsPanelProps) {
 
         <Section title="AI Engine">
           <Row
-            label="Engine Connection"
-            sub="6away Engine · /v1/coherence/gcp-state · 25s poll via /api/gcp-state proxy"
+            label="Status"
+            sub={
+              aiPhase === 'initial'      ? '6away Engine · 25s poll · waiting for first response'
+              : aiPhase === 'reconnecting' ? '6away Engine · 25s poll · keeping prior state on error'
+              : aiPhase === 'disabled'     ? 'Polling is off — toggle aiState in localStorage to enable'
+              : '6away Engine · /v1/coherence/gcp-state · via /api/gcp-state proxy'
+            }
             value={
               <>
-                {props.aiEnabled
-                  ? <StatusDot ok={aiConnected} />
-                  : <NeutralDot />}
-                {aiStatusLabel}
+                {aiPhase === 'connected'    && <StatusDot ok={true} />}
+                {aiPhase === 'reconnecting' && <StatusDot ok={false} />}
+                {(aiPhase === 'initial' || aiPhase === 'disabled') && <NeutralDot />}
+                {aiPhase === 'initial'      ? 'Initializing…' :
+                 aiPhase === 'connected'    ? 'Connected'      :
+                 aiPhase === 'reconnecting' ? 'Reconnecting…'  :
+                                              'Disabled'}
               </>
             }
           />
-          <Row
-            label="Last Classification"
-            sub={
-              props.aiEnabled
-                ? (props.aiLastError && (!props.aiLastSuccess || props.aiLastError > props.aiLastSuccess))
-                    ? `Last error ${formatRelative(props.aiLastError)} — keeping prior state`
-                    : 'Time since the last successful Engine response'
-                : 'Polling is off — toggle aiState in localStorage to enable'
-            }
-            value={formatRelative(props.aiLastSuccess)}
-          />
+          {aiPhase === 'initial' && (
+            <Row
+              label="Next check in"
+              sub="First Engine classification will arrive shortly"
+              value={`${aiNextSecs}s`}
+            />
+          )}
+          {aiPhase === 'connected' && (
+            <>
+              <Row
+                label="Last update"
+                value={formatRelative(props.aiLastSuccess)}
+              />
+              <Row
+                label="Next update in"
+                value={`${aiNextSecs}s`}
+              />
+            </>
+          )}
+          {aiPhase === 'reconnecting' && (
+            <>
+              <Row
+                label="Last error"
+                value={formatRelative(props.aiLastError)}
+              />
+              <Row
+                label="Retry in"
+                sub={props.aiLastSuccess ? `Last success ${formatRelative(props.aiLastSuccess)}` : 'No successful classification yet'}
+                value={`${aiNextSecs}s`}
+              />
+            </>
+          )}
           {props.aiState && (
             <>
               <Row

@@ -42,11 +42,12 @@ interface MobileAppProps {
   aiEnabled:       boolean;
   aiLastSuccess:   Date | null;
   aiLastError:     Date | null;
+  aiNextPollAt:    Date | null;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
-  aiState, aiEnabled, aiLastSuccess, aiLastError,
+  aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -101,6 +102,9 @@ export default function MobileApp({
           seriesLength={baseSeries.length}
           aiLastSuccess={aiLastSuccess}
           aiLastError={aiLastError}
+          aiNextPollAt={aiNextPollAt}
+          gcpLastUpdate={gcpData.lastUpdate}
+          gcpNextPollAt={gcpData.nextPollAt}
         />
       );
     }

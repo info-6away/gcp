@@ -10,6 +10,10 @@ const GCP2_BASE   = 'https://gcp2.net';
 
 const MIN_FETCH_GAP = 55_000;
 
+// v11.15.3: surfaced for the Settings boot/connection countdown. The
+// poll loop below sleeps GCP_POLL_INTERVAL_MS between successful fetches.
+export const GCP_POLL_INTERVAL_MS = 120_000;
+
 interface RawAggregate {
   end_epoch:        number;
   netvar_aggregate: string | number;
@@ -30,6 +34,11 @@ export interface GCPDataState {
   isLive:      boolean;
   lastUpdate:  Date | null;
   scaleFactor: number | null;
+  // v11.15.3: when the next /api/getNetVarAggregate24H tick is scheduled
+  // to fire. Set right before the loop sleeps so Settings can render a
+  // 1 Hz countdown. null while no poll is pending (initial mount, before
+  // the loop body has reached the sleep).
+  nextPollAt:  Date | null;
 }
 
 async function gcpFetch(endpoint: string): Promise<unknown | null> {
@@ -174,7 +183,7 @@ function rescaleHistorical(historical: DataPoint[], scale: number): DataPoint[] 
 const INITIAL_STATE: GCPDataState = {
   series: [], liveNetvar: null, liveRegime: null,
   gcpLoading: true, gcpError: null, isLive: false, lastUpdate: null,
-  scaleFactor: null,
+  scaleFactor: null, nextPollAt: null,
 };
 
 let _state: GCPDataState = INITIAL_STATE;
@@ -350,12 +359,16 @@ function _ensurePolling(): void {
     // (uncaught throw, listeners drain, etc.). Without this, a single
     // unhandled rejection could deadlock _ensurePolling forever.
     try {
+      // First poll fires after a 3s warm-up window so historical data
+      // can hydrate first. Surface that as the initial countdown anchor.
+      _setState(s => ({ ...s, nextPollAt: new Date(Date.now() + 3_000) }));
       await new Promise(r => setTimeout(r, 3_000));
       while (_listeners.size > 0) {
         try { await _runFetchSeries(); }
         catch (e) { console.warn('[GCP] poll iter threw:', e); }
         if (_listeners.size === 0) break;
-        await new Promise(r => setTimeout(r, 120_000));
+        _setState(s => ({ ...s, nextPollAt: new Date(Date.now() + GCP_POLL_INTERVAL_MS) }));
+        await new Promise(r => setTimeout(r, GCP_POLL_INTERVAL_MS));
       }
     } finally {
       _pollLoopPromise = null;
