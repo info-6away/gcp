@@ -31,9 +31,20 @@ export interface GoldState {
   lastFetch:    Date | null;
 }
 
+// v11.16.2: typed marker so the polling loop can distinguish a rate-limit
+// response from any other transient failure and apply an explicit
+// backoff instead of treating it like ordinary noise.
+class Rate429Error extends Error {
+  constructor(source: string) {
+    super(`${source} 429`);
+    this.name = 'Rate429Error';
+  }
+}
+
 async function tryGoldApi(symbol: MarketSymbol): Promise<number> {
   const s = GOLD_API_SYMBOLS[symbol];
   const res = await fetch(`https://api.gold-api.com/price/${s}`, { signal: AbortSignal.timeout(5000) });
+  if (res.status === 429) throw new Rate429Error('gold-api');
   if (!res.ok) throw new Error(`gold-api ${res.status}`);
   const d = await res.json();
   const raw = d.price ?? d.rate ?? d.bid;
@@ -49,9 +60,15 @@ async function tryTwelveData(symbol: MarketSymbol): Promise<number> {
     `${TD_BASE}/price?symbol=${s}&apikey=${TD_KEY}`,
     { signal: AbortSignal.timeout(5000) }
   );
+  if (res.status === 429) throw new Rate429Error('twelve-data');
   if (!res.ok) throw new Error(`TD ${res.status}`);
   const d = await res.json();
-  if (d.status === 'error') throw new Error(d.message ?? 'TD error');
+  // TD also signals rate-limit inside the JSON body with status: 'error',
+  // code 429 — handle that path too so the backoff actually engages.
+  if (d.status === 'error') {
+    if (d.code === 429) throw new Rate429Error('twelve-data');
+    throw new Error(d.message ?? 'TD error');
+  }
   const p = parseFloat(d.price);
   if (!isFinite(p) || p <= 0) throw new Error('Invalid price');
   return p;
@@ -65,35 +82,52 @@ async function tryYahoo(symbol: MarketSymbol): Promise<number> {
   return d.lastPrice;
 }
 
+interface PriceResult {
+  price:  number;
+  source: string;
+  saw429: boolean;
+}
+
 // Twelve Data is the primary live-price source for all three symbols
 // (XAU/USD, XAG/USD, BTC/USD) on the TD Grow plan. gold-api stays as a
 // fallback when TD errors or times out, and the Yahoo proxy is the last
-// resort behind both.
-async function fetchPrice(symbol: MarketSymbol): Promise<{ price: number; source: string }> {
+// resort behind both. v11.16.2 also reports whether any source threw
+// 429 so the caller can switch the polling loop into a backoff window
+// even when a fallback succeeded.
+async function fetchPrice(symbol: MarketSymbol): Promise<PriceResult> {
   const sources = [
     { name: 'twelve-data', fn: () => tryTwelveData(symbol) },
     { name: 'gold-api',    fn: () => tryGoldApi(symbol)    },
     { name: 'yahoo',       fn: () => tryYahoo(symbol)      },
   ];
 
+  let saw429 = false;
   const errors: string[] = [];
   for (const { name, fn } of sources) {
     try {
       const price = await fn();
-      return { price, source: name };
+      return { price, source: name, saw429 };
     } catch (e) {
+      if (e instanceof Rate429Error) saw429 = true;
       errors.push(`${name}: ${e}`);
       console.debug(`[price] ${name} failed:`, e);
     }
   }
-  throw new Error(`All sources failed: ${errors.join(' | ')}`);
+  const err = new Error(`All sources failed: ${errors.join(' | ')}`) as Error & { saw429?: boolean };
+  err.saw429 = saw429;
+  throw err;
 }
 
-// 2 s poll for TradingView-like live feel. TD Grow allows a single-symbol
-// /price call at this rate without rate limiting; gold-api / Yahoo only
-// fire when TD fails. This drives the chart's live-bar update too:
-// ChartView mutates the rightmost candle's close on every tick.
-const REFRESH_MS = 2_000;
+// v11.16.2: polling cadence is now adaptive. The TD Grow plan supports
+// the 1 s active rate; gold-api / Yahoo only fire on TD failure. Hidden
+// tabs slow down so a backgrounded PWA isn't hammering the wallet, and
+// any 429 escalates the wait window so we stop poking the rate-limited
+// source. None of these constants change the chart candle integrity
+// logic, GCP polling, or the AI Engine loop.
+const ACTIVE_INTERVAL_MS  = 1_000;
+const HIDDEN_INTERVAL_MS  = 8_000;
+const BACKOFF_INITIAL_MS  = 15_000;
+const BACKOFF_MAX_MS      = 30_000;
 
 // v11.12.1 localStorage warm-start. Per-symbol cache so switching XAUUSD
 // <-> BTC <-> XAGUSD doesn't bleed the wrong last-known price into the
@@ -140,9 +174,9 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
     loading: true, error: null, lastFetch: null,
   });
 
-  const fetchGold = useCallback(async () => {
+  const fetchGold = useCallback(async (): Promise<{ saw429: boolean }> => {
     try {
-      const { price, source } = await fetchPrice(symbol);
+      const { price, source, saw429 } = await fetchPrice(symbol);
 
       // v11.13.1 sanity gate. tryTwelveData / tryGoldApi / tryYahoo
       // already throw on parse failure / non-positive prices, but
@@ -150,14 +184,14 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
       // source helper that forgets the check can't poison state.
       if (!isValidPrice(price)) {
         console.warn('[GOLD] invalid price rejected:', price);
-        return; // keep prior state
+        return { saw429 };
       }
 
       setState(s => {
         // Reject unrealistic single-tick jumps (>10%). Real markets
-        // don't move 10% in 2 seconds, even on BTC; a tick that
-        // large is almost always a feed glitch. Returning `s` keeps
-        // the previous state and skips the cache write.
+        // don't move 10% in a second, even on BTC; a tick that large
+        // is almost always a feed glitch. Returning `s` keeps the
+        // previous state and skips the cache write.
         if (!isReasonableJump(s.price, price)) {
           console.warn('[GOLD] unrealistic jump rejected:', s.price, '->', price);
           return s;
@@ -191,11 +225,12 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
         });
         return next;
       });
+      return { saw429 };
     } catch (e) {
       // Don't blow away the last-known price on a single failed poll.
       // Keep the previous value visible, mark error, let the next tick
-      // (2 s away) try again. If the user is fully offline the value
-      // stays in place + OfflineBanner from v11.11 indicates state.
+      // try again. If the user is fully offline the value stays in
+      // place + OfflineBanner from v11.11 indicates state.
       setState(s => ({
         ...s,
         marketStatus: 'error',
@@ -203,16 +238,18 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
         error:        String(e),
         lastFetch:    new Date(),
       }));
+      const saw429 = (e as { saw429?: boolean })?.saw429 === true;
+      return { saw429 };
     }
   }, [symbol]);
 
+  // Hydrate from localStorage so the dashboard shows last-known price
+  // immediately on reload (offline or online). marketStatus stays
+  // 'closed' because we cannot prove this value is currently live --
+  // the OfflineBanner from v11.11 covers the freshness cue. The first
+  // successful fetchGold below flips marketStatus to 'live' and
+  // overwrites with a fresh price.
   useEffect(() => {
-    // Hydrate from localStorage so the dashboard shows last-known price
-    // immediately on reload (offline or online). marketStatus stays
-    // 'closed' because we cannot prove this value is currently live --
-    // the OfflineBanner from v11.11 covers the freshness cue. The first
-    // successful fetchGold below flips marketStatus to 'live' and
-    // overwrites with a fresh price.
     const cached = loadCachedGold(symbol);
     if (cached) {
       setState({
@@ -233,12 +270,78 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
         loading: true, error: null, lastFetch: null,
       });
     }
-    fetchGold();
-  }, [fetchGold, symbol]);
+  }, [symbol]);
 
+  // v11.16.2: adaptive polling loop. Self-scheduling setTimeout chain
+  // so each tick re-evaluates document visibility and any current
+  // backoff window before deciding when the next fetch fires. The loop
+  // does NOT call fetchPrice in parallel with itself (each tick awaits
+  // before scheduling the next), so a slow upstream just stretches the
+  // gap rather than racing requests.
   useEffect(() => {
-    const id = setInterval(fetchGold, REFRESH_MS);
-    return () => clearInterval(id);
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let backoffMs: number | null = null;
+    let lastLoggedMs = -1;
+
+    const computeInterval = () => {
+      if (backoffMs !== null) return backoffMs;
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      return hidden ? HIDDEN_INTERVAL_MS : ACTIVE_INTERVAL_MS;
+    };
+
+    const reasonFor = (ms: number) => {
+      if (backoffMs !== null) return `backoff (${ms}ms after 429)`;
+      if (ms === HIDDEN_INTERVAL_MS) return 'hidden tab';
+      return 'active';
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      const result = await fetchGold();
+      if (cancelled) return;
+
+      if (result.saw429) {
+        backoffMs = backoffMs == null
+          ? BACKOFF_INITIAL_MS
+          : Math.min(BACKOFF_MAX_MS, backoffMs * 2);
+      } else if (backoffMs !== null) {
+        // First clean tick after a backoff window: drop straight back
+        // to the visibility-aware interval. No gradual decay -- we
+        // either are or aren't being rate-limited.
+        backoffMs = null;
+      }
+
+      const next = computeInterval();
+      if (next !== lastLoggedMs) {
+        console.log(`[GOLD] poll interval adjusted -> ${next}ms (${reasonFor(next)})`);
+        lastLoggedMs = next;
+      }
+      timerId = setTimeout(tick, next);
+    };
+
+    // Kick the first poll immediately so the dashboard shows a fresh
+    // price as fast as the proxy chain can deliver one.
+    tick();
+
+    // Visibility flips don't cancel the in-flight request; the next
+    // scheduled tick simply picks up the new interval. Forcing an
+    // immediate re-fetch on becoming visible would be nicer but costs
+    // an extra TD call every time the user tabs in -- skipped for now.
+    const onVisibility = () => {
+      const next = computeInterval();
+      if (next !== lastLoggedMs) {
+        console.log(`[GOLD] poll interval adjusted -> ${next}ms (${reasonFor(next)})`);
+        lastLoggedMs = next;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) clearTimeout(timerId);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [fetchGold]);
 
   return state;
