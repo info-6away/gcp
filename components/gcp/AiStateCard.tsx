@@ -185,9 +185,22 @@ function Card({ state, enabled, flash = false }: Props) {
         </span>
       </div>
 
+      {/* v11.16.5: explanation is the second-most-important element on
+          the dashboard after the state name. Brighter foreground (not
+          pure white), subtle cyan glow, and a left-border container so
+          it reads as a key insight rather than secondary text. */}
       <div style={{
-        fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5,
         marginTop: 14,
+        padding: '8px 12px',
+        background: 'rgba(56, 189, 248, 0.03)',
+        borderLeft: '2px solid rgba(56, 189, 248, 0.25)',
+        borderRadius: 6,
+        fontSize: 12,
+        fontWeight: 500,
+        lineHeight: 1.5,
+        letterSpacing: '0.2px',
+        color: '#B8D1DA',
+        textShadow: '0 0 6px rgba(56, 189, 248, 0.15)',
       }}>
         {oneLiner}
       </div>

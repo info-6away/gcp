@@ -135,7 +135,25 @@ export function DashboardScreen({
                 <span><span style={{ color: C.fg3 }}>BIAS </span><span style={{ color: C.fg1 }}>{aiState.direction}</span></span>
                 <span><span style={{ color: C.fg3 }}>CONF </span><span style={{ color: C.fg1 }}>{conf}%</span></span>
               </div>
-              <div style={{ fontSize: 10, color: C.fg2, lineHeight: 1.45, marginTop: 6 }}>
+              {/* v11.16.5: AI explanation styled as a key insight,
+                  not secondary text. Larger font (14px on mobile), a
+                  brighter blue-grey foreground with a subtle cyan
+                  glow, and a left-border container. The state name
+                  above stays the largest element so hierarchy is
+                  preserved. */}
+              <div style={{
+                marginTop: 8,
+                padding: '8px 10px',
+                background: 'rgba(56, 189, 248, 0.03)',
+                borderLeft: '2px solid rgba(56, 189, 248, 0.25)',
+                borderRadius: 6,
+                fontSize: 14,
+                fontWeight: 500,
+                lineHeight: 1.5,
+                letterSpacing: '0.2px',
+                color: '#B8D1DA',
+                textShadow: '0 0 6px rgba(56, 189, 248, 0.15)',
+              }}>
                 {interp}
               </div>
             </div>
