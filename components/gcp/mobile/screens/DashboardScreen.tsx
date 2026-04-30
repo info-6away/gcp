@@ -3,7 +3,11 @@
 import { C, regimeColor } from '../colors';
 import { MobileStatus, SymbolBar } from '../MobileChrome';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useNewsData } from '@/lib/useNewsData';
+import {
+  directionArrow, stateColor, DEFAULT_INTERPRETATION,
+} from '@/lib/aiState';
 
 const REGIME_NAMES: Record<string, string> = {
   A: 'Silence', B: 'Ignition', C: 'Alignment',
@@ -25,10 +29,13 @@ const pssOf = (p: Pattern) => Math.round(p.strength * 100);
 export function DashboardScreen({
   series, patterns, liveNV, liveRegime, connected,
   symbol, price, onSymbolPress,
+  aiState, aiEnabled,
 }: {
   series: DataPoint[]; patterns: Pattern[];
   liveNV: number | null; liveRegime: string | null; connected: boolean;
   symbol: MarketSymbol; price: number | null; onSymbolPress?: () => void;
+  aiState:   GcpStateResponse | null;
+  aiEnabled: boolean;
 }) {
   const last15   = series.slice(-15);
   const sparkMax = Math.max(...last15.map(p => p.v), 50);
@@ -39,10 +46,78 @@ export function DashboardScreen({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected} />
+      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
+        aiState={aiState} aiEnabled={aiEnabled} />
       <SymbolBar symbol={symbol} price={price} onSymbolPress={onSymbolPress} />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 16px' }}>
+
+        {aiEnabled && (() => {
+          if (!aiState) {
+            return (
+              <div style={{
+                background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
+                padding: '10px 12px', marginBottom: 8,
+                borderLeft: `2px solid ${C.fg3}`,
+              }}>
+                <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>AI STATE</div>
+                <div style={{
+                  fontSize: 16, color: C.fg3, fontWeight: 600,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', background: C.fg3,
+                  }} />
+                  Analyzing…
+                </div>
+                <div style={{ fontSize: 9, color: C.fg3, marginTop: 4 }}>
+                  Waiting for first Engine classification
+                </div>
+              </div>
+            );
+          }
+          const accent = stateColor(aiState);
+          const arrow  = directionArrow(aiState.direction);
+          const conf   = Math.round(aiState.confidence * 100);
+          const interp =
+            aiState.reasoningShort?.trim() ||
+            aiState.goldInterpretation?.trim() ||
+            DEFAULT_INTERPRETATION[aiState.stateCode] || '—';
+          return (
+            <div style={{
+              background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
+              padding: '10px 12px', marginBottom: 8,
+              borderLeft: `2px solid ${accent}`,
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                marginBottom: 4,
+              }}>
+                <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3 }}>AI STATE</div>
+                <div style={{ fontSize: 8, letterSpacing: '0.08em', color: accent }}>
+                  {aiState.coherenceType.toUpperCase()}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ fontSize: 18, color: accent, fontWeight: 600, lineHeight: 1.05 }}>
+                  {aiState.state.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 16, color: accent, fontWeight: 600 }}>{arrow}</span>
+              </div>
+              <div style={{
+                display: 'flex', gap: 10, marginTop: 6,
+                fontSize: 9, color: C.fg3, letterSpacing: '0.04em',
+              }}>
+                <span><span style={{ color: C.fg3 }}>PHASE </span><span style={{ color: C.fg1 }}>{aiState.phase}</span></span>
+                <span><span style={{ color: C.fg3 }}>BIAS </span><span style={{ color: C.fg1 }}>{aiState.direction}</span></span>
+                <span><span style={{ color: C.fg3 }}>CONF </span><span style={{ color: C.fg1 }}>{conf}%</span></span>
+              </div>
+              <div style={{ fontSize: 10, color: C.fg2, lineHeight: 1.45, marginTop: 6 }}>
+                {interp}
+              </div>
+            </div>
+          );
+        })()}
 
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, padding: '10px 12px', marginBottom: 8 }}>
           <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>NET VARIANCE</div>

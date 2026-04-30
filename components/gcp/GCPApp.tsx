@@ -12,6 +12,7 @@ import {
   type Sensitivity,
 } from '@/lib/sensitivity';
 import { useGcpState } from '@/lib/useGcpState';
+import { useStableAiState } from '@/lib/aiState';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
 import { windowMetrics } from '@/lib/energy';
 import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
@@ -218,11 +219,14 @@ export default function GCPApp() {
     displayPatterns.length,
   ]);
 
-  // Held for v11.15 (Dashboard AI STATE card). The hook polls and
-  // refreshes its internal state whether or not anything renders the
-  // result. v11.14b surfaces the connection meta into Settings so the
-  // user can see whether the Engine proxy chain is healthy.
-  const aiState = useGcpState(aiStateInputs);
+  // v11.14b: connection meta is surfaced into Settings so the user can
+  // see whether the Engine proxy chain is healthy.
+  // v11.15: classification is also stabilised (only re-emits on
+  // stateCode/phase change or >5% confidence delta) and threaded into
+  // the header badge + Dashboard card so it becomes the primary
+  // interpretation layer.
+  const aiState     = useGcpState(aiStateInputs);
+  const stableState = useStableAiState(aiState.state);
 
   useEffect(() => {
     if (!live) return;
@@ -320,6 +324,8 @@ export default function GCPApp() {
         goldData={goldData}
         symbol={symbol}
         setSymbol={setSymbol}
+        aiState={stableState}
+        aiEnabled={aiState.enabled}
       />
     );
   }
@@ -345,6 +351,8 @@ export default function GCPApp() {
         gcpLive={gcpIsLive}
         gcpNetvar={liveNetvar}
         gcpError={!!gcpError}
+        aiState={stableState}
+        aiEnabled={aiState.enabled}
       />
       <div className="app-body">
         <Chrome.LeftRail page={page} onNav={handleNav} lastDataDate={lastDataDate} />
@@ -357,6 +365,8 @@ export default function GCPApp() {
               symbol={symbol}
               symbolPrice={goldData.price}
               pssFlash={pssFlash}
+              aiState={stableState}
+              aiEnabled={aiState.enabled}
             />
           )}
           {page === 'pattern' && (

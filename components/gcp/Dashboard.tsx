@@ -3,7 +3,9 @@
 import { useMemo, useState, useEffect } from 'react';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
+import AiStateCard from './AiStateCard';
 
 const REGIME_META: Record<string, { label: string; color: string; bg: string; range: string }> = {
   A: { label: 'Silence',         color: '#4a72c4', bg: 'rgba(59,90,160,0.15)',  range: '0–50' },
@@ -351,10 +353,13 @@ interface DashboardProps {
   symbol:      MarketSymbol;
   symbolPrice: number | null;
   pssFlash?:   boolean;
+  aiState:     GcpStateResponse | null;
+  aiEnabled:   boolean;
 }
 
 export default function Dashboard({
   gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
+  aiState, aiEnabled,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
 
@@ -380,10 +385,11 @@ export default function Dashboard({
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+          display: 'grid', gridTemplateColumns: '1.25fr 1fr 1fr 1fr',
           borderBottom: '1px solid var(--line-0)',
           flexShrink: 0,
         }}>
+          <AiStateCard state={aiState} enabled={aiEnabled} />
           <NVCard
             series={series}
             liveNV={gcpData.liveNetvar}

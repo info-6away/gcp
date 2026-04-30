@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_MODEL } from '@/lib/version';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
+import AiStateBadge from './AiStateBadge';
 
 const TF_DESCRIPTIONS: Record<string, string> = {
   '1m':  'Each bar = 1 minute',
@@ -58,6 +60,8 @@ interface HeaderProps {
   gcpLive:           boolean;
   gcpNetvar:         number | null;
   gcpError:          boolean;
+  aiState:           GcpStateResponse | null;
+  aiEnabled:         boolean;
 }
 
 function SymbolPicker({
@@ -158,6 +162,7 @@ function Header({
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
+  aiState, aiEnabled,
 }: HeaderProps) {
   // On Patterns we only expose VIEW. Pattern detection always runs at 1m
   // resolution (compression coils etc. are meaningless at 4h/1D), so the
@@ -183,6 +188,8 @@ function Header({
           symbol={symbol}
           onSymbolChange={onSymbolChange}
         />
+
+        <AiStateBadge state={aiState} enabled={aiEnabled} />
 
         {showTF && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

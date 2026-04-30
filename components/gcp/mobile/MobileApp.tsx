@@ -10,6 +10,7 @@ import { SettingsScreen }  from './screens/SettingsScreen';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GoldState } from '@/lib/useGoldData';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 const DEFAULT_PREFS: Record<string, boolean> = {
@@ -37,10 +38,13 @@ interface MobileAppProps {
   goldData:        GoldState;
   symbol:          MarketSymbol;
   setSymbol:       (s: MarketSymbol) => void;
+  aiState:         GcpStateResponse | null;
+  aiEnabled:       boolean;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
+  aiState, aiEnabled,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -63,6 +67,8 @@ export default function MobileApp({
     liveNV:     gcpData.liveNetvar,
     liveRegime: gcpData.liveRegime,
     connected:  gcpData.isLive && !gcpData.gcpError,
+    aiState,
+    aiEnabled,
   };
 
   const screen = (() => {

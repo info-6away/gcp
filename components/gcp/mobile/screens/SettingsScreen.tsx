@@ -3,6 +3,7 @@
 import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -22,10 +23,13 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 
 export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
+  aiState, aiEnabled,
 }: {
   liveNV: number | null; liveRegime: string | null; connected: boolean;
   settings: Record<string, boolean>; updateSetting: (k: string, v: boolean) => void;
   seriesLength: number;
+  aiState:   GcpStateResponse | null;
+  aiEnabled: boolean;
 }) {
   const prefRows = [
     { key: 'pssAlerts',          label: 'PSS Alerts',         sub: 'Notify when PSS ≥ 70' },
@@ -41,7 +45,8 @@ export function SettingsScreen({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected} />
+      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
+        aiState={aiState} aiEnabled={aiEnabled} />
 
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.line1}`, background: C.bg, flexShrink: 0 }}>
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3 }}>SYSTEM</div>

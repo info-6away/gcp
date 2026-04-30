@@ -4,26 +4,38 @@ import * as React from 'react';
 import { MiniLogo } from './MiniLogo';
 import { C, regimeColor } from './colors';
 import type { MarketSymbol } from '@/types/gcp';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
+import AiStateBadge from '../AiStateBadge';
 
 export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'settings';
 
 export function MobileStatus({
-  nv, regime, connected,
+  nv, regime, connected, aiState = null, aiEnabled = false,
 }: {
   nv: number | null; regime: string | null; connected: boolean;
+  aiState?:   GcpStateResponse | null;
+  aiEnabled?: boolean;
 }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '8px 14px', borderBottom: `1px solid ${C.line1}`, background: C.bg1,
-      flexShrink: 0,
+      flexShrink: 0, gap: 8,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <MiniLogo size={18} />
         <span style={{ fontSize: 9, letterSpacing: '0.18em', color: C.fg3 }}>GCP</span>
         <span style={{ fontSize: 9, letterSpacing: '0.18em', color: C.cyan, fontWeight: 600 }}>PRO</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {aiEnabled && (
+        <div style={{
+          flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center',
+          overflow: 'hidden',
+        }}>
+          <AiStateBadge state={aiState} enabled={aiEnabled} compact />
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
           <span style={{ fontSize: 8, color: C.fg3, letterSpacing: '0.1em' }}>NV</span>
           <span style={{ fontSize: 11, color: C.fg0, fontVariantNumeric: 'tabular-nums' }}>

@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { C, regimeColor } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import type { DataPoint } from '@/types/gcp';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
 
 const REGIME_NAMES: Record<string, string> = {
   A: 'Silence', B: 'Ignition', C: 'Alignment',
@@ -24,9 +25,13 @@ function regimeFor(v: number): string {
   return 'F';
 }
 
-export function ResearchScreen({ series, liveNV, liveRegime, connected }: {
+export function ResearchScreen({
+  series, liveNV, liveRegime, connected, aiState, aiEnabled,
+}: {
   series: DataPoint[]; liveNV: number | null;
   liveRegime: string | null; connected: boolean;
+  aiState:   GcpStateResponse | null;
+  aiEnabled: boolean;
 }) {
   const stats = useMemo(() => {
     const map: Record<string, number[]> = { A: [], B: [], C: [], D: [], E: [], F: [] };
@@ -39,7 +44,8 @@ export function ResearchScreen({ series, liveNV, liveRegime, connected }: {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected} />
+      <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
+        aiState={aiState} aiEnabled={aiEnabled} />
 
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.line1}`, background: C.bg, flexShrink: 0 }}>
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3 }}>RESEARCH</div>
