@@ -319,6 +319,18 @@ export function SettingsScreen({
           ))}
         </div>
 
+        {/* v11.18.3 cost warning — manual is the default */}
+        <div style={{
+          marginBottom: 8,
+          padding: '8px 10px',
+          background: 'rgba(212, 160, 40, 0.06)',
+          border: '1px solid rgba(212, 160, 40, 0.35)',
+          borderRadius: 3,
+          fontSize: 10, color: '#d4a028', lineHeight: 1.5,
+        }}>
+          AI analysis uses LLM tokens. Run manually to control cost.
+        </div>
+
         {/* v11.16.4 interval picker — saved to gcpro-ai-analysis-interval */}
         <div style={{
           background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,

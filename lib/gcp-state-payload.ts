@@ -37,7 +37,7 @@ export interface GcpStateInputs {
     return60m?: number;
   };
 
-  windowMinutes?: number; // override; default = min(120, series.length)
+  windowMinutes?: number; // override; default = min(30, series.length)
 
   // v11.14: previous Engine classification, injected by useGcpState
   // from its own state via a ref. The builder forwards a flattened
@@ -57,8 +57,13 @@ export function buildGcpStatePayload(
   const last = series[series.length - 1];
   if (!last || typeof last.v !== 'number') return null;
 
+  // v11.18.3: window slashed from 120 to 30 to cut LLM token cost.
+  // The Engine prompt only needs enough series to recognise the local
+  // shape; 30 minutes of NV ticks is sufficient for slope / curvature
+  // / compression evaluation. Engine validates min 10, so 30 stays
+  // well above the floor while shrinking the payload by ~75%.
   const win = Math.min(
-    inputs.windowMinutes ?? 120,
+    inputs.windowMinutes ?? 30,
     series.length,
   );
   const slice = series.slice(-win).map(p => ({ t: p.t, v: p.v }));
@@ -81,7 +86,8 @@ export function buildGcpStatePayload(
       oscillationTightness: metrics.oscillationTightness,
       pss:                  metrics.pss,
     },
-    recentPatterns: recentPatterns.slice(-3).map(p => ({
+    // v11.18.3: trimmed to most-recent 2 patterns (was 3) for token cost.
+    recentPatterns: recentPatterns.slice(-2).map(p => ({
       patternCode: p.patternCode,
       patternName: p.patternName,
       tStart:      p.tStart,

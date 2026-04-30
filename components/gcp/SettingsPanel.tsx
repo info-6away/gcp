@@ -295,6 +295,21 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             }
           />
 
+          {/* v11.18.3: cost warning. Engine analysis is LLM-backed
+              and burned ~$11 / 1M tokens in 2 hours at 600 s. Default
+              is now manual; auto modes stay available below as a
+              power-user option. */}
+          <div style={{
+            margin: '8px 0',
+            padding: '8px 10px',
+            background: 'rgba(212, 160, 40, 0.06)',
+            border: '1px solid rgba(212, 160, 40, 0.35)',
+            borderRadius: 4,
+            fontSize: 10, color: '#d4a028', lineHeight: 1.5,
+          }}>
+            AI analysis uses LLM tokens. Run manually to control cost.
+          </div>
+
           {/* v11.16.4: user-controlled interval picker. Saved to
               gcpro-ai-analysis-interval; useGcpState picks up the
               change on the next decide tick via a same-tab storage

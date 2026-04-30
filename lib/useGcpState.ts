@@ -118,7 +118,12 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
   const [lastErrorAt, setLastErrorAt]     = useState<Date | null>(null);
   const [nextPollAt, setNextPollAt]       = useState<Date | null>(null);
-  const [intervalSec, setIntervalSec]     = useState<AiAnalysisInterval>(120);
+  // v11.18.3: lazy initialiser pulls the saved interval from
+  // localStorage on the first render so the very first decide tick
+  // respects the user's choice (manual by default). Without the lazy
+  // init the ref would start at 120 and runCall(false) would fire
+  // an Engine call before the storage-read effect resolved.
+  const [intervalSec, setIntervalSec]     = useState<AiAnalysisInterval>(() => loadAiAnalysisInterval());
   const [inflight, setInflight]           = useState<boolean>(false);
 
   const inputsRef            = useRef<GcpStateInputs | null>(inputs);
@@ -126,7 +131,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   const inflightRef          = useRef<boolean>(false);
   const lastCallAtRef        = useRef<number | null>(null);
   const lastSentSnapshotRef  = useRef<Snapshot | null>(null);
-  const intervalRef          = useRef<AiAnalysisInterval>(120);
+  const intervalRef          = useRef<AiAnalysisInterval>(intervalSec);
   const pendingReasonRef     = useRef<string | null>(null);
 
   useEffect(() => { inputsRef.current = inputs; }, [inputs]);

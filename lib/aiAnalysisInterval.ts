@@ -17,7 +17,12 @@ export type AiAnalysisInterval = 60 | 120 | 200 | 300 | 600 | 'manual';
 
 export const AI_INTERVAL_OPTIONS: AiAnalysisInterval[] = [60, 120, 200, 300, 600, 'manual'];
 
-export const AI_INTERVAL_DEFAULT: AiAnalysisInterval = 120;
+// v11.18.3: default flipped to 'manual'. Engine analysis is LLM-backed
+// and the auto-loop was burning ~$11 / 1M+ tokens in 2 hours at 600 s.
+// Default behaviour is now: no Engine call until the user clicks
+// "Run AI Analysis". Power users can switch back to a numeric interval
+// in Settings if they want auto-polling.
+export const AI_INTERVAL_DEFAULT: AiAnalysisInterval = 'manual';
 
 export function loadAiAnalysisInterval(): AiAnalysisInterval {
   if (typeof window === 'undefined') return AI_INTERVAL_DEFAULT;

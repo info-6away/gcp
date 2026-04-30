@@ -373,6 +373,9 @@ export default function GCPApp() {
               pssFlash={pssFlash}
               aiState={stableState}
               aiEnabled={aiState.enabled}
+              aiRunNow={aiState.runNow}
+              aiInflight={aiState.inflight}
+              aiLastSuccess={aiState.lastSuccessAt}
             />
           )}
           {page === 'pattern' && (

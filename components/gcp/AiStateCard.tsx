@@ -14,7 +14,7 @@
 // the explainer now. Dashboard = decision surface, modal = explanation
 // surface.
 
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { Pattern } from '@/types/gcp';
 import {
@@ -25,10 +25,17 @@ import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
 
 interface Props {
-  state:         GcpStateResponse | null;
-  enabled:       boolean;
-  flash?:        boolean;
+  state:          GcpStateResponse | null;
+  enabled:        boolean;
+  flash?:         boolean;
   latestPattern?: Pattern | null;
+  // v11.18.3: manual-first cost control. The card now drives the
+  // Engine call directly via runNow() — there's no automatic loop in
+  // the default mode, so the user must press the button to get the
+  // first classification.
+  runNow?:        () => void;
+  inflight?:      boolean;
+  lastSuccessAt?: Date | null;
 }
 
 // v11.18: thin row used for MODE / ACTION / TRIGGER / SIZE in the
@@ -83,8 +90,29 @@ function pickOneLiner(state: GcpStateResponse): string {
   return DEFAULT_INTERPRETATION[state.stateCode] || '—';
 }
 
-function Card({ state, enabled, flash = false, latestPattern = null }: Props) {
+function formatRelative(d: Date | null | undefined): string {
+  if (!d) return 'never';
+  const secs = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (secs < 60)    return `${secs}s ago`;
+  if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function Card({
+  state, enabled, flash = false, latestPattern = null,
+  runNow, inflight = false, lastSuccessAt = null,
+}: Props) {
   const [showExplainer, setShowExplainer] = useState(false);
+  // v11.18.3: tick every 5 s so the "Last AI analysis: Xs ago" stamp
+  // grows visibly without depending on parent re-renders. With the
+  // auto-loop off (manual mode), the parent doesn't re-render
+  // otherwise.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 5_000);
+    return () => clearInterval(id);
+  }, []);
 
   const flashStyle: React.CSSProperties = flash ? {
     outline: '1px solid var(--cyan)',
@@ -141,17 +169,45 @@ function Card({ state, enabled, flash = false, latestPattern = null }: Props) {
           <span>AI STATE · GCP + GOLD ENVIRONMENT</span>
           {InfoButton}
         </div>
+        {/* v11.18.3: no auto-call. Manual-first means the user must
+            click to get a classification. Inflight state shows a
+            pulsing dot; otherwise an explicit CTA. */}
         <div style={{
-          fontSize: 26, color: 'var(--fg-3)',
-          letterSpacing: '0.02em', fontWeight: 600,
+          fontSize: 22, color: 'var(--fg-2)',
+          fontWeight: 600,
           display: 'flex', alignItems: 'center', gap: 10,
+          letterSpacing: '0.01em',
         }}>
-          <Heartbeat mode="init" size={9} />
-          Analyzing…
+          {inflight ? (
+            <>
+              <Heartbeat mode="init" size={9} />
+              Analyzing…
+            </>
+          ) : (
+            'AI State not run yet'
+          )}
         </div>
-        <div style={{ fontSize: 10, color: 'var(--fg-4)', marginTop: 8 }}>
-          Waiting for first Engine classification
+        <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 8, lineHeight: 1.5 }}>
+          AI analysis uses LLM tokens. Run manually to control cost.
         </div>
+        <button
+          onClick={() => runNow?.()}
+          disabled={!runNow || !enabled || inflight}
+          style={{
+            marginTop: 14,
+            padding: '8px 14px',
+            fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
+            background: inflight ? 'rgba(77,217,232,0.1)' : 'transparent',
+            border: `1px solid ${(!runNow || !enabled || inflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
+            borderRadius: 4,
+            color: (!runNow || !enabled || inflight) ? 'var(--fg-3)' : 'var(--cyan)',
+            fontFamily: 'inherit',
+            cursor: (!runNow || !enabled || inflight) ? 'default' : 'pointer',
+            alignSelf: 'flex-start',
+          }}
+        >
+          {inflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+        </button>
         <AiStateExplainer
           open={showExplainer}
           state={null}
@@ -271,6 +327,38 @@ function Card({ state, enabled, flash = false, latestPattern = null }: Props) {
           </div>
         );
       })()}
+
+      {/* v11.18.3: refresh row — manual-first cost control means the
+          user is in charge of when to call the Engine. Last-analysis
+          stamp animates relative to lastSuccessAt; the button bypasses
+          any interval floor and respects the in-flight guard. */}
+      <div style={{
+        marginTop: 10,
+        paddingTop: 8,
+        borderTop: '1px solid var(--line-1)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 8,
+      }}>
+        <div style={{ fontSize: 10, color: '#7F98A3' }}>
+          Last AI analysis: <span style={{ color: 'var(--fg-1)' }}>{formatRelative(lastSuccessAt)}</span>
+        </div>
+        <button
+          onClick={() => runNow?.()}
+          disabled={!runNow || !enabled || inflight}
+          style={{
+            padding: '4px 10px',
+            fontSize: 9, letterSpacing: '0.1em', fontWeight: 600,
+            background: inflight ? 'rgba(77,217,232,0.1)' : 'transparent',
+            border: `1px solid ${(!runNow || !enabled || inflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
+            borderRadius: 3,
+            color: (!runNow || !enabled || inflight) ? 'var(--fg-3)' : 'var(--cyan)',
+            fontFamily: 'inherit',
+            cursor: (!runNow || !enabled || inflight) ? 'default' : 'pointer',
+          }}
+        >
+          {inflight ? 'RUNNING…' : 'REFRESH AI ANALYSIS'}
+        </button>
+      </div>
 
       <AiStateExplainer
         open={showExplainer}

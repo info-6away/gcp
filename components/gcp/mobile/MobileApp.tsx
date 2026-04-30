@@ -86,6 +86,9 @@ export default function MobileApp({
           series={baseSeries} patterns={displayPatterns}
           symbol={symbol} price={goldData.price}
           onSymbolPress={cycleSymbol}
+          aiRunNow={aiRunNow}
+          aiInflight={aiInflight}
+          aiLastSuccess={aiLastSuccess}
         />
       );
       case 'chart': return (

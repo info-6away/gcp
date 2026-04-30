@@ -300,19 +300,22 @@ function NewsRow({ item }: { item: NewsItem }) {
 }
 
 interface DashboardProps {
-  gcpData:     GCPDataState;
-  series:      DataPoint[];
-  patterns:    Pattern[];
-  symbol:      MarketSymbol;
-  symbolPrice: number | null;
-  pssFlash?:   boolean;
-  aiState:     GcpStateResponse | null;
-  aiEnabled:   boolean;
+  gcpData:        GCPDataState;
+  series:         DataPoint[];
+  patterns:       Pattern[];
+  symbol:         MarketSymbol;
+  symbolPrice:    number | null;
+  pssFlash?:      boolean;
+  aiState:        GcpStateResponse | null;
+  aiEnabled:      boolean;
+  aiRunNow:       () => void;
+  aiInflight:     boolean;
+  aiLastSuccess:  Date | null;
 }
 
 export default function Dashboard({
   gcpData, series, patterns, pssFlash = false,
-  aiState, aiEnabled,
+  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
 
@@ -361,6 +364,9 @@ export default function Dashboard({
             enabled={aiEnabled}
             flash={pssFlash}
             latestPattern={activePattern}
+            runNow={aiRunNow}
+            inflight={aiInflight}
+            lastSuccessAt={aiLastSuccess}
           />
           <div style={{
             background: 'var(--bg-1)', borderLeft: '1px solid var(--line-0)',

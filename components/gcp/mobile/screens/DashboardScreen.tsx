@@ -33,12 +33,16 @@ export function DashboardScreen({
   series, patterns, liveNV, liveRegime, connected,
   symbol, price, onSymbolPress,
   aiState, aiEnabled,
+  aiRunNow, aiInflight = false, aiLastSuccess = null,
 }: {
   series: DataPoint[]; patterns: Pattern[];
   liveNV: number | null; liveRegime: string | null; connected: boolean;
   symbol: MarketSymbol; price: number | null; onSymbolPress?: () => void;
-  aiState:   GcpStateResponse | null;
-  aiEnabled: boolean;
+  aiState:        GcpStateResponse | null;
+  aiEnabled:      boolean;
+  aiRunNow?:      () => void;
+  aiInflight?:    boolean;
+  aiLastSuccess?: Date | null;
 }) {
   const last15   = series.slice(-15);
   const sparkMax = Math.max(...last15.map(p => p.v), 50);
@@ -67,17 +71,40 @@ export function DashboardScreen({
               }}>
                 <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>AI STATE</div>
                 <div style={{
-                  fontSize: 16, color: C.fg3, fontWeight: 600,
+                  fontSize: 14, color: C.fg2, fontWeight: 600,
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}>
-                  <span style={{
-                    width: 6, height: 6, borderRadius: '50%', background: C.fg3,
-                  }} />
-                  Analyzing…
+                  {aiInflight ? (
+                    <>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%', background: C.cyan,
+                        animation: 'livepulse 1.6s ease-in-out infinite',
+                      }} />
+                      Analyzing…
+                    </>
+                  ) : 'AI State not run yet'}
                 </div>
-                <div style={{ fontSize: 9, color: C.fg3, marginTop: 4 }}>
-                  Waiting for first Engine classification
+                <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 6, lineHeight: 1.5 }}>
+                  AI analysis uses LLM tokens. Run manually to control cost.
                 </div>
+                <button
+                  onClick={() => aiRunNow?.()}
+                  disabled={!aiRunNow || aiInflight}
+                  style={{
+                    marginTop: 10,
+                    padding: '8px 12px',
+                    background: aiInflight ? `${C.cyan}1f` : 'transparent',
+                    border: `1px solid ${(!aiRunNow || aiInflight) ? C.line2 : C.cyan}`,
+                    borderRadius: 3,
+                    color: (!aiRunNow || aiInflight) ? C.fg3 : C.cyan,
+                    fontFamily: 'inherit',
+                    fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
+                    cursor: (!aiRunNow || aiInflight) ? 'default' : 'pointer',
+                    width: '100%',
+                  }}
+                >
+                  {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+                </button>
               </div>
             );
           }
@@ -197,6 +224,44 @@ export function DashboardScreen({
                   </div>
                 );
               })()}
+
+              {/* v11.18.3: refresh row — manual-first cost control */}
+              <div style={{
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: `1px solid ${C.line1}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}>
+                <div style={{ fontSize: 9, color: '#7F98A3' }}>
+                  Last AI analysis: <span style={{ color: C.fg1 }}>{
+                    aiLastSuccess
+                      ? (() => {
+                          const secs = Math.max(0, Math.round((Date.now() - aiLastSuccess.getTime()) / 1000));
+                          if (secs < 60)    return `${secs}s ago`;
+                          if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+                          if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+                          return `${Math.floor(secs / 86400)}d ago`;
+                        })()
+                      : 'never'
+                  }</span>
+                </div>
+                <button
+                  onClick={() => aiRunNow?.()}
+                  disabled={!aiRunNow || aiInflight}
+                  style={{
+                    padding: '4px 8px',
+                    background: aiInflight ? `${C.cyan}1f` : 'transparent',
+                    border: `1px solid ${(!aiRunNow || aiInflight) ? C.line2 : C.cyan}`,
+                    borderRadius: 3,
+                    color: (!aiRunNow || aiInflight) ? C.fg3 : C.cyan,
+                    fontFamily: 'inherit',
+                    fontSize: 9, letterSpacing: '0.1em', fontWeight: 600,
+                    cursor: (!aiRunNow || aiInflight) ? 'default' : 'pointer',
+                  }}
+                >
+                  {aiInflight ? 'RUNNING…' : 'REFRESH'}
+                </button>
+              </div>
             </div>
           );
         })()}
