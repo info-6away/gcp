@@ -1,19 +1,21 @@
 // GCP Pro service worker -- v11.13.
 // v11.11 added static-asset cache + offline shell.
 // v11.12 added last-good-response fallback for same-origin /api/* GET.
-// v11.13 wires the update-toast handshake: removes the in-install
-// skipWaiting() so a new SW lands in the waiting state on every
-// deploy, and adds a message listener that activates on demand when
-// the client posts { type: 'SKIP_WAITING' }. PWARegister surfaces
-// the prompt and reloads the page on controllerchange.
+// v11.13 wires the update-toast handshake.
 //
-// Bump SW_VERSION on every shipped change to invalidate the previous
-// cache. The activate handler purges any cache key that doesn't start
-// with the current SW_VERSION. Skipping this bump is what blocks
-// installed PWAs from picking up new bundles -- always bump in lockstep
-// with APP_VERSION.
+// v11.17.2 fix: STOP intercepting Next.js fingerprinted chunks. The
+// previous cacheFirst handler returned a synthetic 504 'Offline'
+// response whenever fetch() threw inside the SW (chrome extension
+// interference, network blip, deployment edge race). The browser
+// then saw a 504 for `_next/static/...js` chunks and the page hung
+// at "LOADING COHERENCE DATA". Next.js chunks are already fingerprinted
+// by hash, so the browser's own HTTP cache handles them correctly;
+// having the SW in the loop only adds failure modes. cacheFirst now
+// only handles a small allow-list (icons, manifest, offline.html,
+// /data/* JSON) and rethrows network errors so the browser handles
+// them natively rather than getting a fake 504.
 
-const SW_VERSION  = 'gcppro-v11.17.1';
+const SW_VERSION  = 'gcppro-v11.17.2';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 
@@ -97,17 +99,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static asset paths: cache-first.
+  // v11.17.2: only intercept a small allow-list. Next.js fingerprinted
+  // chunks (`_next/static/`) used to land here too; they don't anymore.
+  // Letting the browser handle those natively means a flaky fetch inside
+  // the SW can't break chunk loading.
   if (
-    url.pathname.startsWith('/_next/static/') ||
     url.pathname.startsWith('/data/') ||
-    /\.(png|jpe?g|gif|webp|ico|svg|woff2?|ttf|otf|css|js|json|webmanifest)$/i.test(url.pathname)
+    url.pathname === '/icon.svg' ||
+    url.pathname === '/icon-192.png' ||
+    url.pathname === '/icon-512.png' ||
+    url.pathname === '/manifest.webmanifest' ||
+    url.pathname === '/offline.html'
   ) {
     event.respondWith(cacheFirst(req));
     return;
   }
 
-  // Anything else: pass through to the network.
+  // Anything else (including /_next/static/...): pass through to the
+  // network. The SW does not respondWith(), so the browser handles
+  // the request like a normal fetch with its own HTTP cache.
 });
 
 async function cacheFirst(req) {
@@ -122,8 +132,13 @@ async function cacheFirst(req) {
       cache.put(req, res.clone());
     }
     return res;
-  } catch {
-    return new Response('', { status: 504, statusText: 'Offline' });
+  } catch (e) {
+    // v11.17.2: do NOT synthesize a fake 504 here. The previous code
+    // returned `new Response('', { status: 504 })` which the browser
+    // treated as a successful (but empty) response from the SW, and
+    // the page broke. Rethrowing surfaces the network error to the
+    // browser like a normal failed fetch, which it can retry.
+    throw e;
   }
 }
 
