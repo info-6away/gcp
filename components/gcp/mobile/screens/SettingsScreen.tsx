@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
@@ -75,20 +75,11 @@ export function SettingsScreen({
   gcpLastUpdate: Date | null;
   gcpNextPollAt: Date | null;
 }) {
-  // v11.15.3: state-machine derivation + 1 Hz countdowns shared across
-  // both connection rows. The countdown hook re-renders this screen
-  // every second; that's fine for a tab-level surface and avoids any
-  // bespoke timer plumbing on top of the polling loops.
-  const aiNextSecs  = useCountdown(aiNextPollAt);
+  // v11.19: AI section is now a control panel — Status / Mode / Run /
+  // Last run only. Removed: interval picker buttons, Current interval,
+  // Next analysis countdown. GCP coherence row still uses the
+  // connection-phase machine + 1 Hz countdown.
   const gcpNextSecs = useCountdown(gcpNextPollAt);
-
-  const aiPhase: ConnPhase = !aiEnabled
-    ? 'disabled'
-    : aiLastError && (!aiLastSuccess || aiLastError > aiLastSuccess)
-      ? 'reconnecting'
-      : aiLastSuccess
-        ? 'connected'
-        : 'initial';
 
   const gcpPhase: ConnPhase = connected
     ? 'connected'
@@ -96,20 +87,25 @@ export function SettingsScreen({
       ? 'reconnecting'
       : 'initial';
 
-  const aiStatusLabel = aiPhase === 'initial' ? 'Initializing…'
-    : aiPhase === 'connected' ? 'Connected'
-    : aiPhase === 'reconnecting' ? 'Reconnecting…'
-    : 'Disabled';
-  const aiStatusColor = aiPhase === 'connected' ? C.green
-    : aiPhase === 'reconnecting' ? C.red
-    : C.fg3;
-
   const gcpStatusLabel = gcpPhase === 'initial' ? 'Loading data…'
     : gcpPhase === 'connected' ? 'Live'
     : 'Reconnecting…';
   const gcpStatusColor = gcpPhase === 'connected' ? C.green
     : gcpPhase === 'reconnecting' ? C.red
     : C.fg3;
+
+  // AI binary status — Connected when there's a recent success that
+  // hasn't been superseded by an error; Disconnected otherwise.
+  const aiConnected = aiLastSuccess != null
+    && (!aiLastError || aiLastError <= aiLastSuccess);
+  const aiStatusLabel = aiConnected ? 'Connected' : 'Disconnected';
+  const aiStatusColor = aiConnected ? C.green : (aiLastError ? C.red : C.fg3);
+  const aiHeartbeatMode = aiConnected ? 'live' : (aiLastError ? 'stale' : 'init');
+  const isManualMode = aiIntervalSec === 'manual';
+
+  // Advanced section is collapsed by default — interval picker hides
+  // behind this so the primary view stays focused on Run.
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const prefRows = [
     { key: 'pssAlerts',          label: 'PSS Alerts',         sub: 'Notify when PSS ≥ 70' },
@@ -120,47 +116,29 @@ export function SettingsScreen({
   const aiRows: { label: string; val: ReactNode; valColor: string; sub?: string }[] = [
     {
       label: 'Status',
-      val: valueWithHeartbeat(phaseToHeartbeat(aiPhase), aiStatusLabel, aiStatusColor),
+      val: valueWithHeartbeat(aiHeartbeatMode, aiStatusLabel, aiStatusColor),
       valColor: aiStatusColor,
-      sub: aiPhase === 'initial'      ? '6away Engine · waiting for first response'
-         : aiPhase === 'reconnecting' ? '6away Engine · keeping prior state'
-         : aiPhase === 'disabled'     ? 'Polling is off'
-         : '6away Engine · /v1/coherence/gcp-state',
+      sub: aiConnected
+        ? '6away Engine · last response received'
+        : aiLastError
+          ? `Last error ${formatRelative(aiLastError)}`
+          : 'No analysis run yet',
     },
     {
-      label: 'Current interval',
-      val: formatAiInterval(aiIntervalSec),
-      valColor: aiIntervalSec === 'manual' ? C.amber : C.fg1,
+      label: 'Mode',
+      val:      isManualMode ? 'Manual (recommended)' : 'Auto (advanced)',
+      valColor: isManualMode ? C.fg1 : C.amber,
+      sub:      isManualMode
+        ? 'AI runs only when you press the button'
+        : `Auto · ${formatAiInterval(aiIntervalSec)}`,
+    },
+    {
+      label: 'Last run',
+      val: formatRelative(aiLastSuccess),
+      valColor: C.fg2,
+      sub: aiLastSuccess ? undefined : 'No successful classification yet',
     },
   ];
-  if (aiIntervalSec === 'manual') {
-    aiRows.push({
-      label: 'Next analysis in', val: '—', valColor: C.fg3,
-      sub: 'Auto-loop is off — press Run Now',
-    });
-  } else if (aiNextPollAt == null) {
-    // v11.16.6: no attempt yet. Don't show a misleading short
-    // countdown; surface "Ready now" so the user sees they're
-    // about to get data on the next decide tick.
-    aiRows.push({
-      label: 'Next analysis in', val: 'Ready now', valColor: C.fg1,
-      sub: 'First decide tick will fire as soon as inputs are ready',
-    });
-  } else if (aiPhase === 'reconnecting') {
-    aiRows.push(
-      { label: 'Last error', val: formatRelative(aiLastError), valColor: C.red,
-        sub: aiLastSuccess ? `Last success ${formatRelative(aiLastSuccess)}` : 'No successful classification yet' },
-      { label: 'Retry in',   val: `${aiNextSecs}s`,            valColor: C.fg1 },
-    );
-  } else {
-    aiRows.push({ label: 'Next analysis in', val: `${aiNextSecs}s`, valColor: C.fg1 });
-  }
-  aiRows.push({
-    label: 'Last classification',
-    val: formatRelative(aiLastSuccess),
-    valColor: C.fg2,
-    sub: aiLastSuccess ? undefined : 'No successful classification yet',
-  });
   if (aiState) {
     aiRows.push(
       { label: 'Current State',         val: `${aiState.stateCode} · ${aiState.state}`,                              valColor: C.fg1 },
@@ -295,6 +273,19 @@ export function SettingsScreen({
         </div>
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>AI ENGINE</div>
+
+        {/* v11.19 cost warning — pinned above the rows */}
+        <div style={{
+          marginBottom: 8,
+          padding: '8px 10px',
+          background: 'rgba(212, 160, 40, 0.06)',
+          border: '1px solid rgba(212, 160, 40, 0.35)',
+          borderRadius: 3,
+          fontSize: 10, color: '#d4a028', lineHeight: 1.5,
+        }}>
+          AI analysis uses LLM tokens. Run when needed.
+        </div>
+
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, marginBottom: 8 }}>
           {aiRows.map((row, i) => (
             <div key={row.label} style={{
@@ -319,71 +310,74 @@ export function SettingsScreen({
           ))}
         </div>
 
-        {/* v11.18.3 cost warning — manual is the default */}
-        <div style={{
-          marginBottom: 8,
-          padding: '8px 10px',
-          background: 'rgba(212, 160, 40, 0.06)',
-          border: '1px solid rgba(212, 160, 40, 0.35)',
-          borderRadius: 3,
-          fontSize: 10, color: '#d4a028', lineHeight: 1.5,
-        }}>
-          AI analysis uses LLM tokens. Run manually to control cost.
-        </div>
-
-        {/* v11.16.4 interval picker — saved to gcpro-ai-analysis-interval */}
-        <div style={{
-          background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
-          padding: '10px 12px', marginBottom: 8,
-        }}>
-          <div style={{ fontSize: 11, color: C.fg1, marginBottom: 3 }}>AI Analysis Interval</div>
-          <div style={{ fontSize: 10, color: '#7F98A3', marginBottom: 8, lineHeight: 1.5 }}>
-            Minimum gap between Engine calls. Manual disables the auto-loop.
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {AI_INTERVAL_OPTIONS.map(opt => {
-              const active = aiIntervalSec === opt;
-              return (
-                <button
-                  key={String(opt)}
-                  onClick={() => saveAiAnalysisInterval(opt)}
-                  style={{
-                    padding: '5px 10px',
-                    fontSize: 9, letterSpacing: '0.06em',
-                    background: active ? C.bg3 : 'transparent',
-                    border: `1px solid ${active ? C.cyan : C.line2}`,
-                    color: active ? C.cyan : C.fg2,
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  {opt === 'manual' ? 'MANUAL' : `${opt}S`}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* v11.16.4 manual override button */}
+        {/* v11.19 primary action — full-width prominent RUN button */}
         <button
           onClick={() => aiRunNow()}
           disabled={!aiEnabled || aiInflight}
           style={{
-            width: '100%', padding: '12px 14px', marginBottom: 16,
+            width: '100%', padding: '14px 16px', marginBottom: 8,
             background: aiInflight ? `${C.cyan}1f` : 'transparent',
             border: `1px solid ${
               !aiEnabled || aiInflight ? C.line2 : C.cyan
             }`,
-            borderRadius: 3,
+            borderRadius: 4,
             color: !aiEnabled || aiInflight ? C.fg3 : C.cyan,
             fontFamily: 'inherit',
-            fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
+            fontSize: 12, letterSpacing: '0.12em', fontWeight: 600,
             cursor: !aiEnabled || aiInflight ? 'default' : 'pointer',
           }}
         >
-          {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS NOW'}
+          {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
         </button>
+
+        {/* v11.19 Advanced — collapsed by default. Auto interval lives
+            here, behind a toggle, so the primary view stays manual-first. */}
+        <button
+          onClick={() => setShowAdvanced(s => !s)}
+          style={{
+            padding: '6px 0', marginBottom: 4,
+            background: 'transparent', border: 'none',
+            color: '#7F98A3', cursor: 'pointer',
+            fontSize: 9, letterSpacing: '0.14em',
+            fontFamily: 'inherit', textTransform: 'uppercase',
+            textAlign: 'left', width: '100%',
+          }}
+        >
+          {showAdvanced ? '▾ Hide advanced' : '▸ Show advanced'}
+        </button>
+        {showAdvanced && (
+          <div style={{
+            background: C.bg2, border: `1px solid ${C.line1}`, borderRadius: 3,
+            padding: '10px 12px', marginBottom: 16,
+          }}>
+            <div style={{ fontSize: 11, color: C.fg1, marginBottom: 3 }}>Auto-run interval</div>
+            <div style={{ fontSize: 10, color: '#7F98A3', marginBottom: 8, lineHeight: 1.5 }}>
+              Pick a non-Manual option to re-enable auto-runs. Each tick costs LLM tokens.
+            </div>
+            <select
+              value={String(aiIntervalSec)}
+              onChange={(e) => {
+                const raw = e.target.value;
+                saveAiAnalysisInterval(raw === 'manual' ? 'manual' : (Number(raw) as AiAnalysisInterval));
+              }}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: 12, fontFamily: 'inherit',
+                background: C.bg1,
+                color: C.fg1,
+                border: `1px solid ${C.line2}`,
+                borderRadius: 3,
+              }}
+            >
+              {AI_INTERVAL_OPTIONS.map(opt => (
+                <option key={String(opt)} value={String(opt)}>
+                  {formatAiInterval(opt)}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>SYSTEM</div>
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3 }}>

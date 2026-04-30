@@ -156,6 +156,8 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
   const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
+  // v11.19: Advanced section (auto-interval picker) collapsed by default.
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setPrefs(loadPrefs());
@@ -167,21 +169,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // …" / "Loading data…") removes the false-disconnected impression on
   // first load; reconnecting state distinguishes a transient failure
   // from a never-succeeded connection.
-  const aiPhase: ConnPhase = !props.aiEnabled
-    ? 'disabled'
-    : props.aiLastError && (!props.aiLastSuccess || props.aiLastError > props.aiLastSuccess)
-      ? 'reconnecting'
-      : props.aiLastSuccess
-        ? 'connected'
-        : 'initial';
-
+  // v11.19: aiPhase / aiNextSecs no longer needed at the SettingsPanel
+  // level — AI section is rendered inline below from raw lastSuccess /
+  // lastError. GCP coherence row still uses the connection-phase
+  // machine + 1 Hz countdown.
   const gcpPhase: ConnPhase = props.gcpLive
     ? 'connected'
     : props.gcpLastUpdate
       ? 'reconnecting'
       : 'initial';
 
-  const aiNextSecs  = useCountdown(props.aiNextPollAt);
   const gcpNextSecs = useCountdown(props.gcpNextPollAt);
 
   const phaseToHeartbeat = (p: ConnPhase): HeartbeatMode =>
@@ -275,177 +272,160 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           />
         </Section>
 
+        {/* v11.19: AI Engine settings rewritten as a control panel.
+            "Run when needed" rather than "manage a scheduler". The
+            interval picker, countdowns, and current-interval row are
+            gone from the primary view; the user sees Status, Mode,
+            Cost, Run, and Last run only. Power users can still pick
+            an auto interval under Advanced. */}
         <Section title="AI Engine · GCP + Gold Environment">
-          <Row
-            label="Status"
-            sub={
-              aiPhase === 'initial'      ? '6away Engine · waiting for first response'
-              : aiPhase === 'reconnecting' ? '6away Engine · keeping prior state on error'
-              : aiPhase === 'disabled'     ? 'Polling is off — toggle aiState in localStorage to enable'
-              : '6away Engine · /v1/coherence/gcp-state · via /api/gcp-state proxy'
-            }
-            value={
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <Heartbeat mode={phaseToHeartbeat(aiPhase)} />
-                {aiPhase === 'initial'      ? 'Initializing…' :
-                 aiPhase === 'connected'    ? 'Connected'      :
-                 aiPhase === 'reconnecting' ? 'Reconnecting…'  :
-                                              'Disabled'}
-              </span>
-            }
-          />
+          {(() => {
+            const isManual  = props.aiIntervalSec === 'manual';
+            const connected = props.aiLastSuccess != null
+              && (!props.aiLastError || props.aiLastError <= props.aiLastSuccess);
 
-          {/* v11.18.3: cost warning. Engine analysis is LLM-backed
-              and burned ~$11 / 1M tokens in 2 hours at 600 s. Default
-              is now manual; auto modes stay available below as a
-              power-user option. */}
-          <div style={{
-            margin: '8px 0',
-            padding: '8px 10px',
-            background: 'rgba(212, 160, 40, 0.06)',
-            border: '1px solid rgba(212, 160, 40, 0.35)',
-            borderRadius: 4,
-            fontSize: 10, color: '#d4a028', lineHeight: 1.5,
-          }}>
-            AI analysis uses LLM tokens. Run manually to control cost.
-          </div>
+            return (
+              <>
+                <Row
+                  label="Status"
+                  sub={
+                    connected
+                      ? '6away Engine · last response received'
+                      : props.aiLastError
+                        ? `Last error ${formatRelative(props.aiLastError)}`
+                        : 'No analysis run yet — press RUN AI ANALYSIS'
+                  }
+                  value={
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Heartbeat mode={connected ? 'live' : props.aiLastError ? 'stale' : 'init'} />
+                      {connected ? 'Connected' : 'Disconnected'}
+                    </span>
+                  }
+                />
 
-          {/* v11.16.4: user-controlled interval picker. Saved to
-              gcpro-ai-analysis-interval; useGcpState picks up the
-              change on the next decide tick via a same-tab storage
-              event. */}
-          <div style={{
-            padding: '10px 0', borderBottom: '1px solid var(--line-0)',
-          }}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-            }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>AI Analysis Interval</div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
-                  Minimum gap between Engine calls. Manual disables the auto-loop.
+                <Row
+                  label="Mode"
+                  sub={isManual
+                    ? 'Auto-runs disabled. AI runs only when you press the button.'
+                    : `Auto · runs every ${formatAiInterval(props.aiIntervalSec)} when conditions warrant`}
+                  value={isManual ? 'Manual (recommended)' : 'Auto (advanced)'}
+                />
+
+                {/* Cost warning */}
+                <div style={{
+                  margin: '12px 0 8px',
+                  padding: '10px 12px',
+                  background: 'rgba(212, 160, 40, 0.06)',
+                  border: '1px solid rgba(212, 160, 40, 0.35)',
+                  borderRadius: 4,
+                  fontSize: 11, color: '#d4a028', lineHeight: 1.5,
+                }}>
+                  AI analysis uses LLM tokens. Run when needed.
                 </div>
-              </div>
-              <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {AI_INTERVAL_OPTIONS.map(opt => {
-                  const active = props.aiIntervalSec === opt;
-                  return (
-                    <button
-                      key={String(opt)}
-                      onClick={() => saveAiAnalysisInterval(opt)}
-                      style={{
-                        padding: '4px 8px',
-                        fontSize: 9, letterSpacing: '0.06em',
-                        fontFamily: 'var(--font-mono)',
-                        background: active ? 'var(--bg-3)' : 'transparent',
-                        border: `1px solid ${active ? 'var(--cyan)' : 'var(--line-2)'}`,
-                        color: active ? 'var(--cyan)' : 'var(--fg-3)',
-                        cursor: 'pointer',
-                        marginLeft: -1,
-                      }}
-                    >
-                      {opt === 'manual' ? 'MANUAL' : `${opt}S`}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
 
-          <Row
-            label="Current interval"
-            value={formatAiInterval(props.aiIntervalSec)}
-          />
+                {/* Primary action — full-width, prominent. */}
+                <button
+                  onClick={() => props.aiRunNow()}
+                  disabled={!props.aiEnabled || props.aiInflight}
+                  style={{
+                    width: '100%', marginTop: 4, marginBottom: 8,
+                    padding: '12px 16px',
+                    fontSize: 12, letterSpacing: '0.12em', fontWeight: 600,
+                    fontFamily: 'var(--font-mono)',
+                    background: props.aiInflight ? 'rgba(77,217,232,0.12)' : 'transparent',
+                    border: `1px solid ${(!props.aiEnabled || props.aiInflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
+                    color: (!props.aiEnabled || props.aiInflight) ? 'var(--fg-3)' : 'var(--cyan)',
+                    borderRadius: 4,
+                    cursor: (!props.aiEnabled || props.aiInflight) ? 'default' : 'pointer',
+                  }}
+                >
+                  {props.aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+                </button>
 
-          {props.aiIntervalSec === 'manual' ? (
-            <Row
-              label="Next analysis in"
-              sub="Auto-loop is off — press Run AI Analysis Now"
-              value="—"
-            />
-          ) : props.aiNextPollAt == null ? (
-            // v11.16.6: lastCallAt is null — no attempt yet. Don't
-            // show a misleading 11s countdown when interval is 600s;
-            // surface the real state instead.
-            <Row
-              label="Next analysis in"
-              sub="First decide tick will fire as soon as inputs are ready"
-              value="Ready now"
-            />
-          ) : aiPhase === 'reconnecting' ? (
-            <Row
-              label="Retry in"
-              sub={props.aiLastError ? `Last error ${formatRelative(props.aiLastError)}` : 'No successful classification yet'}
-              value={`${aiNextSecs}s`}
-            />
-          ) : (
-            <Row
-              label="Next analysis in"
-              value={`${aiNextSecs}s`}
-            />
-          )}
+                <Row
+                  label="Last run"
+                  sub={props.aiLastSuccess ? 'Time since the last successful Engine response' : undefined}
+                  value={props.aiLastSuccess ? formatRelative(props.aiLastSuccess) : 'never'}
+                />
 
-          <Row
-            label="Last classification"
-            sub={props.aiLastSuccess ? 'Time since the last successful Engine response' : 'No successful classification yet'}
-            value={formatRelative(props.aiLastSuccess)}
-          />
+                {props.aiState && (
+                  <>
+                    <Row
+                      label="Current State"
+                      value={`${props.aiState.stateCode} · ${props.aiState.state}`}
+                    />
+                    <Row
+                      label="Direction / Phase"
+                      value={`${props.aiState.direction} · ${props.aiState.phase}`}
+                    />
+                    <Row
+                      label="Strength / Confidence"
+                      value={`${props.aiState.strength.toFixed(2)} · ${(props.aiState.confidence * 100).toFixed(0)}%`}
+                    />
+                  </>
+                )}
 
-          {/* v11.16.4: manual override. Disabled while the previous
-              call is still in flight or while AI is feature-flag off. */}
-          <div style={{ padding: '10px 0', borderBottom: '1px solid var(--line-0)' }}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            }}>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Run AI Analysis Now</div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
-                  Bypasses the interval floor. Respects in-flight guard.
+                {/* Advanced — collapsed by default. Power users can
+                    re-enable an auto-loop with a numeric interval, but
+                    nothing in the primary view encourages it. */}
+                <div style={{ marginTop: 14 }}>
+                  <button
+                    onClick={() => setShowAdvanced(s => !s)}
+                    style={{
+                      padding: 0, background: 'transparent', border: 'none',
+                      color: '#7F98A3', cursor: 'pointer',
+                      fontSize: 9, letterSpacing: '0.14em',
+                      fontFamily: 'var(--font-mono)',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {showAdvanced ? '▾ Hide advanced' : '▸ Show advanced'}
+                  </button>
                 </div>
-              </div>
-              <button
-                onClick={() => props.aiRunNow()}
-                disabled={!props.aiEnabled || props.aiInflight}
-                style={{
-                  padding: '4px 12px',
-                  fontSize: 9, letterSpacing: '0.08em',
-                  fontFamily: 'var(--font-mono)',
-                  background: props.aiInflight
-                    ? 'rgba(77,217,232,0.08)'
-                    : 'transparent',
-                  border: `1px solid ${
-                    !props.aiEnabled || props.aiInflight
-                      ? 'var(--line-2)'
-                      : 'var(--cyan)'
-                  }`,
-                  color: !props.aiEnabled || props.aiInflight
-                    ? 'var(--fg-3)'
-                    : 'var(--cyan)',
-                  borderRadius: 2,
-                  cursor: !props.aiEnabled || props.aiInflight ? 'default' : 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {props.aiInflight ? 'RUNNING…' : 'RUN NOW'}
-              </button>
-            </div>
-          </div>
-          {props.aiState && (
-            <>
-              <Row
-                label="Current State"
-                value={`${props.aiState.stateCode} · ${props.aiState.state}`}
-              />
-              <Row
-                label="Direction / Phase"
-                value={`${props.aiState.direction} · ${props.aiState.phase}`}
-              />
-              <Row
-                label="Strength / Confidence"
-                value={`${props.aiState.strength.toFixed(2)} · ${(props.aiState.confidence * 100).toFixed(0)}%`}
-              />
-            </>
-          )}
+
+                {showAdvanced && (
+                  <div style={{
+                    padding: '10px 12px', marginTop: 8,
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--line-1)',
+                    borderRadius: 4,
+                  }}>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Auto-run interval</div>
+                        <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>
+                          Pick a non-Manual option to re-enable auto-runs. Each tick costs LLM tokens.
+                        </div>
+                      </div>
+                      <select
+                        value={String(props.aiIntervalSec)}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          saveAiAnalysisInterval(raw === 'manual' ? 'manual' : (Number(raw) as AiAnalysisInterval));
+                        }}
+                        style={{
+                          padding: '4px 8px',
+                          fontSize: 11, fontFamily: 'var(--font-mono)',
+                          background: 'var(--bg-1)',
+                          color: 'var(--fg-1)',
+                          border: '1px solid var(--line-2)',
+                          borderRadius: 3,
+                        }}
+                      >
+                        {AI_INTERVAL_OPTIONS.map(opt => (
+                          <option key={String(opt)} value={String(opt)}>
+                            {formatAiInterval(opt)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </Section>
 
         <Section title="Preferences">
