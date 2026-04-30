@@ -9,9 +9,11 @@
 //
 // Bump SW_VERSION on every shipped change to invalidate the previous
 // cache. The activate handler purges any cache key that doesn't start
-// with the current SW_VERSION.
+// with the current SW_VERSION. Skipping this bump is what blocks
+// installed PWAs from picking up new bundles -- always bump in lockstep
+// with APP_VERSION.
 
-const SW_VERSION  = 'gcppro-v11.14d';
+const SW_VERSION  = 'gcppro-v11.15';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 
