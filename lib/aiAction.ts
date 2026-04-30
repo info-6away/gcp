@@ -11,6 +11,12 @@
 // base posture (e.g. "Favor continuation setups — strong GCP event
 // support" when PSS >= 70 on Alignment Trend) but doesn't change the
 // posture itself.
+//
+// v11.18: extended with three new layers — Market Mode, Execution
+// Trigger, and Size guidance. The full Posture struct returned by
+// derivePosture() drives the dashboard's MODE / ACTION / TRIGGER /
+// SIZE rows. Logic is still deterministic; the original
+// deriveAction() stays intact and is used internally.
 
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { Pattern } from '@/types/gcp';
@@ -20,6 +26,26 @@ export type ActionTone = 'wait' | 'favor' | 'avoid' | 'risk';
 export interface ActionPosture {
   text: string;
   tone: ActionTone;
+}
+
+// v11.18 types
+export type MarketMode =
+  | 'Trending'
+  | 'Ranging'
+  | 'Compression'
+  | 'Breakout Watch'
+  | 'Reversal Watch'
+  | 'Exhaustion'
+  | 'No Signal';
+
+export type SizeGuidance = 'Full' | 'Half' | 'Small' | 'No trade';
+
+export interface Posture {
+  mode:     MarketMode;
+  action:   ActionPosture;
+  trigger:  string;
+  size:     SizeGuidance;
+  sizeTone: ActionTone;
 }
 
 const FALLBACK: ActionPosture = {
@@ -136,4 +162,111 @@ export function actionToneColor(tone: ActionTone): string {
     case 'risk':   return '#d4a028';
     case 'wait':   return 'var(--cyan)';
   }
+}
+
+// v11.18: Market Mode mapping. Mirrors the Action mapping but
+// exposes the regime label the user should think in (trend / range
+// / compression / etc.). Deterministic from stateCode.
+function deriveMode(state: GcpStateResponse): MarketMode {
+  switch (state.stateCode) {
+    case 'IS':
+      return state.direction === 'Mixed' || state.direction === 'Neutral'
+        ? 'Breakout Watch'
+        : 'Trending';
+    case 'AT': return 'Trending';
+    case 'SS': return 'Trending';
+    case 'CS': return 'Compression';
+    case 'FA': return 'Reversal Watch';
+    case 'DS': return 'Exhaustion';
+    case 'CL': return 'Exhaustion';
+    case 'SH': return 'Exhaustion';
+    case 'DD': return 'Ranging';
+  }
+  return 'No Signal';
+}
+
+// Execution trigger — what would have to happen before sizing up.
+// Derived from the mode itself; same mode → same trigger guidance.
+function triggerFor(mode: MarketMode): string {
+  switch (mode) {
+    case 'Trending':       return 'Pullback or continuation confirmation';
+    case 'Ranging':        return 'Fade range extremes only';
+    case 'Compression':    return 'Breakout required for size';
+    case 'Breakout Watch': return 'Confirmation needed before size';
+    case 'Reversal Watch': return 'Wait for rejection confirmation';
+    case 'Exhaustion':     return 'Only scalp / fade with confirmation';
+    case 'No Signal':      return '—';
+  }
+}
+
+// Size guidance — how much risk to put on. Strict gates because the
+// goal is capital preservation in the wrong environments and only
+// allows Full when every signal lines up.
+function deriveSize(
+  state: GcpStateResponse,
+  latestPattern: Pattern | null,
+): SizeGuidance {
+  const code  = state.stateCode;
+  const dir   = state.direction;
+  const phase = state.phase;
+  const conf  = state.confidence;
+  const pss   = latestPattern ? Math.round(latestPattern.strength * 100) : 0;
+
+  // Hard "no trade" cases — protect capital.
+  if (code === 'FA') return 'No trade';
+  if (code === 'SH') return 'No trade';
+  if ((code === 'DS' || code === 'CL') && (phase === 'Late' || phase === 'Exhausted')) {
+    return 'No trade';
+  }
+  if (code === 'DD' && conf < 0.4) return 'No trade';
+
+  // Full size — strong alignment trend, early/mid, high confidence,
+  // strong GCP event support.
+  if (code === 'AT'
+      && (dir === 'Up' || dir === 'Down')
+      && (phase === 'Early' || phase === 'Mid')
+      && conf >= 0.7
+      && pss >= 70) {
+    return 'Full';
+  }
+
+  // Half size — early/mid trend, decent ignition, clean compression
+  // breakout watch.
+  if ((code === 'AT' || code === 'SS')
+      && (dir === 'Up' || dir === 'Down')
+      && (phase === 'Early' || phase === 'Mid')) {
+    return 'Half';
+  }
+  if (code === 'IS' && (dir === 'Up' || dir === 'Down') && conf >= 0.6) {
+    return 'Half';
+  }
+  if (code === 'CS' && (phase === 'Early' || phase === 'Mid') && conf >= 0.6) {
+    return 'Half';
+  }
+
+  // Default: small. Range mean-reversion, mixed bias, low conf,
+  // late-phase trends.
+  return 'Small';
+}
+
+function sizeTone(size: SizeGuidance): ActionTone {
+  switch (size) {
+    case 'Full':     return 'favor';
+    case 'Half':     return 'favor';
+    case 'Small':    return 'wait';
+    case 'No trade': return 'avoid';
+  }
+}
+
+export function derivePosture(
+  state: GcpStateResponse | null,
+  latestPattern: Pattern | null,
+): Posture | null {
+  if (!state) return null;
+  const action  = deriveAction(state, latestPattern);
+  if (!action) return null;
+  const mode    = deriveMode(state);
+  const trigger = triggerFor(mode);
+  const size    = deriveSize(state, latestPattern);
+  return { mode, action, trigger, size, sizeTone: sizeTone(size) };
 }

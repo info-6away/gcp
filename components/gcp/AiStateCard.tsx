@@ -20,7 +20,7 @@ import type { Pattern } from '@/types/gcp';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
-import { deriveAction, actionToneColor } from '@/lib/aiAction';
+import { derivePosture, actionToneColor } from '@/lib/aiAction';
 import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
 
@@ -29,6 +29,46 @@ interface Props {
   enabled:       boolean;
   flash?:        boolean;
   latestPattern?: Pattern | null;
+}
+
+// v11.18: thin row used for MODE / ACTION / TRIGGER / SIZE in the
+// posture block. Fixed-width label keeps the four rows visually
+// aligned. emphasised = slightly brighter foreground so ACTION reads
+// as the primary line in the block.
+function PostureRow({
+  label, value, accent, emphasised = false,
+}: {
+  label:        string;
+  value:        string;
+  accent:       string;
+  emphasised?:  boolean;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 10,
+      padding: '5px 10px',
+      background: `${accent}0d`,
+      borderLeft: `2px solid ${accent}55`,
+      borderRadius: 3,
+      fontSize: 11,
+      lineHeight: 1.4,
+    }}>
+      <span style={{
+        fontSize: 8, letterSpacing: '0.18em',
+        color: accent, fontWeight: 600,
+        flexShrink: 0, minWidth: 56,
+      }}>
+        {label}
+      </span>
+      <span style={{
+        color: emphasised ? accent : 'var(--fg-1)',
+        fontWeight: emphasised ? 600 : 500,
+        letterSpacing: '0.1px',
+      }}>
+        {value}
+      </span>
+    </div>
+  );
 }
 
 // One-liner picker: prefer the Engine's reasoningShort only if it
@@ -208,38 +248,26 @@ function Card({ state, enabled, flash = false, latestPattern = null }: Props) {
         {oneLiner}
       </div>
 
-      {/* v11.17: action posture. Derived deterministically from state
-          + direction + phase + confidence, with the latest pattern as
-          a small modifier. NOT a buy/sell signal — posture guidance. */}
+      {/* v11.18: posture block — MODE / ACTION / TRIGGER / SIZE.
+          Deterministic mapping in lib/aiAction.ts. Each row tinted
+          by the relevant tone (action tone for MODE/ACTION/TRIGGER,
+          size tone for SIZE) so the user can scan posture at a
+          glance. NOT a buy/sell signal — context + execution
+          guidance. */}
       {(() => {
-        const action = deriveAction(state, latestPattern);
-        if (!action) return null;
-        const accent = actionToneColor(action.tone);
+        const posture = derivePosture(state, latestPattern);
+        if (!posture) return null;
+        const actionAccent = actionToneColor(posture.action.tone);
+        const sizeAccent   = actionToneColor(posture.sizeTone);
         return (
           <div style={{
             marginTop: 8,
-            padding: '6px 10px',
-            display: 'flex', alignItems: 'baseline', gap: 8,
-            background: `${accent}0d`,
-            border: `1px solid ${accent}55`,
-            borderRadius: 4,
-            fontSize: 11,
-            lineHeight: 1.4,
+            display: 'flex', flexDirection: 'column', gap: 4,
           }}>
-            <span style={{
-              fontSize: 8, letterSpacing: '0.18em',
-              color: accent, fontWeight: 600,
-              flexShrink: 0,
-            }}>
-              ACTION
-            </span>
-            <span style={{
-              color: accent,
-              fontWeight: 500,
-              letterSpacing: '0.1px',
-            }}>
-              {action.text}
-            </span>
+            <PostureRow label="MODE"    value={posture.mode}        accent={actionAccent} />
+            <PostureRow label="ACTION"  value={posture.action.text} accent={actionAccent} emphasised />
+            <PostureRow label="TRIGGER" value={posture.trigger}     accent={actionAccent} />
+            <PostureRow label="SIZE"    value={posture.size}        accent={sizeAccent} />
           </div>
         );
       })()}
