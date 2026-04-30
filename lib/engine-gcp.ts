@@ -87,12 +87,22 @@ export type GcpStateResponse = {
 
 export async function classifyGcpState(
   payload: GcpStatePayload,
+  opts: { manual?: boolean } = {},
 ): Promise<GcpStateResponse | null> {
+  // v11.18.5: server-side kill switch. The proxy refuses any request
+  // that doesn't explicitly mark itself as a manual run, so the LLM
+  // is never invoked unless the user clicked RUN AI ANALYSIS. Stale
+  // tabs / old PWAs / cached JS still firing the auto-loop will be
+  // blocked at the proxy with `manual_required`. Only set the flag
+  // when the caller passes manual: true.
+  const body: unknown = opts.manual === true
+    ? { ...payload, manual: true }
+    : payload;
   try {
     const res = await fetch('/api/gcp-state', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(payload),
+      body:    JSON.stringify(body),
       // Has to exceed the proxy + Engine ceiling. Engine maxDuration=45s,
       // proxy timeout=35s, so 40s here means the client waits long enough
       // for the proxy's own 35s timeout to fire and return a clean 502

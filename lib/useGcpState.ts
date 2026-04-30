@@ -268,7 +268,11 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     // never shows a stale "Ready now" mid-flight.
     recomputeNextPollAt();
     try {
-      const result = await classifyGcpState(payload);
+      // v11.18.5: stamp the manual flag only when this is a deliberate
+      // user-triggered run. The proxy's server-side kill switch refuses
+      // any non-manual call with `manual_required` so even stale auto
+      // loops can't reach the LLM.
+      const result = await classifyGcpState(payload, { manual: force });
       if (result) {
         if (isDev()) console.log('[AI STATE] response', result);
         setState(result);

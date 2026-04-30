@@ -47,6 +47,25 @@ export async function POST(req: Request) {
     return fail(400, 'bad_request');
   }
 
+  // v11.18.5 server-side kill switch. The auto-loop kept burning
+  // tokens even after the client switched to manual-first because
+  // stale browser tabs / old PWAs / cached JS were still firing
+  // `runCall(false)`. The proxy now refuses any call that doesn't
+  // explicitly mark itself as a deliberate manual run, so the LLM is
+  // never invoked unless the user clicked RUN AI ANALYSIS.
+  //
+  // Strip the flag before forwarding — the Engine doesn't expect it.
+  const isManual = !!(body && typeof body === 'object' && (body as { manual?: unknown }).manual === true);
+  if (!isManual) {
+    console.warn('[AI STATE] blocked non-manual request');
+    return fail(403, 'manual_required');
+  }
+  const forwardBody = (() => {
+    if (!body || typeof body !== 'object') return body;
+    const { manual: _manual, ...rest } = body as Record<string, unknown>;
+    return rest;
+  })();
+
   try {
     const upstream = await fetch(`${baseUrl}${ENGINE_PATH}`, {
       method:  'POST',
@@ -56,7 +75,7 @@ export async function POST(req: Request) {
         // Sending Bearer made every upstream call 401 silently.
         'X-API-Key':    apiKey,
       },
-      body:   JSON.stringify(body),
+      body:   JSON.stringify(forwardBody),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
