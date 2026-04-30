@@ -340,9 +340,11 @@ export default function Dashboard({
   const liveRegime = gcpData.liveRegime;
   const regimeMeta = liveRegime ? REGIME_META[liveRegime] : null;
 
+  // v11.18.1: only the latest pattern reference is needed at the
+  // Dashboard level — passed into AiStateCard so derivePosture() can
+  // factor PSS / kind into mode/action/trigger/size. PatternCard
+  // computes its own display PSS + tier internally.
   const activePattern = patterns[patterns.length - 1] ?? null;
-  const activePss     = activePattern ? pssOf(activePattern) : 0;
-  const activeTier    = activePss >= 80 ? 'STRONG' : activePss >= 60 ? 'FORMING' : 'WEAK';
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -380,16 +382,10 @@ export default function Dashboard({
               value={liveRegime ? `${liveRegime}` : '—'}
               meta={regimeMeta ? `${regimeMeta.label.toUpperCase()} · ${regimeMeta.range} NV` : 'awaiting first sample'}
             />
-            {/* v11.17.1: stats column shows the PSS value + tier
-                only. The progress bar lives inside the PatternCard
-                below (full-width with tier labels), so the mini bar
-                here was pure duplication. */}
-            <StatRow
-              label="PSS"
-              valueColor={activePattern ? '#d4a028' : 'var(--fg-3)'}
-              value={activePattern ? `${activePss}` : '—'}
-              meta={activePattern ? `${activeTier} · ${activePattern.kind}` : 'no active pattern'}
-            />
+            {/* v11.18.1: PSS row removed from the stats column. The
+                Pattern card directly below renders the same number,
+                tier, and pattern name — keeping it here was pure
+                duplication. */}
           </div>
         </div>
 
