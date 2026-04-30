@@ -92,6 +92,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// v11.16.6: bumped sub color from var(--fg-3) (#464c56) to a readable
+// blue-grey (#7F98A3) so Settings explanations don't read as disabled
+// text. Labels stay subtle, values stay bright — only the helper text
+// gets the boost.
 function Row({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div style={{
@@ -100,7 +104,7 @@ function Row({ label, value, sub }: { label: string; value: React.ReactNode; sub
     }}>
       <div>
         <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>{label}</div>
-        {sub && <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>{sub}</div>}
+        {sub && <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>{sub}</div>}
       </div>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-0)', textAlign: 'right' }}>
         {value}
@@ -344,11 +348,14 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               sub="Auto-loop is off — press Run AI Analysis Now"
               value="—"
             />
-          ) : aiPhase === 'initial' ? (
+          ) : props.aiNextPollAt == null ? (
+            // v11.16.6: lastCallAt is null — no attempt yet. Don't
+            // show a misleading 11s countdown when interval is 600s;
+            // surface the real state instead.
             <Row
               label="Next analysis in"
-              sub="First Engine classification will arrive shortly"
-              value={`${aiNextSecs}s`}
+              sub="First decide tick will fire as soon as inputs are ready"
+              value="Ready now"
             />
           ) : aiPhase === 'reconnecting' ? (
             <Row

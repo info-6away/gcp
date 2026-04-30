@@ -18,11 +18,17 @@
 //
 // v11.16.4: user-controlled minimum interval. The Settings panel now
 // exposes 60/120/200/300/600/'manual' via gcpro-ai-analysis-interval.
-// When set, the floor for both heartbeats AND triggers becomes
-// max(COOLDOWN_MS, userIntervalMs). The 'manual' option disables the
-// auto-loop entirely and only runs the API call when the user clicks
-// "Run AI Analysis Now". The hook now exposes a runNow() callback
-// that bypasses the floor while still respecting the in-flight guard.
+// 'manual' disables the auto-loop entirely; runNow() bypasses the
+// floor while still respecting the in-flight guard.
+//
+// v11.16.6: the user-selected interval is now the AUTHORITATIVE floor.
+// Removed the 60s baseline cooldown — if you pick 600s and a regime
+// flips at t=10s, the call still waits until t=600s (the trigger is
+// logged as "pending" in the dev console). Manual run resets the
+// last-attempt timestamp so the countdown restarts from the selected
+// interval. nextPollAt is now derived from lastAttempt + interval, not
+// from the 25s decide loop tick, so the Settings countdown reflects
+// the actual user expectation (e.g., 600s -> 9m 50s, not 25s).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -41,11 +47,10 @@ const PREFS_LS_KEY = 'gcpro-settings';
 
 const isDev = (): boolean => process.env.NODE_ENV !== 'production';
 
-// Decide loop ticks every DECIDE_INTERVAL_MS so structural triggers
-// feel responsive. Whether a tick fires the actual API call is gated
-// by user interval + cooldown + change detection.
+// Decide loop ticks every DECIDE_INTERVAL_MS so we can log pending
+// triggers and refresh the Settings countdown. Whether a tick fires
+// the actual API call is gated entirely by the user-selected interval.
 const DECIDE_INTERVAL_MS = 25_000;
-const COOLDOWN_MS        = 60_000;
 
 export const AI_STATE_POLL_INTERVAL_MS = DECIDE_INTERVAL_MS;
 
@@ -122,10 +127,39 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   const lastCallAtRef        = useRef<number | null>(null);
   const lastSentSnapshotRef  = useRef<Snapshot | null>(null);
   const intervalRef          = useRef<AiAnalysisInterval>(120);
+  const pendingReasonRef     = useRef<string | null>(null);
 
   useEffect(() => { inputsRef.current = inputs; }, [inputs]);
   useEffect(() => { stateRef.current = state;   }, [state]);
   useEffect(() => { intervalRef.current = intervalSec; }, [intervalSec]);
+
+  // v11.16.6: nextPollAt is anchored to lastCallAt + userInterval, not
+  // to the decide loop tick. Recompute on every tick AND whenever the
+  // user changes interval, so the Settings countdown reflects the real
+  // wait time. null means "auto-loop off" (manual mode) or "never
+  // attempted" — Settings renders Ready now / Waiting for first
+  // response in both cases.
+  const recomputeNextPollAt = useCallback(() => {
+    const userInt = intervalRef.current;
+    if (userInt === 'manual') {
+      setNextPollAt(null);
+      return;
+    }
+    if (lastCallAtRef.current == null) {
+      // No attempt yet — first decide tick will fire as soon as inputs
+      // are ready. Surface that to the UI as null so it can render the
+      // "Ready now / Waiting for first response" label.
+      setNextPollAt(null);
+      return;
+    }
+    const userIntervalMs = userInt * 1000;
+    setNextPollAt(new Date(lastCallAtRef.current + userIntervalMs));
+  }, []);
+
+  // Recompute the countdown anchor whenever the user changes interval
+  // so the displayed wait jumps to the new floor immediately rather
+  // than after the next call.
+  useEffect(() => { recomputeNextPollAt(); }, [intervalSec, recomputeNextPollAt]);
 
   // Read both the on/off pref and the interval pref on mount, refresh
   // on storage events so changes from another tab or from the same
@@ -142,8 +176,10 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   }, []);
 
   // Core API call. Used by the auto-loop AND by runNow(). When force
-  // is true the heartbeat / cooldown / change-detection gating is
-  // skipped, but the in-flight guard still prevents overlap.
+  // is true the user-interval / change-detection gating is skipped,
+  // but the in-flight guard still prevents overlap. Manual run resets
+  // the last-attempt timestamp on completion so the countdown
+  // restarts from the user-selected interval.
   const runCall = useCallback(async (force: boolean) => {
     if (inflightRef.current) {
       if (isDev() && force) console.log('[AI STATE] manual run ignored — request in flight');
@@ -159,52 +195,50 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     const currentSnap = snapshotOf(cur);
 
     if (!force) {
-      const prevSnap  = lastSentSnapshotRef.current;
-      const sinceLast = lastCallAtRef.current
-        ? Date.now() - lastCallAtRef.current
-        : Number.POSITIVE_INFINITY;
-
       const userInt = intervalRef.current;
       if (userInt === 'manual') {
         if (isDev()) console.log('[AI STATE] skipped — manual mode');
         return;
       }
 
-      // The user-selected minimum interval is the floor for both
-      // heartbeat and trigger paths. Cooldown still applies as the
-      // baseline; effective floor is whichever is larger.
       const userIntervalMs = userInt * 1000;
-      const effectiveFloorMs = Math.max(COOLDOWN_MS, userIntervalMs);
-
-      let shouldCall: boolean;
-      let logMsg: string;
+      const sinceLast = lastCallAtRef.current
+        ? Date.now() - lastCallAtRef.current
+        : Number.POSITIVE_INFINITY;
+      const prevSnap = lastSentSnapshotRef.current;
 
       if (!prevSnap) {
-        shouldCall = true;
-        logMsg     = '[AI STATE] triggered — first call';
-      } else {
+        // First attempt — fire immediately so the UI gets data.
+        if (isDev()) console.log('[AI STATE] triggered — first call');
+      } else if (sinceLast < userIntervalMs) {
+        // v11.16.6: user-selected interval is authoritative. Triggers
+        // do NOT bypass — they're logged as "pending" and execute
+        // when the interval expires. Dedupe pending-reason logs so the
+        // console doesn't spam every 25 s tick with the same reason.
         const reason = changeReason(prevSnap, currentSnap);
-        if (reason) {
-          if (sinceLast < effectiveFloorMs) {
-            shouldCall = false;
-            logMsg     = `[AI STATE] skipped — interval floor (${reason}, ${Math.round(sinceLast / 1000)}s of ${Math.round(effectiveFloorMs / 1000)}s)`;
-          } else {
-            shouldCall = true;
-            logMsg     = `[AI STATE] triggered — ${reason}`;
+        if (isDev()) {
+          if (reason && pendingReasonRef.current !== reason) {
+            console.log(`[AI STATE] pending trigger — ${reason}`);
+            pendingReasonRef.current = reason;
+          } else if (!reason) {
+            const remaining = Math.max(0, Math.round((userIntervalMs - sinceLast) / 1000));
+            console.log(`[AI STATE] blocked by selected interval — ${remaining}s remaining`);
           }
-        } else if (sinceLast >= userIntervalMs) {
-          shouldCall = true;
-          logMsg     = '[AI STATE] triggered — heartbeat';
-        } else {
-          shouldCall = false;
-          logMsg     = '[AI STATE] skipped — no structural change';
         }
+        return;
+      } else {
+        // Interval expired. Fire — heartbeat or trigger; only
+        // semantic difference is the dev log.
+        const reason = changeReason(prevSnap, currentSnap);
+        if (isDev()) {
+          console.log(reason
+            ? `[AI STATE] triggered — ${reason}`
+            : '[AI STATE] triggered — heartbeat');
+        }
+        pendingReasonRef.current = null;
       }
-
-      if (isDev()) console.log(logMsg);
-      if (!shouldCall) return;
     } else if (isDev()) {
-      console.log('[AI STATE] triggered — manual run');
+      console.log('[AI STATE] manual run');
     }
 
     const payload = buildGcpStatePayload({
@@ -220,10 +254,14 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       console.log('[AI STATE] request payload', payload);
     }
 
-    inflightRef.current        = true;
+    inflightRef.current         = true;
     setInflight(true);
-    lastCallAtRef.current      = Date.now();
+    lastCallAtRef.current       = Date.now();
     lastSentSnapshotRef.current = currentSnap;
+    pendingReasonRef.current    = null;
+    // Settings countdown updates the instant a call fires so the UI
+    // never shows a stale "Ready now" mid-flight.
+    recomputeNextPollAt();
     try {
       const result = await classifyGcpState(payload);
       if (result) {
@@ -237,8 +275,12 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     } finally {
       inflightRef.current = false;
       setInflight(false);
+      // Reset the countdown anchor regardless of success/failure so
+      // the user sees the interval restart whenever an attempt
+      // completes — including manual runs.
+      recomputeNextPollAt();
     }
-  }, []);
+  }, [recomputeNextPollAt]);
 
   // Decide loop runs every DECIDE_INTERVAL_MS while enabled. In manual
   // mode the loop still runs (so nextPollAt animates) but every tick
@@ -255,14 +297,18 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
 
     const tick = () => {
       if (cancelled) return;
-      setNextPollAt(new Date(Date.now() + DECIDE_INTERVAL_MS));
+      // v11.16.6: do NOT anchor nextPollAt to the decide tick — that
+      // would show a misleading 25 s countdown when the user picked
+      // 600 s. recomputeNextPollAt() reads lastCallAt + userInterval
+      // so the displayed wait is always the real one.
+      recomputeNextPollAt();
       void runCall(false);
     };
 
     tick();
     const id = setInterval(tick, DECIDE_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(id); };
-  }, [enabled, runCall]);
+  }, [enabled, runCall, recomputeNextPollAt]);
 
   const runNow = useCallback(() => { void runCall(true); }, [runCall]);
 

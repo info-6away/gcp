@@ -138,9 +138,14 @@ export function SettingsScreen({
       label: 'Next analysis in', val: '—', valColor: C.fg3,
       sub: 'Auto-loop is off — press Run Now',
     });
-  } else if (aiPhase === 'initial') {
-    aiRows.push({ label: 'Next analysis in', val: `${aiNextSecs}s`, valColor: C.fg1,
-      sub: 'First Engine classification will arrive shortly' });
+  } else if (aiNextPollAt == null) {
+    // v11.16.6: no attempt yet. Don't show a misleading short
+    // countdown; surface "Ready now" so the user sees they're
+    // about to get data on the next decide tick.
+    aiRows.push({
+      label: 'Next analysis in', val: 'Ready now', valColor: C.fg1,
+      sub: 'First decide tick will fire as soon as inputs are ready',
+    });
   } else if (aiPhase === 'reconnecting') {
     aiRows.push(
       { label: 'Last error', val: formatRelative(aiLastError), valColor: C.red,
@@ -208,7 +213,7 @@ export function SettingsScreen({
             }}>
               <div style={{ flex: 1, paddingRight: 12 }}>
                 <div style={{ fontSize: 12, color: C.fg1 }}>{row.label}</div>
-                <div style={{ fontSize: 9, color: C.fg4, marginTop: 2 }}>{row.sub}</div>
+                <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>{row.sub}</div>
               </div>
               <Toggle
                 value={settings[row.key] ?? true}
@@ -229,7 +234,7 @@ export function SettingsScreen({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: C.fg1 }}>{row.label}</div>
                 {row.sub && (
-                  <div style={{ fontSize: 9, color: C.fg4, marginTop: 2 }}>{row.sub}</div>
+                  <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>{row.sub}</div>
                 )}
               </div>
               <div style={{
@@ -254,7 +259,7 @@ export function SettingsScreen({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: C.fg1 }}>{row.label}</div>
                 {row.sub && (
-                  <div style={{ fontSize: 9, color: C.fg4, marginTop: 2 }}>{row.sub}</div>
+                  <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>{row.sub}</div>
                 )}
               </div>
               <div style={{
@@ -274,7 +279,7 @@ export function SettingsScreen({
           padding: '10px 12px', marginBottom: 8,
         }}>
           <div style={{ fontSize: 11, color: C.fg1, marginBottom: 3 }}>AI Analysis Interval</div>
-          <div style={{ fontSize: 9, color: C.fg4, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: '#7F98A3', marginBottom: 8, lineHeight: 1.5 }}>
             Minimum gap between Engine calls. Manual disables the auto-loop.
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
