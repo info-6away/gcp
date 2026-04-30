@@ -1,2 +1,2 @@
-export const APP_VERSION = '11.19.2';
+export const APP_VERSION = '11.19.3';
 export const APP_MODEL   = `GCP-Pro/v${APP_VERSION}`;

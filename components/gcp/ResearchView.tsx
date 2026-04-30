@@ -113,18 +113,40 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   }, [symbol]);
 
   // ── Regime scatter (one dot per candle) ─────────────────────────────────────
-  const regimePoints = useMemo<RegimePoint[]>(() => {
-    if (!candles.length || !series.length) return [];
+  // v11.19.3: allow partial forward windows + bar-OPEN entry. The
+  // previous loop ran `i < candles.length - fwdBars` which dropped the
+  // last fwdBars samples entirely; for short candle histories this
+  // could leave each regime with single-digit counts. Now we clamp the
+  // forward index to the last available bar and require at least one
+  // bar of forward window. Entry uses c.o (bar open) per the
+  // "regime taken at bar OPEN" spec; exit is the close fwdBars later.
+  // taggedByRegime / survivedByRegime are exposed via regimeData so
+  // the sidebar can flag "Insufficient data" without re-walking the
+  // candle array.
+  const regimeData = useMemo(() => {
+    const empty = {
+      points: [] as RegimePoint[],
+      taggedByRegime:   { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 } as Record<string, number>,
+      survivedByRegime: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 } as Record<string, number>,
+    };
+    if (!candles.length || !series.length) return empty;
 
     const gcpByTs = new Map<number, { v: number; r: string }>();
     series.forEach(p => gcpByTs.set(Math.floor(p.t / 1000), { v: p.v, r: p.r ?? regimeFor(p.v) }));
 
-    const points: RegimePoint[] = [];
-    for (let i = 0; i < candles.length - fwdBars; i++) {
-      const c    = candles[i];
-      const cFwd = candles[i + fwdBars];
-      if (c.c <= 0) continue;
+    const taggedByRegime:   Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+    const survivedByRegime: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
 
+    const points: RegimePoint[] = [];
+    const lastIdx = candles.length - 1;
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      // Need a positive open price to compute a meaningful return.
+      if (!c || c.o <= 0) continue;
+
+      // Regime is read at the bar OPEN — look up GCP at the bar's
+      // timestamp (with up to 5 min slack to handle slightly off-grid
+      // GCP samples).
       const ts = Math.floor(c.t / 1000);
       let gcpPt = gcpByTs.get(ts);
       if (!gcpPt) {
@@ -135,7 +157,19 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       }
       if (!gcpPt) continue;
 
-      const fwdPct = ((cFwd.c - c.c) / c.c) * 100;
+      if (taggedByRegime[gcpPt.r] != null) taggedByRegime[gcpPt.r]++;
+
+      // Allow partial forward windows: clamp the exit index to the
+      // last available candle. The last fwdBars bars get progressively
+      // shorter windows but are still counted, which is what the
+      // "remove over-filtering" spec wants.
+      const fwdIdx = Math.min(i + fwdBars, lastIdx);
+      if (fwdIdx === i) continue;       // need at least 1 forward bar
+      const cFwd = candles[fwdIdx];
+      if (!cFwd || cFwd.c <= 0) continue;
+
+      // Entry at bar OPEN; exit at close of the forward bar.
+      const fwdPct = ((cFwd.c - c.o) / c.o) * 100;
       points.push({
         kind:   'regime',
         regime: gcpPt.r,
@@ -143,9 +177,19 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         t:      c.t,
         nv:     gcpPt.v,
       });
+      if (survivedByRegime[gcpPt.r] != null) survivedByRegime[gcpPt.r]++;
     }
-    return points;
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[Research] tagged per regime:',          taggedByRegime);
+      console.log('[Research] survived forward-return:',     survivedByRegime);
+      console.log('[Research] total candles / GCP series:',  candles.length, '/', series.length);
+    }
+
+    return { points, taggedByRegime, survivedByRegime };
   }, [candles, series, fwdBars]);
+
+  const regimePoints = regimeData.points;
 
   // ── Pattern scatter (one dot per pattern occurrence) ────────────────────────
   const patternPoints = useMemo<PatternPoint[]>(() => {
@@ -180,17 +224,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   }, [candles, series, fwdBars]);
 
   // ── Stats per axis ──────────────────────────────────────────────────────────
+  // v11.19.3: stats include `tagged` (raw per-regime count before
+  // forward-return filtering) and an `insufficient` flag the sidebar
+  // uses to surface "Insufficient data" when the regime has fewer
+  // than 50 samples.
   const regimeStats = useMemo(() => {
-    const map: Record<string, { pts: RegimePoint[]; avg: number; bull: number; bear: number }> = {};
+    const map: Record<string, {
+      pts:           RegimePoint[];
+      tagged:        number;
+      avg:           number;
+      bull:          number;
+      bear:          number;
+      insufficient:  boolean;
+    }> = {};
     for (const r of 'ABCDEF') {
-      const pts  = regimePoints.filter(p => p.regime === r);
-      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
-      const bull = pts.filter(p => p.fwdPct >  0.05).length;
-      const bear = pts.filter(p => p.fwdPct < -0.05).length;
-      map[r] = { pts, avg, bull, bear };
+      const pts    = regimePoints.filter(p => p.regime === r);
+      const avg    = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull   = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear   = pts.filter(p => p.fwdPct < -0.05).length;
+      const tagged = regimeData.taggedByRegime[r] ?? 0;
+      map[r] = { pts, tagged, avg, bull, bear, insufficient: pts.length < 50 };
     }
     return map;
-  }, [regimePoints]);
+  }, [regimePoints, regimeData]);
 
   const patternStats = useMemo(() => {
     const map: Record<string, { pts: PatternPoint[]; avg: number; bull: number; bear: number }> = {};
@@ -577,31 +633,57 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   <div key={r} style={{
                     marginBottom: 12, paddingBottom: 12,
                     borderBottom: '1px solid var(--line-0)',
+                    opacity: s.insufficient ? 0.55 : 1,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                       <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{r}</span>
                       <span style={{
                         fontSize: 10, fontVariantNumeric: 'tabular-nums',
-                        color: s.avg > 0.02 ? '#22c55e' : s.avg < -0.02 ? '#ef4444' : 'var(--fg-3)',
+                        color: s.insufficient
+                          ? 'var(--fg-3)'
+                          : s.avg > 0.02 ? '#22c55e' : s.avg < -0.02 ? '#ef4444' : 'var(--fg-3)',
                       }}>
-                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                        {s.pts.length === 0 ? '—' : `${s.avg > 0 ? '+' : ''}${s.avg.toFixed(2)}%`}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)' }}>
-                      <span>{s.pts.length} bars</span>
+                    <div style={{
+                      display: 'flex', gap: 6,
+                      fontSize: 8, color: 'var(--fg-4)',
+                      flexWrap: 'wrap',
+                    }}>
+                      <span>{s.pts.length} samples</span>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
                       <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
-                      <span>{bullPct.toFixed(0)}% bull</span>
+                      <span>{s.pts.length ? `${bullPct.toFixed(0)}% bull` : '—'}</span>
                     </div>
-                    <div style={{
-                      height: 3, background: '#ef4444',
-                      borderRadius: 1, marginTop: 4, overflow: 'hidden',
-                    }}>
+                    {/* v11.19.3: dev sees the tagged count too, so the
+                        gap between "tagged" and "survived" is visible
+                        when a regime has bars but they all fail the
+                        forward-window filter. */}
+                    {s.tagged !== s.pts.length && (
+                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+                        {s.tagged} tagged · {s.pts.length} with forward return
+                      </div>
+                    )}
+                    {s.insufficient ? (
                       <div style={{
-                        height: '100%', background: '#22c55e',
-                        width: `${bullPct}%`, borderRadius: 1,
-                      }} />
-                    </div>
+                        marginTop: 4,
+                        fontSize: 8, color: '#d4a028',
+                        letterSpacing: '0.04em',
+                      }}>
+                        Insufficient data
+                      </div>
+                    ) : (
+                      <div style={{
+                        height: 3, background: '#ef4444',
+                        borderRadius: 1, marginTop: 4, overflow: 'hidden',
+                      }}>
+                        <div style={{
+                          height: '100%', background: '#22c55e',
+                          width: `${bullPct}%`, borderRadius: 1,
+                        }} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
