@@ -187,9 +187,10 @@ export function SettingsScreen({
     cohRows.push({ label: 'Net Variance', val: `${liveNV.toFixed(1)} NV`, valColor: C.fg1 });
   }
 
+  // v11.18.2: Version row removed from sysRows — now displayed
+  // prominently in the page header.
   const sysRows = [
     { label: 'Historical GCP',  val: `${seriesLength.toLocaleString()} pts`, valColor: C.fg2 },
-    { label: 'Version',         val: APP_VERSION, valColor: C.fg2 },
   ];
 
   return (
@@ -197,9 +198,54 @@ export function SettingsScreen({
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
         aiState={aiState} aiEnabled={aiEnabled} />
 
-      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.line1}`, background: C.bg, flexShrink: 0 }}>
-        <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3 }}>SYSTEM</div>
-        <div style={{ fontSize: 18, color: C.fg0, fontWeight: 600, marginTop: 2 }}>SETTINGS</div>
+      {/* v11.18.2: version now visible in the page header. The "Hard
+          to find on mobile" complaint was real — the Version row was
+          buried at the bottom of the SYSTEM table. Putting it here
+          (and slightly brighter) means the user can confirm which
+          build they're running without scrolling. The "Check for
+          updates" button forces the SW to re-fetch /sw.js — useful
+          if the auto-poll hasn't surfaced the latest deploy yet. */}
+      <div style={{
+        padding: '10px 14px', borderBottom: `1px solid ${C.line1}`,
+        background: C.bg, flexShrink: 0,
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10,
+      }}>
+        <div>
+          <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3 }}>SYSTEM</div>
+          <div style={{ fontSize: 18, color: C.fg0, fontWeight: 600, marginTop: 2 }}>SETTINGS</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 8, letterSpacing: '0.16em', color: C.fg3 }}>VERSION</div>
+          <div style={{
+            fontSize: 13, color: C.cyan, fontFamily: 'inherit',
+            fontWeight: 600, fontVariantNumeric: 'tabular-nums', marginTop: 2,
+          }}>
+            v{APP_VERSION}
+          </div>
+          <button
+            onClick={() => {
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistration().then(reg => {
+                  if (reg) reg.update().catch(() => {});
+                });
+              }
+              setTimeout(() => window.location.reload(), 600);
+            }}
+            style={{
+              marginTop: 4,
+              padding: '3px 8px',
+              background: 'transparent',
+              border: `1px solid ${C.line2}`,
+              borderRadius: 2,
+              color: C.fg2,
+              fontSize: 8, letterSpacing: '0.1em',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            CHECK FOR UPDATES
+          </button>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '14px 12px' }}>
