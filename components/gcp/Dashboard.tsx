@@ -354,7 +354,12 @@ export default function Dashboard({
           borderBottom: '1px solid var(--line-0)',
           flexShrink: 0,
         }}>
-          <AiStateCard state={aiState} enabled={aiEnabled} flash={pssFlash} />
+          <AiStateCard
+            state={aiState}
+            enabled={aiEnabled}
+            flash={pssFlash}
+            latestPattern={activePattern}
+          />
           <div style={{
             background: 'var(--bg-1)', borderLeft: '1px solid var(--line-0)',
             padding: '10px 16px',

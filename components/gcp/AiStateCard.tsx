@@ -16,16 +16,19 @@
 
 import { memo, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { Pattern } from '@/types/gcp';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
+import { deriveAction, actionToneColor } from '@/lib/aiAction';
 import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
 
 interface Props {
-  state:   GcpStateResponse | null;
-  enabled: boolean;
-  flash?:  boolean;
+  state:         GcpStateResponse | null;
+  enabled:       boolean;
+  flash?:        boolean;
+  latestPattern?: Pattern | null;
 }
 
 // One-liner picker: prefer the Engine's reasoningShort only if it
@@ -40,7 +43,7 @@ function pickOneLiner(state: GcpStateResponse): string {
   return DEFAULT_INTERPRETATION[state.stateCode] || '—';
 }
 
-function Card({ state, enabled, flash = false }: Props) {
+function Card({ state, enabled, flash = false, latestPattern = null }: Props) {
   const [showExplainer, setShowExplainer] = useState(false);
 
   const flashStyle: React.CSSProperties = flash ? {
@@ -204,6 +207,42 @@ function Card({ state, enabled, flash = false }: Props) {
       }}>
         {oneLiner}
       </div>
+
+      {/* v11.17: action posture. Derived deterministically from state
+          + direction + phase + confidence, with the latest pattern as
+          a small modifier. NOT a buy/sell signal — posture guidance. */}
+      {(() => {
+        const action = deriveAction(state, latestPattern);
+        if (!action) return null;
+        const accent = actionToneColor(action.tone);
+        return (
+          <div style={{
+            marginTop: 8,
+            padding: '6px 10px',
+            display: 'flex', alignItems: 'baseline', gap: 8,
+            background: `${accent}0d`,
+            border: `1px solid ${accent}55`,
+            borderRadius: 4,
+            fontSize: 11,
+            lineHeight: 1.4,
+          }}>
+            <span style={{
+              fontSize: 8, letterSpacing: '0.18em',
+              color: accent, fontWeight: 600,
+              flexShrink: 0,
+            }}>
+              ACTION
+            </span>
+            <span style={{
+              color: accent,
+              fontWeight: 500,
+              letterSpacing: '0.1px',
+            }}>
+              {action.text}
+            </span>
+          </div>
+        );
+      })()}
 
       <AiStateExplainer
         open={showExplainer}

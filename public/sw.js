@@ -13,7 +13,7 @@
 // installed PWAs from picking up new bundles -- always bump in lockstep
 // with APP_VERSION.
 
-const SW_VERSION  = 'gcppro-v11.16.6';
+const SW_VERSION  = 'gcppro-v11.17';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 

@@ -9,6 +9,7 @@ import { useNewsData } from '@/lib/useNewsData';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
+import { deriveAction, actionToneColor } from '@/lib/aiAction';
 import AiStateExplainer from '../../AiStateExplainer';
 
 const REGIME_NAMES: Record<string, string> = {
@@ -156,6 +157,35 @@ export function DashboardScreen({
               }}>
                 {interp}
               </div>
+
+              {/* v11.17: action posture row. Same deterministic
+                  mapping as desktop, scaled down for mobile. */}
+              {(() => {
+                const action = deriveAction(aiState, activePat);
+                if (!action) return null;
+                const accent = actionToneColor(action.tone);
+                return (
+                  <div style={{
+                    marginTop: 6,
+                    padding: '5px 8px',
+                    display: 'flex', alignItems: 'baseline', gap: 6,
+                    background: `${accent}0d`,
+                    border: `1px solid ${accent}55`,
+                    borderRadius: 4,
+                    fontSize: 11,
+                    lineHeight: 1.35,
+                  }}>
+                    <span style={{
+                      fontSize: 8, letterSpacing: '0.18em',
+                      color: accent, fontWeight: 600,
+                      flexShrink: 0,
+                    }}>ACTION</span>
+                    <span style={{ color: accent, fontWeight: 500 }}>
+                      {action.text}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
