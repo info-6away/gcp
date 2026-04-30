@@ -80,6 +80,18 @@ button { font-family: inherit; font-size: inherit; color: inherit; background: n
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+/* v11.15.4: heartbeat variants used by the Heartbeat component. The
+   live variant is the same as livepulse but explicit so the component
+   API doesn't depend on the existing class name. Stale is slower so
+   it reads as "trying again" rather than "everything's fine". */
+@keyframes heartbeat-init {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 0.30; }
+}
+@keyframes heartbeat-stale {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.40; }
+}
 @keyframes scanline {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }

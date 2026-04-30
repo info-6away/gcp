@@ -1,12 +1,30 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useCountdown } from '@/lib/useCountdown';
+import Heartbeat, { type HeartbeatMode } from '../../Heartbeat';
 
 type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
+
+function phaseToHeartbeat(p: ConnPhase): HeartbeatMode {
+  if (p === 'connected')    return 'live';
+  if (p === 'reconnecting') return 'stale';
+  if (p === 'disabled')     return 'disabled';
+  return 'init';
+}
+
+function valueWithHeartbeat(mode: HeartbeatMode, label: string, color: string): ReactNode {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color }}>
+      <Heartbeat mode={mode} size={6} />
+      {label}
+    </span>
+  );
+}
 
 function formatRelative(d: Date | null): string {
   if (!d) return '—';
@@ -91,12 +109,16 @@ export function SettingsScreen({
     { key: 'showPatternMarkers', label: 'Pattern markers',    sub: 'Show on chart panes' },
   ];
 
-  const aiRows: { label: string; val: string; valColor: string; sub?: string }[] = [
-    { label: 'Status', val: aiStatusLabel, valColor: aiStatusColor,
+  const aiRows: { label: string; val: ReactNode; valColor: string; sub?: string }[] = [
+    {
+      label: 'Status',
+      val: valueWithHeartbeat(phaseToHeartbeat(aiPhase), aiStatusLabel, aiStatusColor),
+      valColor: aiStatusColor,
       sub: aiPhase === 'initial'      ? '6away Engine · 25s poll · waiting for first response'
          : aiPhase === 'reconnecting' ? '6away Engine · 25s poll · keeping prior state'
          : aiPhase === 'disabled'     ? 'Polling is off'
-         : '6away Engine · /v1/coherence/gcp-state' },
+         : '6away Engine · /v1/coherence/gcp-state',
+    },
   ];
   if (aiPhase === 'initial') {
     aiRows.push({ label: 'Next check in', val: `${aiNextSecs}s`, valColor: C.fg1,
@@ -121,11 +143,15 @@ export function SettingsScreen({
     );
   }
 
-  const cohRows: { label: string; val: string; valColor: string; sub?: string }[] = [
-    { label: 'Status', val: gcpStatusLabel, valColor: gcpStatusColor,
+  const cohRows: { label: string; val: ReactNode; valColor: string; sub?: string }[] = [
+    {
+      label: 'Status',
+      val: valueWithHeartbeat(phaseToHeartbeat(gcpPhase), gcpStatusLabel, gcpStatusColor),
+      valColor: gcpStatusColor,
       sub: gcpPhase === 'initial'      ? 'gcp2.net · 120s poll · fetching first sample'
          : gcpPhase === 'reconnecting' ? 'gcp2.net · 120s poll · last fetch failed, will retry'
-         : 'gcp2.net · 120s poll · browser direct' },
+         : 'gcp2.net · 120s poll · browser direct',
+    },
     { label: 'Last update',
       val:  gcpPhase === 'initial' ? '—' : formatRelative(gcpLastUpdate),
       valColor: C.fg2 },

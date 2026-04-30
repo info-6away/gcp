@@ -17,6 +17,7 @@ import type { GcpStateResponse } from '@/lib/engine-gcp';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
+import AiStateExplainer from './AiStateExplainer';
 
 interface Props {
   state:   GcpStateResponse | null;
@@ -26,6 +27,7 @@ interface Props {
 
 function Card({ state, enabled, flash = false }: Props) {
   const [showInvalidators, setShowInvalidators] = useState(false);
+  const [showExplainer,    setShowExplainer]    = useState(false);
 
   const flashStyle: React.CSSProperties = flash ? {
     outline: '1px solid var(--cyan)',
@@ -43,7 +45,7 @@ function Card({ state, enabled, flash = false }: Props) {
         ...flashStyle,
       }}>
         <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-          AI STATE
+          AI STATE · GCP + GOLD ENVIRONMENT
         </div>
         <div style={{ fontSize: 14, color: 'var(--fg-4)' }}>Disabled</div>
         <div style={{ fontSize: 9, color: 'var(--fg-4)', marginTop: 4 }}>
@@ -61,7 +63,7 @@ function Card({ state, enabled, flash = false }: Props) {
         ...flashStyle,
       }}>
         <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-          AI STATE
+          AI STATE · GCP + GOLD ENVIRONMENT
         </div>
         <div style={{
           fontSize: 22, color: 'var(--fg-3)',
@@ -102,10 +104,25 @@ function Card({ state, enabled, flash = false }: Props) {
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 8,
+        marginBottom: 8, gap: 8,
       }}>
-        <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)' }}>
-          AI STATE
+        <div style={{
+          fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span>AI STATE · GCP + GOLD ENVIRONMENT</span>
+          <button
+            onClick={() => setShowExplainer(true)}
+            title="What does this mean?"
+            style={{
+              background: 'transparent', border: '1px solid var(--line-2)',
+              borderRadius: '50%',
+              width: 14, height: 14, padding: 0,
+              fontSize: 9, color: 'var(--fg-2)', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'inherit', letterSpacing: 0,
+            }}
+          >ⓘ</button>
         </div>
         <div style={{
           fontSize: 8, letterSpacing: '0.08em',
@@ -185,6 +202,11 @@ function Card({ state, enabled, flash = false }: Props) {
           )}
         </>
       )}
+      <AiStateExplainer
+        open={showExplainer}
+        state={state}
+        onClose={() => setShowExplainer(false)}
+      />
     </div>
   );
 }

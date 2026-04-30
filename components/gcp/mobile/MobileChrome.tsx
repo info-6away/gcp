@@ -6,6 +6,7 @@ import { C, regimeColor } from './colors';
 import type { MarketSymbol } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import AiStateBadge from '../AiStateBadge';
+import Heartbeat from '../Heartbeat';
 
 export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'settings';
 
@@ -41,10 +42,12 @@ export function MobileStatus({
           <span style={{ fontSize: 11, color: C.fg0, fontVariantNumeric: 'tabular-nums' }}>
             {nv?.toFixed(1) ?? '—'}
           </span>
-          <span style={{
-            width: 5, height: 5, borderRadius: '50%',
-            background: connected ? C.green : C.red,
-          }} />
+          <Heartbeat
+            mode={connected ? 'live' : nv != null ? 'stale' : 'init'}
+            size={5}
+            glow={false}
+            title={connected ? 'GCP feed live' : 'GCP feed reconnecting'}
+          />
         </div>
         {regime && (
           <div style={{

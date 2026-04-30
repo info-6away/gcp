@@ -11,6 +11,7 @@ import {
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useCountdown } from '@/lib/useCountdown';
+import Heartbeat, { type HeartbeatMode } from './Heartbeat';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
@@ -58,28 +59,6 @@ function loadPrefs(): Prefs {
   } catch {
     return DEFAULT_PREFS;
   }
-}
-
-function StatusDot({ ok }: { ok: boolean }) {
-  return (
-    <span style={{
-      display: 'inline-block',
-      width: 7, height: 7, borderRadius: '50%',
-      background: ok ? 'var(--green)' : 'var(--red)',
-      marginRight: 6,
-      boxShadow: ok ? '0 0 5px var(--green)' : 'none',
-    }} />
-  );
-}
-
-function NeutralDot() {
-  return (
-    <span style={{
-      display: 'inline-block',
-      width: 7, height: 7, borderRadius: '50%',
-      background: 'var(--fg-3)', marginRight: 6,
-    }} />
-  );
 }
 
 function formatRelative(d: Date | null): string {
@@ -194,6 +173,17 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const aiNextSecs  = useCountdown(props.aiNextPollAt);
   const gcpNextSecs = useCountdown(props.gcpNextPollAt);
 
+  const phaseToHeartbeat = (p: ConnPhase): HeartbeatMode =>
+    p === 'connected'    ? 'live'
+    : p === 'reconnecting' ? 'stale'
+    : p === 'disabled'     ? 'disabled'
+    : 'init';
+
+  const goldHeartbeat: HeartbeatMode =
+    props.goldStatus === 'error'  ? 'stale'
+    : props.goldStatus === 'closed' ? 'disabled'
+    : 'live';
+
   const updateSensitivity = (s: Sensitivity) => {
     setSensitivity(s);
     saveSensitivity(s);
@@ -222,7 +212,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         fontFamily: 'var(--font-mono)',
       }}>
 
-        <Section title="Data Sources">
+        <Section title="Data Sources · Coherence + Price Feeds">
           <Row
             label="GCP2 Network Coherence"
             sub={
@@ -231,14 +221,12 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               : 'gcp2.net — 120s poll — browser direct'
             }
             value={
-              <>
-                {gcpPhase === 'connected' && <StatusDot ok={true} />}
-                {gcpPhase === 'reconnecting' && <StatusDot ok={false} />}
-                {gcpPhase === 'initial' && <NeutralDot />}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Heartbeat mode={phaseToHeartbeat(gcpPhase)} />
                 {gcpPhase === 'connected'      ? `${props.gcpNetvar?.toFixed(1)} NV` :
                  gcpPhase === 'reconnecting'   ? 'Reconnecting…' :
                                                  'Loading data…'}
-              </>
+              </span>
             }
           />
           <Row
@@ -257,7 +245,12 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <Row
             label="Gold / BTC / Silver Spot Price"
             sub={`gold-api → twelve-data → yahoo · 60s poll${props.goldSource ? ` · active: ${props.goldSource}` : ''}`}
-            value={<><StatusDot ok={props.goldStatus !== 'error'} />{props.goldStatus === 'error' ? 'Error' : props.goldStatus === 'closed' ? 'Closed' : 'Live'}</>}
+            value={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Heartbeat mode={goldHeartbeat} />
+                {props.goldStatus === 'error' ? 'Error' : props.goldStatus === 'closed' ? 'Closed' : 'Live'}
+              </span>
+            }
           />
           <Row
             label="OHLCV Candles"
@@ -271,7 +264,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           />
         </Section>
 
-        <Section title="AI Engine">
+        <Section title="AI Engine · GCP + Gold Environment">
           <Row
             label="Status"
             sub={
@@ -281,15 +274,13 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               : '6away Engine · /v1/coherence/gcp-state · via /api/gcp-state proxy'
             }
             value={
-              <>
-                {aiPhase === 'connected'    && <StatusDot ok={true} />}
-                {aiPhase === 'reconnecting' && <StatusDot ok={false} />}
-                {(aiPhase === 'initial' || aiPhase === 'disabled') && <NeutralDot />}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Heartbeat mode={phaseToHeartbeat(aiPhase)} />
                 {aiPhase === 'initial'      ? 'Initializing…' :
                  aiPhase === 'connected'    ? 'Connected'      :
                  aiPhase === 'reconnecting' ? 'Reconnecting…'  :
                                               'Disabled'}
-              </>
+              </span>
             }
           />
           {aiPhase === 'initial' && (

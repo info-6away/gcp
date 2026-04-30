@@ -6,6 +6,7 @@ import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } fr
 import { APP_MODEL } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import AiStateBadge from './AiStateBadge';
+import Heartbeat, { type HeartbeatMode } from './Heartbeat';
 
 const TF_DESCRIPTIONS: Record<string, string> = {
   '1m':  'Each bar = 1 minute',
@@ -256,13 +257,11 @@ function Header({
                   {gcpNetvar.toFixed(1)}
                 </span>
               )}
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: gcpError ? 'var(--red)' : gcpLive ? 'var(--green)' : 'var(--fg-3)',
-                boxShadow: gcpLive && !gcpError ? '0 0 5px var(--green)' : 'none',
-                animation: gcpLive && !gcpError ? 'livepulse 1.6s ease-in-out infinite' : 'none',
-                flexShrink: 0,
-              }} />
+              <Heartbeat
+                mode={gcpError ? 'stale' : gcpLive ? 'live' : 'init'}
+                size={6}
+                title={gcpError ? 'GCP feed error' : gcpLive ? 'GCP feed live' : 'GCP feed initializing'}
+              />
             </div>
           )}
 
@@ -281,13 +280,13 @@ function Header({
                   {formatPrice(goldPrice, symbol)}
                 </span>
               )}
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: goldMarketStatus === 'error' ? 'var(--red)'
-                  : goldMarketStatus === 'closed' ? 'var(--amber)'
-                  : 'var(--green)',
-                flexShrink: 0,
-              }} />
+              <Heartbeat
+                mode={goldMarketStatus === 'error' ? 'stale'
+                  : goldMarketStatus === 'closed' ? 'disabled'
+                  : 'live'}
+                size={6}
+                title={`Price feed ${goldMarketStatus}`}
+              />
             </div>
             {goldSource && (
               <span style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.06em', textAlign: 'right' }}>

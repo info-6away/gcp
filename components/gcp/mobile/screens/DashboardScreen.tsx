@@ -165,7 +165,17 @@ export function DashboardScreen({
           </div>
 
           <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, padding: '10px 12px' }}>
-            <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>ACTIVE PSS</div>
+            <div style={{
+              fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4,
+              display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+            }}>
+              <span>ACTIVE PSS</span>
+              <span style={{
+                padding: '0 4px', borderRadius: 2,
+                border: `1px solid ${C.line2}`,
+                color: C.fg3, fontSize: 7,
+              }}>GCP EVENT</span>
+            </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
               <span style={{ fontSize: 28, color: C.amber, fontWeight: 600, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>{pss}</span>
               <span style={{ fontSize: 10, color: C.fg3 }}>/100</span>
@@ -185,11 +195,34 @@ export function DashboardScreen({
             borderLeft: `2px solid ${C.cyan}`, borderRadius: 3,
             padding: '10px 12px', marginBottom: 10,
           }}>
-            <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>INTERPRETATION</div>
+            <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>PATTERN INTERPRETATION</div>
             <div style={{ fontSize: 13, color: C.fg0, fontWeight: 600, letterSpacing: '0.02em' }}>{activePat.kind}</div>
             <div style={{ fontSize: 10, color: C.fg2, lineHeight: 1.5, marginTop: 4 }}>
               {INTERP[activePat.kind] ?? 'Pattern under observation.'}
             </div>
+            <div style={{
+              marginTop: 6, fontSize: 8, color: C.fg3, lineHeight: 1.5,
+            }}>
+              Patterns are GCP-only events. AI State uses GCP + Gold to interpret the environment.
+            </div>
+            {aiState && (
+              <div style={{
+                marginTop: 8, paddingTop: 6,
+                borderTop: `1px dashed ${C.line1}`,
+              }}>
+                <div style={{ fontSize: 7, letterSpacing: '0.15em', color: C.fg3, marginBottom: 2 }}>
+                  CURRENT AI ENVIRONMENT
+                </div>
+                <div style={{ fontSize: 10, color: C.fg0 }}>
+                  {aiState.direction} / {aiState.phase}
+                </div>
+                <div style={{ fontSize: 9, color: C.fg2, marginTop: 2, lineHeight: 1.45 }}>
+                  {aiState.reasoningShort?.trim() ||
+                   aiState.goldInterpretation?.trim() ||
+                   '—'}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

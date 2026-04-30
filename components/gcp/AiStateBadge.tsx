@@ -9,9 +9,10 @@
 // phase, and direction arrow. The card view (AiStateCard) carries the
 // fuller breakdown.
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { directionArrow, stateColor } from '@/lib/aiState';
+import AiStateExplainer from './AiStateExplainer';
 
 interface Props {
   state:    GcpStateResponse | null;
@@ -20,6 +21,7 @@ interface Props {
 }
 
 function Badge({ state, enabled, compact = false }: Props) {
+  const [open, setOpen] = useState(false);
   if (!enabled) return null;
 
   const fontSize = compact ? 9   : 10;
@@ -29,27 +31,34 @@ function Badge({ state, enabled, compact = false }: Props) {
 
   if (!state) {
     return (
-      <div
-        title="Waiting for first AI state classification from the Engine"
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap,
-          padding: `${padV}px ${padH}px`,
-          fontSize, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.06em',
-          color: 'var(--fg-3)',
-          background: 'var(--bg-2)',
-          border: '1px solid var(--line-2)',
-          borderRadius: 3,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <span style={{
-          width: 5, height: 5, borderRadius: '50%',
-          background: 'var(--fg-3)',
-          animation: 'livepulse 1.6s ease-in-out infinite',
-        }} />
-        <span>Analyzing…</span>
-      </div>
+      <>
+        <button
+          onClick={() => setOpen(true)}
+          title="What does this mean?"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap,
+            padding: `${padV}px ${padH}px`,
+            fontSize, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
+            color: 'var(--fg-3)',
+            background: 'var(--bg-2)',
+            border: '1px solid var(--line-2)',
+            borderRadius: 3,
+            whiteSpace: 'nowrap', cursor: 'pointer',
+          }}
+        >
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%',
+            background: 'var(--fg-3)',
+            animation: 'livepulse 1.6s ease-in-out infinite',
+          }} />
+          <span>Analyzing…</span>
+          <span style={{
+            marginLeft: 2, opacity: 0.6, fontSize: fontSize - 1, fontWeight: 600,
+          }}>ⓘ</span>
+        </button>
+        <AiStateExplainer open={open} state={state} onClose={() => setOpen(false)} />
+      </>
     );
   }
 
@@ -59,24 +68,31 @@ function Badge({ state, enabled, compact = false }: Props) {
   const phase  = state.phase.toUpperCase();
 
   return (
-    <div
-      title={`${state.state} · ${state.direction} · ${state.phase} · ${(state.confidence * 100).toFixed(0)}% confidence`}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap,
-        padding: `${padV}px ${padH}px`,
-        fontSize, fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.06em',
-        color: accent,
-        background: `${accent}14`,
-        border: `1px solid ${accent}55`,
-        borderRadius: 3,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      <span style={{ fontWeight: 600 }}>{upper}</span>
-      <span style={{ opacity: 0.75 }}>({phase})</span>
-      <span style={{ fontWeight: 600 }}>{arrow}</span>
-    </div>
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={`${state.state} · ${state.direction} · ${state.phase} · ${(state.confidence * 100).toFixed(0)}% confidence — click for definitions`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap,
+          padding: `${padV}px ${padH}px`,
+          fontSize, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.06em',
+          color: accent,
+          background: `${accent}14`,
+          border: `1px solid ${accent}55`,
+          borderRadius: 3,
+          whiteSpace: 'nowrap', cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>{upper}</span>
+        <span style={{ opacity: 0.75 }}>({phase})</span>
+        <span style={{ fontWeight: 600 }}>{arrow}</span>
+        <span style={{
+          marginLeft: 2, opacity: 0.7, fontSize: fontSize - 1, fontWeight: 600,
+        }}>ⓘ</span>
+      </button>
+      <AiStateExplainer open={open} state={state} onClose={() => setOpen(false)} />
+    </>
   );
 }
 

@@ -1,0 +1,179 @@
+'use client';
+
+// v11.15.4: a small modal/popover that demystifies the AI State output.
+// The card and badge each render a button that opens this — purpose is
+// to make the GCP-event-vs-environment distinction obvious so users
+// don't conflate "Compression" (a GCP-only pattern event) with
+// "Down / Late" (the AI-interpreted environment built from GCP +
+// gold). Mounted as a fixed overlay so it works on both desktop and
+// mobile without layout work in either parent.
+
+import { useEffect } from 'react';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
+import { directionArrow, stateColor } from '@/lib/aiState';
+
+interface Props {
+  open:    boolean;
+  state:   GcpStateResponse | null;
+  onClose: () => void;
+}
+
+const DIRECTION_DEF: { key: string; def: string }[] = [
+  { key: 'Up',      def: 'Environment favors upward gold response' },
+  { key: 'Down',    def: 'Environment favors downward gold response' },
+  { key: 'Neutral', def: 'No directional edge' },
+  { key: 'Mixed',   def: 'Conflicting signals' },
+];
+
+const PHASE_DEF: { key: string; def: string }[] = [
+  { key: 'Early',     def: 'Move may be forming' },
+  { key: 'Mid',       def: 'Move is active' },
+  { key: 'Late',      def: 'Move may be mature / weaker edge' },
+  { key: 'Exhausted', def: 'Risk of reversal or discharge' },
+];
+
+const STATE_DEF: { key: string; def: string }[] = [
+  { key: 'Compression',           def: 'GCP energy is building' },
+  { key: 'Alignment Trend',       def: 'GCP and gold are moving together' },
+  { key: 'Failed Alignment',      def: 'GCP rises but gold does not confirm' },
+  { key: 'Dead Drift / Noise',    def: 'No meaningful environment' },
+  { key: 'Discharge',             def: 'Energy release / exhaustion risk' },
+  { key: 'Shock Synchronization', def: 'Extreme coherence event' },
+];
+
+export default function AiStateExplainer({ open, state, onClose }: Props) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const accent = state ? stateColor(state) : 'var(--cyan)';
+  const arrow  = state ? directionArrow(state.direction) : '';
+  const conf   = state ? Math.round(state.confidence * 100) : null;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16,
+        fontFamily: 'var(--font-mono)',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: 560, width: '100%',
+          maxHeight: '85vh', overflowY: 'auto',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--line-2)',
+          borderRadius: 6,
+          padding: '20px 22px',
+          color: 'var(--fg-1)',
+        }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          marginBottom: 14, gap: 10,
+        }}>
+          <div style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-3)' }}>
+            AI STATE · GCP + GOLD ENVIRONMENT
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent', border: '1px solid var(--line-2)',
+              color: 'var(--fg-2)', borderRadius: 3,
+              padding: '2px 8px', fontSize: 10, cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >ESC</button>
+        </div>
+
+        {state ? (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+            }}>
+              <span style={{
+                fontSize: 22, color: accent, fontWeight: 600,
+                letterSpacing: '-0.01em',
+              }}>
+                {state.state.toUpperCase()}
+              </span>
+              <span style={{ fontSize: 18, color: accent, fontWeight: 600 }}>{arrow}</span>
+            </div>
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 6,
+              fontSize: 10, color: 'var(--fg-3)', letterSpacing: '0.05em',
+            }}>
+              <span><span style={{ color: 'var(--fg-4)' }}>STATE </span><span style={{ color: 'var(--fg-1)' }}>{state.stateCode}</span></span>
+              <span><span style={{ color: 'var(--fg-4)' }}>DIR </span><span style={{ color: 'var(--fg-1)' }}>{state.direction}</span></span>
+              <span><span style={{ color: 'var(--fg-4)' }}>PHASE </span><span style={{ color: 'var(--fg-1)' }}>{state.phase}</span></span>
+              <span><span style={{ color: 'var(--fg-4)' }}>BIAS </span><span style={{ color: 'var(--fg-1)' }}>{state.marketBias || '—'}</span></span>
+              <span><span style={{ color: 'var(--fg-4)' }}>CONF </span><span style={{ color: 'var(--fg-1)' }}>{conf}%</span></span>
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            marginBottom: 18, fontSize: 11, color: 'var(--fg-3)',
+            fontStyle: 'italic',
+          }}>
+            Waiting for first Engine classification.
+          </div>
+        )}
+
+        <div style={{
+          fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55,
+          marginBottom: 18,
+        }}>
+          AI State explains the current environment by comparing GCP coherence
+          with gold behavior.
+          <br /><br />
+          <span style={{ color: 'var(--fg-2)' }}>Pattern Detection finds GCP events.</span><br />
+          <span style={{ color: 'var(--fg-2)' }}>AI State interprets whether gold is confirming, rejecting, or ignoring the coherence signal.</span>
+        </div>
+
+        <Glossary title="DIRECTION" items={DIRECTION_DEF} />
+        <Glossary title="PHASE"     items={PHASE_DEF} />
+        <Glossary title="STATE EXAMPLES" items={STATE_DEF} />
+      </div>
+    </div>
+  );
+}
+
+function Glossary({ title, items }: {
+  title: string;
+  items: { key: string; def: string }[];
+}) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        marginBottom: 6, paddingBottom: 4,
+        borderBottom: '1px solid var(--line-1)',
+      }}>
+        {title}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 12, rowGap: 4 }}>
+        {items.map(it => (
+          <div key={it.key} style={{ display: 'contents' }}>
+            <span style={{ fontSize: 11, color: 'var(--fg-1)', fontWeight: 600 }}>{it.key}</span>
+            <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.5 }}>{it.def}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

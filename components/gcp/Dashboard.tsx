@@ -217,7 +217,12 @@ function RegimeCard({ regime }: { regime: string | null }) {
   );
 }
 
-function PatternCard({ patterns, series, flash }: { patterns: Pattern[]; series: DataPoint[]; flash: boolean }) {
+function PatternCard({
+  patterns, series, flash, aiState,
+}: {
+  patterns: Pattern[]; series: DataPoint[]; flash: boolean;
+  aiState:  GcpStateResponse | null;
+}) {
   const latest = patterns[patterns.length - 1] ?? null;
 
   const flashStyle: React.CSSProperties = flash ? {
@@ -229,13 +234,59 @@ function PatternCard({ patterns, series, flash }: { patterns: Pattern[]; series:
     transition: 'outline 0.3s ease',
   };
 
+  // v11.15.4 mini environment row: shows the live AI interpretation
+  // alongside the latest pattern so users can read both layers at once
+  // — pattern (GCP-only) + environment (GCP + gold).
+  const envBlock = aiState ? (
+    <div style={{
+      marginTop: 10, paddingTop: 8,
+      borderTop: '1px dashed var(--line-1)',
+      fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.45,
+    }}>
+      <div style={{
+        fontSize: 7, letterSpacing: '0.12em', color: 'var(--fg-4)',
+        marginBottom: 3,
+      }}>
+        CURRENT AI ENVIRONMENT
+      </div>
+      <div style={{ color: 'var(--fg-1)' }}>
+        {aiState.direction} / {aiState.phase}
+      </div>
+      <div style={{ marginTop: 3 }}>
+        {aiState.reasoningShort?.trim() ||
+         aiState.goldInterpretation?.trim() ||
+         '—'}
+      </div>
+    </div>
+  ) : null;
+
+  const contextLine = (
+    <div style={{
+      marginTop: 8, fontSize: 8, color: 'var(--fg-4)',
+      lineHeight: 1.5, letterSpacing: '0.02em',
+    }}>
+      Patterns are GCP-only events. AI State uses GCP + Gold to interpret the environment.
+    </div>
+  );
+
   if (!latest) {
     return (
       <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
-        <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-          ACTIVE PATTERN · PSS
+        <div style={{
+          fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+          marginBottom: 8,
+          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+        }}>
+          <span>PATTERN DETECTION · PSS</span>
+          <span style={{
+            padding: '1px 5px', borderRadius: 2,
+            border: '1px solid var(--line-2)',
+            color: 'var(--fg-3)', fontSize: 7,
+          }}>GCP EVENT</span>
         </div>
         <div style={{ fontSize: 14, color: 'var(--fg-4)' }}>No pattern detected</div>
+        {contextLine}
+        {envBlock}
       </div>
     );
   }
@@ -247,8 +298,17 @@ function PatternCard({ patterns, series, flash }: { patterns: Pattern[]; series:
 
   return (
     <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
-      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-        ACTIVE PATTERN · PSS
+      <div style={{
+        fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
+        marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      }}>
+        <span>PATTERN DETECTION · PSS</span>
+        <span style={{
+          padding: '1px 5px', borderRadius: 2,
+          border: '1px solid var(--line-2)',
+          color: 'var(--fg-3)', fontSize: 7,
+        }}>GCP EVENT</span>
       </div>
       <div style={{
         fontSize: 38, color: '#d4a028',
@@ -280,6 +340,8 @@ function PatternCard({ patterns, series, flash }: { patterns: Pattern[]; series:
       }}>
         <span>WEAK</span><span>FORMING</span><span>STRONG</span><span>EXPLOSIVE</span>
       </div>
+      {contextLine}
+      {envBlock}
     </div>
   );
 }
@@ -397,7 +459,7 @@ export default function Dashboard({
             symbolPrice={symbolPrice}
           />
           <RegimeCard regime={gcpData.liveRegime} />
-          <PatternCard patterns={patterns} series={series} flash={pssFlash} />
+          <PatternCard patterns={patterns} series={series} flash={pssFlash} aiState={aiState} />
         </div>
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
