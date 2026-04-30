@@ -7,6 +7,10 @@ import { APP_VERSION } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from '../../Heartbeat';
+import {
+  AI_INTERVAL_OPTIONS, formatAiInterval, saveAiAnalysisInterval,
+  type AiAnalysisInterval,
+} from '@/lib/aiAnalysisInterval';
 
 type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
 
@@ -54,6 +58,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
+  aiIntervalSec, aiInflight, aiRunNow,
   gcpLastUpdate, gcpNextPollAt,
 }: {
   liveNV: number | null; liveRegime: string | null; connected: boolean;
@@ -64,6 +69,9 @@ export function SettingsScreen({
   aiLastSuccess: Date | null;
   aiLastError:   Date | null;
   aiNextPollAt:  Date | null;
+  aiIntervalSec: AiAnalysisInterval;
+  aiInflight:    boolean;
+  aiRunNow:      () => void;
   gcpLastUpdate: Date | null;
   gcpNextPollAt: Date | null;
 }) {
@@ -114,27 +122,40 @@ export function SettingsScreen({
       label: 'Status',
       val: valueWithHeartbeat(phaseToHeartbeat(aiPhase), aiStatusLabel, aiStatusColor),
       valColor: aiStatusColor,
-      sub: aiPhase === 'initial'      ? '6away Engine · 25s poll · waiting for first response'
-         : aiPhase === 'reconnecting' ? '6away Engine · 25s poll · keeping prior state'
+      sub: aiPhase === 'initial'      ? '6away Engine · waiting for first response'
+         : aiPhase === 'reconnecting' ? '6away Engine · keeping prior state'
          : aiPhase === 'disabled'     ? 'Polling is off'
          : '6away Engine · /v1/coherence/gcp-state',
     },
+    {
+      label: 'Current interval',
+      val: formatAiInterval(aiIntervalSec),
+      valColor: aiIntervalSec === 'manual' ? C.amber : C.fg1,
+    },
   ];
-  if (aiPhase === 'initial') {
-    aiRows.push({ label: 'Next check in', val: `${aiNextSecs}s`, valColor: C.fg1,
+  if (aiIntervalSec === 'manual') {
+    aiRows.push({
+      label: 'Next analysis in', val: '—', valColor: C.fg3,
+      sub: 'Auto-loop is off — press Run Now',
+    });
+  } else if (aiPhase === 'initial') {
+    aiRows.push({ label: 'Next analysis in', val: `${aiNextSecs}s`, valColor: C.fg1,
       sub: 'First Engine classification will arrive shortly' });
-  } else if (aiPhase === 'connected') {
-    aiRows.push(
-      { label: 'Last update',    val: formatRelative(aiLastSuccess), valColor: C.fg2 },
-      { label: 'Next update in', val: `${aiNextSecs}s`,              valColor: C.fg1 },
-    );
   } else if (aiPhase === 'reconnecting') {
     aiRows.push(
       { label: 'Last error', val: formatRelative(aiLastError), valColor: C.red,
         sub: aiLastSuccess ? `Last success ${formatRelative(aiLastSuccess)}` : 'No successful classification yet' },
       { label: 'Retry in',   val: `${aiNextSecs}s`,            valColor: C.fg1 },
     );
+  } else {
+    aiRows.push({ label: 'Next analysis in', val: `${aiNextSecs}s`, valColor: C.fg1 });
   }
+  aiRows.push({
+    label: 'Last classification',
+    val: formatRelative(aiLastSuccess),
+    valColor: C.fg2,
+    sub: aiLastSuccess ? undefined : 'No successful classification yet',
+  });
   if (aiState) {
     aiRows.push(
       { label: 'Current State',         val: `${aiState.stateCode} · ${aiState.state}`,                              valColor: C.fg1 },
@@ -223,7 +244,7 @@ export function SettingsScreen({
         </div>
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>AI ENGINE</div>
-        <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, marginBottom: 16 }}>
+        <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, marginBottom: 8 }}>
           {aiRows.map((row, i) => (
             <div key={row.label} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -246,6 +267,60 @@ export function SettingsScreen({
             </div>
           ))}
         </div>
+
+        {/* v11.16.4 interval picker — saved to gcpro-ai-analysis-interval */}
+        <div style={{
+          background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
+          padding: '10px 12px', marginBottom: 8,
+        }}>
+          <div style={{ fontSize: 11, color: C.fg1, marginBottom: 3 }}>AI Analysis Interval</div>
+          <div style={{ fontSize: 9, color: C.fg4, marginBottom: 8 }}>
+            Minimum gap between Engine calls. Manual disables the auto-loop.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {AI_INTERVAL_OPTIONS.map(opt => {
+              const active = aiIntervalSec === opt;
+              return (
+                <button
+                  key={String(opt)}
+                  onClick={() => saveAiAnalysisInterval(opt)}
+                  style={{
+                    padding: '5px 10px',
+                    fontSize: 9, letterSpacing: '0.06em',
+                    background: active ? C.bg3 : 'transparent',
+                    border: `1px solid ${active ? C.cyan : C.line2}`,
+                    color: active ? C.cyan : C.fg2,
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  {opt === 'manual' ? 'MANUAL' : `${opt}S`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* v11.16.4 manual override button */}
+        <button
+          onClick={() => aiRunNow()}
+          disabled={!aiEnabled || aiInflight}
+          style={{
+            width: '100%', padding: '12px 14px', marginBottom: 16,
+            background: aiInflight ? `${C.cyan}1f` : 'transparent',
+            border: `1px solid ${
+              !aiEnabled || aiInflight ? C.line2 : C.cyan
+            }`,
+            borderRadius: 3,
+            color: !aiEnabled || aiInflight ? C.fg3 : C.cyan,
+            fontFamily: 'inherit',
+            fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
+            cursor: !aiEnabled || aiInflight ? 'default' : 'pointer',
+          }}
+        >
+          {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS NOW'}
+        </button>
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>SYSTEM</div>
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3 }}>

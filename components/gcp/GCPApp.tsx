@@ -329,6 +329,9 @@ export default function GCPApp() {
         aiLastSuccess={aiState.lastSuccessAt}
         aiLastError={aiState.lastErrorAt}
         aiNextPollAt={aiState.nextPollAt}
+        aiIntervalSec={aiState.intervalSec}
+        aiInflight={aiState.inflight}
+        aiRunNow={aiState.runNow}
       />
     );
   }
@@ -425,6 +428,9 @@ export default function GCPApp() {
               aiLastSuccess={aiState.lastSuccessAt}
               aiLastError={aiState.lastErrorAt}
               aiNextPollAt={aiState.nextPollAt}
+              aiIntervalSec={aiState.intervalSec}
+              aiInflight={aiState.inflight}
+              aiRunNow={aiState.runNow}
               onTestAlert={testAlert}
             />
           )}

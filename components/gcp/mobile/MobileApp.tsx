@@ -11,6 +11,7 @@ import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GoldState } from '@/lib/useGoldData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiAnalysisInterval } from '@/lib/aiAnalysisInterval';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 const DEFAULT_PREFS: Record<string, boolean> = {
@@ -43,11 +44,15 @@ interface MobileAppProps {
   aiLastSuccess:   Date | null;
   aiLastError:     Date | null;
   aiNextPollAt:    Date | null;
+  aiIntervalSec:   AiAnalysisInterval;
+  aiInflight:      boolean;
+  aiRunNow:        () => void;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
+  aiIntervalSec, aiInflight, aiRunNow,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -103,6 +108,9 @@ export default function MobileApp({
           aiLastSuccess={aiLastSuccess}
           aiLastError={aiLastError}
           aiNextPollAt={aiNextPollAt}
+          aiIntervalSec={aiIntervalSec}
+          aiInflight={aiInflight}
+          aiRunNow={aiRunNow}
           gcpLastUpdate={gcpData.lastUpdate}
           gcpNextPollAt={gcpData.nextPollAt}
         />

@@ -12,6 +12,10 @@ import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from './Heartbeat';
+import {
+  AI_INTERVAL_OPTIONS, formatAiInterval, saveAiAnalysisInterval,
+  type AiAnalysisInterval,
+} from '@/lib/aiAnalysisInterval';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
@@ -31,6 +35,9 @@ interface SettingsPanelProps {
   aiLastSuccess:    Date | null;
   aiLastError:      Date | null;
   aiNextPollAt:     Date | null;
+  aiIntervalSec:    AiAnalysisInterval;
+  aiInflight:       boolean;
+  aiRunNow:         () => void;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
 
@@ -268,8 +275,8 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <Row
             label="Status"
             sub={
-              aiPhase === 'initial'      ? '6away Engine · 25s poll · waiting for first response'
-              : aiPhase === 'reconnecting' ? '6away Engine · 25s poll · keeping prior state on error'
+              aiPhase === 'initial'      ? '6away Engine · waiting for first response'
+              : aiPhase === 'reconnecting' ? '6away Engine · keeping prior state on error'
               : aiPhase === 'disabled'     ? 'Polling is off — toggle aiState in localStorage to enable'
               : '6away Engine · /v1/coherence/gcp-state · via /api/gcp-state proxy'
             }
@@ -283,38 +290,124 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               </span>
             }
           />
-          {aiPhase === 'initial' && (
+
+          {/* v11.16.4: user-controlled interval picker. Saved to
+              gcpro-ai-analysis-interval; useGcpState picks up the
+              change on the next decide tick via a same-tab storage
+              event. */}
+          <div style={{
+            padding: '10px 0', borderBottom: '1px solid var(--line-0)',
+          }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>AI Analysis Interval</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                  Minimum gap between Engine calls. Manual disables the auto-loop.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {AI_INTERVAL_OPTIONS.map(opt => {
+                  const active = props.aiIntervalSec === opt;
+                  return (
+                    <button
+                      key={String(opt)}
+                      onClick={() => saveAiAnalysisInterval(opt)}
+                      style={{
+                        padding: '4px 8px',
+                        fontSize: 9, letterSpacing: '0.06em',
+                        fontFamily: 'var(--font-mono)',
+                        background: active ? 'var(--bg-3)' : 'transparent',
+                        border: `1px solid ${active ? 'var(--cyan)' : 'var(--line-2)'}`,
+                        color: active ? 'var(--cyan)' : 'var(--fg-3)',
+                        cursor: 'pointer',
+                        marginLeft: -1,
+                      }}
+                    >
+                      {opt === 'manual' ? 'MANUAL' : `${opt}S`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <Row
+            label="Current interval"
+            value={formatAiInterval(props.aiIntervalSec)}
+          />
+
+          {props.aiIntervalSec === 'manual' ? (
             <Row
-              label="Next check in"
+              label="Next analysis in"
+              sub="Auto-loop is off — press Run AI Analysis Now"
+              value="—"
+            />
+          ) : aiPhase === 'initial' ? (
+            <Row
+              label="Next analysis in"
               sub="First Engine classification will arrive shortly"
               value={`${aiNextSecs}s`}
             />
+          ) : aiPhase === 'reconnecting' ? (
+            <Row
+              label="Retry in"
+              sub={props.aiLastError ? `Last error ${formatRelative(props.aiLastError)}` : 'No successful classification yet'}
+              value={`${aiNextSecs}s`}
+            />
+          ) : (
+            <Row
+              label="Next analysis in"
+              value={`${aiNextSecs}s`}
+            />
           )}
-          {aiPhase === 'connected' && (
-            <>
-              <Row
-                label="Last update"
-                value={formatRelative(props.aiLastSuccess)}
-              />
-              <Row
-                label="Next update in"
-                value={`${aiNextSecs}s`}
-              />
-            </>
-          )}
-          {aiPhase === 'reconnecting' && (
-            <>
-              <Row
-                label="Last error"
-                value={formatRelative(props.aiLastError)}
-              />
-              <Row
-                label="Retry in"
-                sub={props.aiLastSuccess ? `Last success ${formatRelative(props.aiLastSuccess)}` : 'No successful classification yet'}
-                value={`${aiNextSecs}s`}
-              />
-            </>
-          )}
+
+          <Row
+            label="Last classification"
+            sub={props.aiLastSuccess ? 'Time since the last successful Engine response' : 'No successful classification yet'}
+            value={formatRelative(props.aiLastSuccess)}
+          />
+
+          {/* v11.16.4: manual override. Disabled while the previous
+              call is still in flight or while AI is feature-flag off. */}
+          <div style={{ padding: '10px 0', borderBottom: '1px solid var(--line-0)' }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Run AI Analysis Now</div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                  Bypasses the interval floor. Respects in-flight guard.
+                </div>
+              </div>
+              <button
+                onClick={() => props.aiRunNow()}
+                disabled={!props.aiEnabled || props.aiInflight}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: 9, letterSpacing: '0.08em',
+                  fontFamily: 'var(--font-mono)',
+                  background: props.aiInflight
+                    ? 'rgba(77,217,232,0.08)'
+                    : 'transparent',
+                  border: `1px solid ${
+                    !props.aiEnabled || props.aiInflight
+                      ? 'var(--line-2)'
+                      : 'var(--cyan)'
+                  }`,
+                  color: !props.aiEnabled || props.aiInflight
+                    ? 'var(--fg-3)'
+                    : 'var(--cyan)',
+                  borderRadius: 2,
+                  cursor: !props.aiEnabled || props.aiInflight ? 'default' : 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {props.aiInflight ? 'RUNNING…' : 'RUN NOW'}
+              </button>
+            </div>
+          </div>
           {props.aiState && (
             <>
               <Row
