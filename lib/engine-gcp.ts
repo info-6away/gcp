@@ -98,11 +98,32 @@ export async function classifyGcpState(
   const body: unknown = opts.manual === true
     ? { ...payload, manual: true }
     : payload;
+
+  const serialized = JSON.stringify(body);
+
+  // v11.18.6: dev-only payload diagnostic. Logs JSON byte size, series
+  // length, patterns length, and top-level keys before the request
+  // fires so the user can confirm the trimmed shape is actually being
+  // sent. Warns if the payload exceeds 10 KB — a real signal that
+  // something upstream is over-feeding the Engine.
+  if (process.env.NODE_ENV !== 'production') {
+    const bytes = new Blob([serialized]).size;
+    const seriesLen   = Array.isArray(payload.series) ? payload.series.length : 0;
+    const patternsLen = Array.isArray(payload.recentPatterns) ? payload.recentPatterns.length : 0;
+    const keys = Object.keys(payload as Record<string, unknown>);
+    console.log(
+      `[AI STATE] payload size: ${bytes} bytes · series ${seriesLen} · patterns ${patternsLen} · keys [${keys.join(', ')}]`,
+    );
+    if (bytes > 10_240) {
+      console.warn(`[AI STATE] payload too large (${bytes} bytes) — expected < 10 KB`);
+    }
+  }
+
   try {
     const res = await fetch('/api/gcp-state', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
+      body:    serialized,
       // Has to exceed the proxy + Engine ceiling. Engine maxDuration=45s,
       // proxy timeout=35s, so 40s here means the client waits long enough
       // for the proxy's own 35s timeout to fire and return a clean 502

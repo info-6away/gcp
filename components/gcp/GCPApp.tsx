@@ -157,26 +157,38 @@ export default function GCPApp() {
   // existing live data; useGcpState polls /api/gcp-state on a 25 s
   // cadence with overlapping-request prevention. Result held but NOT
   // displayed yet -- v11.15 will surface it on the Dashboard.
+  // v11.18.6: minimal payload at the source. Earlier the inputs sent
+  // 100 series points and 3 patterns AND explicitly passed
+  // windowMinutes: 100 — which overrode the payload builder's v11.18.4
+  // default of 15 and defeated the trim. Now: 15 points slice, 1
+  // pattern slice, and no windowMinutes override (let the builder
+  // apply its own 15-point default). Energy metrics still derive from
+  // the full local series so we don't degrade slope/curvature/PSS
+  // accuracy — only the payload sent to the Engine is small.
   const aiStateInputs = useMemo<GcpStateInputs | null>(() => {
     if (!baseSeries.length) return null;
     const last = baseSeries[baseSeries.length - 1];
     if (!last) return null;
 
-    // Recent series tail (per spec: last 50-100 points). 100 keeps
-    // enough context for the Engine to see a real window without
-    // bloating the request body.
-    const tail = baseSeries.slice(-100).map(p => ({ t: p.t, v: p.v }));
-    if (tail.length < 10) return null; // engine validates >= 10
+    // Energy metrics computed over a generous local window so the
+    // numbers stay stable / accurate. Engine receives the metric
+    // results, not the window itself.
+    const metricsWindow = baseSeries.slice(-100).map(p => p.v);
+    if (metricsWindow.length < 10) return null;
+    const m = windowMetrics(metricsWindow);
 
-    // Energy metrics computed locally so the Engine sees the same
-    // numbers the chart / detector see. Window covers the recent slice.
-    const slice = tail.map(p => p.v);
-    const m     = windowMetrics(slice);
+    // Engine-bound series tail: just enough to recognise local shape.
+    // Builder also slices to 15, but trimming here means the inputs
+    // object stays small in memory + cheaper to serialize.
+    const engineTail = baseSeries.slice(-15).map(p => ({ t: p.t, v: p.v }));
+    if (engineTail.length < 10) return null;
 
     const regimeCode = last.r ?? regimeForValue(last.v);
     const regimeName = REGIME_NAME[regimeCode] ?? '';
 
-    const recentPatterns = displayPatterns.slice(-3).map(p => ({
+    // Most-recent pattern only — older patterns rarely change the
+    // classification and inflated the payload by 2-3x previously.
+    const recentPatterns = displayPatterns.slice(-1).map(p => ({
       patternCode: p.patternCode ?? PATTERN_CODE[p.kind] ?? '',
       patternName: p.patternName ?? p.kind,
       tStart:      p.tStart,
@@ -196,7 +208,7 @@ export default function GCPApp() {
     return {
       symbol,
       timeframe,
-      series:  tail,
+      series:  engineTail,
       metrics: {
         slope:                m.slope,
         curvature:            m.curvature,
@@ -208,7 +220,9 @@ export default function GCPApp() {
       regime:         { code: regimeCode, name: regimeName },
       recentPatterns,
       goldContext:    { trend },
-      windowMinutes:  100,
+      // v11.18.6: do NOT set windowMinutes — let the payload builder's
+      // own 15-point default apply. Setting it here was overriding the
+      // trim and shipping 100-point payloads.
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
