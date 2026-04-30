@@ -101,15 +101,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return () => ro.disconnect();
   }, [loading, error]);
 
+  // v11.19.4: align the candle fetch with the GCP coverage window.
+  // Previous code fetched 500 candles ending Date.now(), but the GCP
+  // historical JSON only covers Jan 1 – Apr 24 2026 and live polling
+  // only appends the last ~24h. So 5 days of candles ending today
+  // overlapped with GCP for a single 24h window — ~96 candles total
+  // across 6 regimes — and every row showed Insufficient data.
+  // Now: fetch candles ending at the last available GCP timestamp
+  // (so the candle window is inside the historical coverage), and
+  // pull 2000 of them for ~21 days of overlap. Re-fetch only when
+  // symbol changes; we don't need a fresh candle window every time
+  // a new GCP minute arrives.
+  const lastGcpTs = series.length ? series[series.length - 1].t : 0;
   useEffect(() => {
+    if (!lastGcpTs) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchCandlesForWindow(TD_SYMBOLS[symbol], '15m', 500, Date.now())
+    fetchCandlesForWindow(TD_SYMBOLS[symbol], '15m', 2000, lastGcpTs)
       .then(data => { if (!cancelled) setCandles(data); })
       .catch(e   => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
   // ── Regime scatter (one dot per candle) ─────────────────────────────────────
@@ -181,9 +195,23 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     }
 
     if (process.env.NODE_ENV !== 'production') {
+      const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+      const cFirst = candles[0]?.t ?? 0;
+      const cLast  = candles[candles.length - 1]?.t ?? 0;
+      const gFirst = series[0]?.t ?? 0;
+      const gLast  = series[series.length - 1]?.t ?? 0;
+      const overlapStart = Math.max(cFirst, gFirst);
+      const overlapEnd   = Math.min(cLast, gLast);
+      const overlapMs    = Math.max(0, overlapEnd - overlapStart);
+      const overlapHours = (overlapMs / 3_600_000).toFixed(1);
+      console.log(`[Research] candles ${candles.length} from ${fmt(cFirst)} to ${fmt(cLast)}`);
+      console.log(`[Research] GCP series ${series.length} from ${fmt(gFirst)} to ${fmt(gLast)}`);
+      console.log(`[Research] overlap window: ${overlapHours}h (${fmt(overlapStart)} → ${fmt(overlapEnd)})`);
       console.log('[Research] tagged per regime:',          taggedByRegime);
       console.log('[Research] survived forward-return:',     survivedByRegime);
-      console.log('[Research] total candles / GCP series:',  candles.length, '/', series.length);
+      const totalSurvived = Object.values(survivedByRegime).reduce((a, b) => a + b, 0);
+      const totalTagged   = Object.values(taggedByRegime).reduce((a, b) => a + b, 0);
+      console.log(`[Research] totals — tagged ${totalTagged}, survived ${totalSurvived}, points ${points.length}`);
     }
 
     return { points, taggedByRegime, survivedByRegime };
