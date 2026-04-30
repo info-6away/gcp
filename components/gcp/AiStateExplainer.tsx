@@ -145,10 +145,56 @@ export default function AiStateExplainer({ open, state, onClose }: Props) {
           <span style={{ color: 'var(--fg-2)' }}>AI State interprets whether gold is confirming, rejecting, or ignoring the coherence signal.</span>
         </div>
 
+        {state && (state.reasoningShort?.trim() || state.goldInterpretation?.trim()) && (
+          <Detail title="ENGINE REASONING">
+            {state.reasoningShort?.trim() && (
+              <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.55 }}>
+                {state.reasoningShort.trim()}
+              </p>
+            )}
+            {state.goldInterpretation?.trim() && (
+              <p style={{ margin: 0, fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55 }}>
+                {state.goldInterpretation.trim()}
+              </p>
+            )}
+          </Detail>
+        )}
+
+        {state && state.invalidators && state.invalidators.length > 0 && (
+          <Detail title="INVALIDATORS">
+            <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {state.invalidators.map((inv, i) => <li key={i}>{inv}</li>)}
+            </ul>
+          </Detail>
+        )}
+
+        {state && state.watchNext && state.watchNext.length > 0 && (
+          <Detail title="WATCH NEXT">
+            <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {state.watchNext.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </Detail>
+        )}
+
         <Glossary title="DIRECTION" items={DIRECTION_DEF} />
         <Glossary title="PHASE"     items={PHASE_DEF} />
         <Glossary title="STATE EXAMPLES" items={STATE_DEF} />
       </div>
+    </div>
+  );
+}
+
+function Detail({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        marginBottom: 6, paddingBottom: 4,
+        borderBottom: '1px solid var(--line-1)',
+      }}>
+        {title}
+      </div>
+      {children}
     </div>
   );
 }

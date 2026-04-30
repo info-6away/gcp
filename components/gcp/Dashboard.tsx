@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
@@ -40,26 +40,8 @@ const PATTERN_ONELINER: Record<string, string> = {
   'Synchronization Plateau':  'Strong gold trend zone. One of the highest-quality setups.',
 };
 
-const PATTERN_INTERPRETATIONS: Record<string, string> = {
-  'Compression Coil':         'Energy accumulating. Range-building. Expansion likely if PSS > 70.',
-  'Alignment Ladder':         'Trend environment forming. Highest continuation probability.',
-  'Failed Alignment':         'Fake breakout. Low continuation probability. Fade or stand aside.',
-  'Shock Jump':               'Extreme coherence event. News/geopolitical reaction. Expect volatility.',
-  'Coherence Volcano':        'Single-peak spike into C that mean-reverts immediately.',
-  'Compression Release':      'Coil energy releasing upward into C alignment.',
-  'Ignition Drift':           'Oscillation within the ignition band; no decisive direction.',
-  'Ignition Rise':            'Coil starting to release into B. Watching for C confirmation.',
-  'Pulse Train':              'Repeated A/B pulses. Pressure building toward resolution.',
-  'Staircase Alignment':      'Rising baseline through B into C. Stealth trend build.',
-  'Dead Drift':               'Low-energy A chop. No GCP edge — defer to price-only setups.',
-  'Echo Spike':               'Smaller follow-up to a prior peak. Aftershock / fading impulse.',
-  'Discharge Break':          'D/E rapidly collapsing into A/B. Momentum exhaustion.',
-  'Discharge Wave':           'Sharp climax spike then collapse. Volatility burst.',
-  'Double Spike Exhaustion':  'Twin similar-sized spikes. Discharge complete; vacuum likely.',
-  'Synchronization Plateau':  'Sustained D regime. Strong gold trend continuation zone.',
-};
-
-const REGIME_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'];
+// REGIME_ORDER previously powered the per-regime mini-bar in RegimeCard.
+// v11.16 simplified that into a single StatRow so the constant is gone.
 
 function pssOf(p: Pattern): number {
   return Math.round(p.strength * 100);
@@ -101,11 +83,11 @@ function NVSparkline({ series }: { series: DataPoint[] }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-end', gap: 2,
-      height: 28, marginTop: 10,
+      height: 18, marginTop: 6,
     }}>
       {last15.map((p, i) => (
         <div key={i} style={{
-          width: 5, borderRadius: 1,
+          flex: 1, borderRadius: 1,
           background: '#4dd9e8',
           opacity: 0.4 + (i / last15.length) * 0.6,
           height: `${Math.max(10, (p.v / (max || 1)) * 100)}%`,
@@ -115,114 +97,57 @@ function NVSparkline({ series }: { series: DataPoint[] }) {
   );
 }
 
-function formatSymbolPrice(symbol: MarketSymbol, price: number): string {
-  if (symbol === 'BTC')    return `$${Math.round(price).toLocaleString()}`;
-  if (symbol === 'XAGUSD') return `$${price.toFixed(3)}`;
-  return `$${price.toFixed(2)}`;
-}
-
-function NVCard({
-  series, liveNV, symbol, symbolPrice,
+// v11.16: compact horizontal stat row used in the dashboard's top
+// right column. Label + value on one row, optional meta sub-line, and
+// optional supplementary content (sparkline, mini bar) below.
+function StatRow({
+  label, value, valueColor, meta, children,
 }: {
-  series:      DataPoint[];
-  liveNV:      number | null;
-  symbol:      MarketSymbol;
-  symbolPrice: number | null;
+  label:      string;
+  value:      string;
+  valueColor: string;
+  meta:       string;
+  children?:  React.ReactNode;
 }) {
-  const prev = series.length > 24 ? series[series.length - 24] : null;
-  const delta = liveNV != null && prev ? liveNV - prev.v : null;
-
   return (
-    <div style={{ background: 'var(--bg-1)', padding: 16, borderRight: '1px solid var(--line-0)' }}>
-      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-        NET VARIANCE · LIVE
+    <div style={{
+      padding: '6px 0',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8,
+      }}>
+        <span style={{
+          fontSize: 8, letterSpacing: '0.14em', color: 'var(--fg-4)',
+        }}>
+          {label}
+        </span>
+        <span style={{
+          fontSize: 22, color: valueColor, fontWeight: 600,
+          fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+          letterSpacing: '-0.01em',
+        }}>
+          {value}
+        </span>
       </div>
       <div style={{
-        fontSize: 44, color: 'var(--cyan)',
-        fontVariantNumeric: 'tabular-nums', lineHeight: 1,
-        letterSpacing: '-0.02em',
+        fontSize: 9, color: 'var(--fg-3)', marginTop: 2,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
-        {liveNV?.toFixed(1) ?? '—'}
+        {meta}
       </div>
-      {delta !== null && (
-        <div style={{ fontSize: 9, color: delta > 0 ? 'var(--green)' : 'var(--fg-4)', marginTop: 4 }}>
-          {delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(1)} from 24m ago
-        </div>
-      )}
-      <NVSparkline series={series} />
-      <div style={{ fontSize: 7, color: 'var(--fg-4)', marginTop: 3 }}>last 15 readings</div>
-
-      {symbolPrice != null && (
-        <div style={{
-          marginTop: 8,
-          paddingTop: 8,
-          borderTop: '1px solid var(--line-0)',
-          display: 'flex', justifyContent: 'space-between',
-          fontSize: 9, color: 'var(--fg-3)',
-        }}>
-          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.06em' }}>{symbol}</span>
-          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-            {formatSymbolPrice(symbol, symbolPrice)}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RegimeCard({ regime }: { regime: string | null }) {
-  const meta = regime ? REGIME_META[regime] : null;
-
-  return (
-    <div style={{ background: 'var(--bg-1)', padding: 16, borderRight: '1px solid var(--line-0)' }}>
-      <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 8 }}>
-        REGIME
-      </div>
-      {meta && regime ? (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: meta.color }} />
-            <span style={{ fontSize: 22, color: meta.color }}>{regime}</span>
-            <span style={{ fontSize: 11, color: meta.color, opacity: 0.7, letterSpacing: '0.04em' }}>
-              {meta.label.toUpperCase()}
-            </span>
-          </div>
-          <div style={{ fontSize: 9, color: 'var(--fg-4)', marginBottom: 10 }}>
-            {meta.range} NV range
-          </div>
-          <div style={{ display: 'flex', gap: 2 }}>
-            {REGIME_ORDER.map(r => (
-              <div key={r} style={{
-                flex: 1, height: 3, borderRadius: 1,
-                background: REGIME_META[r].color,
-                opacity: r === regime ? 1 : 0.2,
-              }} />
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 2, marginTop: 2 }}>
-            {REGIME_ORDER.map(r => (
-              <div key={r} style={{
-                flex: 1, fontSize: 7, textAlign: 'center',
-                color: r === regime ? REGIME_META[r].color : 'var(--fg-4)',
-              }}>
-                {r}
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div style={{ fontSize: 22, color: 'var(--fg-4)' }}>—</div>
-      )}
+      {children}
     </div>
   );
 }
 
 function PatternCard({
-  patterns, series, flash, aiState,
+  patterns, series, flash,
 }: {
   patterns: Pattern[]; series: DataPoint[]; flash: boolean;
-  aiState:  GcpStateResponse | null;
 }) {
+  // v11.16: secondary block (sits below the AI primary focus). The AI
+  // environment line + helper text are surfaced once in the dashboard
+  // shell, so this card just shows the pattern itself.
   const latest = patterns[patterns.length - 1] ?? null;
 
   const flashStyle: React.CSSProperties = flash ? {
@@ -234,59 +159,26 @@ function PatternCard({
     transition: 'outline 0.3s ease',
   };
 
-  // v11.15.4 mini environment row: shows the live AI interpretation
-  // alongside the latest pattern so users can read both layers at once
-  // — pattern (GCP-only) + environment (GCP + gold).
-  const envBlock = aiState ? (
+  const Header = (
     <div style={{
-      marginTop: 10, paddingTop: 8,
-      borderTop: '1px dashed var(--line-1)',
-      fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.45,
+      fontSize: 9, letterSpacing: '0.12em', color: 'var(--fg-4)',
+      marginBottom: 6,
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
     }}>
-      <div style={{
-        fontSize: 7, letterSpacing: '0.12em', color: 'var(--fg-4)',
-        marginBottom: 3,
-      }}>
-        CURRENT AI ENVIRONMENT
-      </div>
-      <div style={{ color: 'var(--fg-1)' }}>
-        {aiState.direction} / {aiState.phase}
-      </div>
-      <div style={{ marginTop: 3 }}>
-        {aiState.reasoningShort?.trim() ||
-         aiState.goldInterpretation?.trim() ||
-         '—'}
-      </div>
-    </div>
-  ) : null;
-
-  const contextLine = (
-    <div style={{
-      marginTop: 8, fontSize: 8, color: 'var(--fg-4)',
-      lineHeight: 1.5, letterSpacing: '0.02em',
-    }}>
-      Patterns are GCP-only events. AI State uses GCP + Gold to interpret the environment.
+      <span>PATTERN DETECTION</span>
+      <span style={{
+        padding: '1px 5px', borderRadius: 2,
+        border: '1px solid var(--line-2)',
+        color: 'var(--fg-3)', fontSize: 7,
+      }}>GCP EVENT</span>
     </div>
   );
 
   if (!latest) {
     return (
-      <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
-        <div style={{
-          fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
-          marginBottom: 8,
-          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-        }}>
-          <span>PATTERN DETECTION · PSS</span>
-          <span style={{
-            padding: '1px 5px', borderRadius: 2,
-            border: '1px solid var(--line-2)',
-            color: 'var(--fg-3)', fontSize: 7,
-          }}>GCP EVENT</span>
-        </div>
-        <div style={{ fontSize: 14, color: 'var(--fg-4)' }}>No pattern detected</div>
-        {contextLine}
-        {envBlock}
+      <div style={{ background: 'var(--bg-1)', padding: '10px 16px', ...flashStyle }}>
+        {Header}
+        <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>No pattern detected</div>
       </div>
     );
   }
@@ -295,38 +187,45 @@ function PatternCard({
   const regime = regimeOfPattern(latest, series);
   const bars   = barsOfPattern(latest);
   const tier   = pss >= 80 ? 'STRONG' : pss >= 60 ? 'FORMING' : 'WEAK';
+  const oneLiner = PATTERN_ONELINER[latest.kind] ?? '—';
 
   return (
-    <div style={{ background: 'var(--bg-1)', padding: 16, ...flashStyle }}>
+    <div style={{ background: 'var(--bg-1)', padding: '10px 16px', ...flashStyle }}>
+      {Header}
       <div style={{
-        fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)',
-        marginBottom: 8,
-        display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr',
+        columnGap: 18, alignItems: 'center',
       }}>
-        <span>PATTERN DETECTION · PSS</span>
-        <span style={{
-          padding: '1px 5px', borderRadius: 2,
-          border: '1px solid var(--line-2)',
-          color: 'var(--fg-3)', fontSize: 7,
-        }}>GCP EVENT</span>
+        <div style={{
+          display: 'flex', alignItems: 'baseline', gap: 6,
+        }}>
+          <span style={{
+            fontSize: 24, color: '#d4a028', fontWeight: 600,
+            fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+          }}>{pss}</span>
+          <span style={{ fontSize: 8, color: '#854f0b', letterSpacing: '0.06em' }}>
+            / 100 · {tier}
+          </span>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{
+            fontSize: 12, color: 'var(--fg-0)', fontWeight: 600,
+            letterSpacing: '0.02em',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {latest.kind}
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 2, lineHeight: 1.45 }}>
+            {oneLiner}
+          </div>
+          <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+            {regime ?? '?'} · {bars} bars
+          </div>
+        </div>
       </div>
       <div style={{
-        fontSize: 38, color: '#d4a028',
-        fontVariantNumeric: 'tabular-nums', lineHeight: 1,
-      }}>
-        {pss}
-      </div>
-      <div style={{ fontSize: 9, color: '#854f0b', marginTop: 2 }}>
-        / 100 · {tier}
-      </div>
-      <div style={{ fontSize: 10, color: 'var(--fg-1)', marginTop: 6, letterSpacing: '0.02em' }}>
-        {latest.kind}
-      </div>
-      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
-        {regime ?? '?'} · {bars} bars
-      </div>
-      <div style={{
-        height: 4, background: 'var(--bg-2)',
+        height: 3, background: 'var(--bg-2)',
         borderRadius: 2, marginTop: 8, overflow: 'hidden',
       }}>
         <div style={{
@@ -334,14 +233,6 @@ function PatternCard({
           background: '#d4a028', borderRadius: 2,
         }} />
       </div>
-      <div style={{
-        display: 'flex', justifyContent: 'space-between',
-        fontSize: 7, color: 'var(--fg-4)', marginTop: 2,
-      }}>
-        <span>WEAK</span><span>FORMING</span><span>STRONG</span><span>EXPLOSIVE</span>
-      </div>
-      {contextLine}
-      {envBlock}
     </div>
   );
 }
@@ -420,7 +311,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({
-  gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
+  gcpData, series, patterns, pssFlash = false,
   aiState, aiEnabled,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
@@ -435,46 +326,106 @@ export default function Dashboard({
   const refreshLabel = nextRefresh >= 60
     ? `${Math.floor(nextRefresh / 60)}m ${String(nextRefresh % 60).padStart(2, '0')}s`
     : `${nextRefresh}s`;
-  const latestPattern = patterns[patterns.length - 1] ?? null;
 
-  // For the sparkline / 24m delta we want the last 15 minute-resolution points.
-  // baseSeries already supplies this — no further trimming needed.
-  // useMemo just keeps the slice stable for the sparkline.
-  useMemo(() => series.slice(-15), [series]);
+  // v11.16: compact horizontal stat row used in the right column of the
+  // primary-focus area. Replaces the bulky NV / Regime / PSS cards in
+  // the old 4-column top grid with a slim stack so the AI state block
+  // can dominate. The full NVCard / RegimeCard widgets are no longer
+  // mounted on the dashboard.
+  const liveNV = gcpData.liveNetvar;
+  const live15 = series.slice(-15);
+  const prev24 = series.length > 24 ? series[series.length - 24] : null;
+  const nvDelta = liveNV != null && prev24 ? liveNV - prev24.v : null;
+
+  const liveRegime = gcpData.liveRegime;
+  const regimeMeta = liveRegime ? REGIME_META[liveRegime] : null;
+
+  const activePattern = patterns[patterns.length - 1] ?? null;
+  const activePss     = activePattern ? pssOf(activePattern) : 0;
+  const activeTier    = activePss >= 80 ? 'STRONG' : activePss >= 60 ? 'FORMING' : 'WEAK';
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
+        {/* Primary focus: AI block (left) + compact stats stack (right) */}
         <div style={{
-          display: 'grid', gridTemplateColumns: '1.25fr 1fr 1fr 1fr',
+          display: 'grid', gridTemplateColumns: '1.4fr 1fr',
           borderBottom: '1px solid var(--line-0)',
           flexShrink: 0,
         }}>
-          <AiStateCard state={aiState} enabled={aiEnabled} />
-          <NVCard
-            series={series}
-            liveNV={gcpData.liveNetvar}
-            symbol={symbol}
-            symbolPrice={symbolPrice}
-          />
-          <RegimeCard regime={gcpData.liveRegime} />
-          <PatternCard patterns={patterns} series={series} flash={pssFlash} aiState={aiState} />
+          <AiStateCard state={aiState} enabled={aiEnabled} flash={pssFlash} />
+          <div style={{
+            background: 'var(--bg-1)', borderLeft: '1px solid var(--line-0)',
+            padding: '10px 16px',
+            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+            gap: 6,
+          }}>
+            <StatRow
+              label="NV"
+              valueColor="var(--cyan)"
+              value={liveNV != null ? liveNV.toFixed(1) : '—'}
+              meta={nvDelta != null ? `${nvDelta >= 0 ? '+' : ''}${nvDelta.toFixed(1)} vs 24m` : 'live network coherence'}
+            >
+              <NVSparkline series={live15} />
+            </StatRow>
+            <StatRow
+              label="REGIME"
+              valueColor={regimeMeta?.color ?? 'var(--fg-3)'}
+              value={liveRegime ? `${liveRegime}` : '—'}
+              meta={regimeMeta ? `${regimeMeta.label.toUpperCase()} · ${regimeMeta.range} NV` : 'awaiting first sample'}
+            />
+            <StatRow
+              label="PSS"
+              valueColor={activePattern ? '#d4a028' : 'var(--fg-3)'}
+              value={activePattern ? `${activePss}` : '—'}
+              meta={activePattern ? `${activeTier} · ${activePattern.kind}` : 'no active pattern'}
+            >
+              {activePattern && (
+                <div style={{
+                  height: 3, background: 'var(--bg-2)',
+                  borderRadius: 2, marginTop: 6, overflow: 'hidden',
+                }}>
+                  <div style={{
+                    width: `${activePss}%`, height: '100%',
+                    background: '#d4a028', borderRadius: 2,
+                  }} />
+                </div>
+              )}
+            </StatRow>
+          </div>
         </div>
 
+        {/* Helper: short note distinguishing the two layers */}
+        <div style={{
+          padding: '6px 16px', borderBottom: '1px solid var(--line-0)',
+          background: 'var(--bg-0)',
+          fontSize: 8, letterSpacing: '0.06em', color: 'var(--fg-4)',
+          display: 'flex', flexWrap: 'wrap', gap: 14,
+        }}>
+          <span><span style={{ color: 'var(--fg-3)' }}>AI State</span> = Environment (GCP + Gold)</span>
+          <span><span style={{ color: 'var(--fg-3)' }}>Pattern</span> = Event (GCP only)</span>
+        </div>
+
+        {/* Pattern (secondary): full-width below AI */}
+        <div style={{ flexShrink: 0, borderBottom: '1px solid var(--line-0)' }}>
+          <PatternCard patterns={patterns} series={series} flash={pssFlash} />
+        </div>
+
+        {/* News feed (lower visual weight) */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
           <div style={{
-            padding: '7px 16px',
+            padding: '6px 16px',
             borderBottom: '1px solid var(--line-0)',
             fontSize: 8, letterSpacing: '0.1em', color: 'var(--fg-4)',
             display: 'flex', alignItems: 'center', gap: 8,
             flexShrink: 0,
           }}>
-            <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--green)' }} />
-            GLOBAL EVENTS FEED · Reuters · AP · BBC
+            <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--fg-3)' }} />
+            GLOBAL EVENTS · COHERENCE-TAGGED
             <span style={{ marginLeft: 'auto', color: 'var(--fg-4)' }}>
-              tagged by GCP regime at publish time · next refresh{' '}
-              <span style={{ color: 'var(--fg-2)', fontFamily: 'var(--font-mono)' }}>
+              next refresh{' '}
+              <span style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
                 {refreshLabel}
               </span>
             </span>
@@ -567,20 +518,6 @@ export default function Dashboard({
             <div style={{ fontSize: 9, color: 'var(--fg-4)' }}>No patterns detected</div>
           )}
         </div>
-
-        {latestPattern && (
-          <div style={{ padding: '10px 14px' }}>
-            <div style={{ fontSize: 8, letterSpacing: '0.12em', color: 'var(--fg-4)', marginBottom: 6 }}>
-              LATEST
-            </div>
-            <div style={{ fontSize: 9, color: 'var(--cyan)', letterSpacing: '0.04em', marginBottom: 4 }}>
-              {latestPattern.kind}
-            </div>
-            <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.55 }}>
-              {PATTERN_INTERPRETATIONS[latestPattern.kind] ?? '—'}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

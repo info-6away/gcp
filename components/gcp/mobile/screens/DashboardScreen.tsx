@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { C, regimeColor } from '../colors';
 import { MobileStatus, SymbolBar } from '../MobileChrome';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
@@ -8,6 +9,7 @@ import { useNewsData } from '@/lib/useNewsData';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
+import AiStateExplainer from '../../AiStateExplainer';
 
 const REGIME_NAMES: Record<string, string> = {
   A: 'Silence', B: 'Ignition', C: 'Alignment',
@@ -44,6 +46,8 @@ export function DashboardScreen({
 
   const { items: newsItems } = useNewsData(series);
 
+  const [showExplainer, setShowExplainer] = useState(false);
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
@@ -79,10 +83,14 @@ export function DashboardScreen({
           const accent = stateColor(aiState);
           const arrow  = directionArrow(aiState.direction);
           const conf   = Math.round(aiState.confidence * 100);
-          const interp =
-            aiState.reasoningShort?.trim() ||
-            aiState.goldInterpretation?.trim() ||
-            DEFAULT_INTERPRETATION[aiState.stateCode] || '—';
+          // Mobile dashboard mirrors the desktop AI card: prefer the
+          // Engine's short copy only if it actually fits on one line.
+          // Long paragraphs collapse to the per-state default so the
+          // dashboard never grows a wall of text.
+          const candidate = aiState.reasoningShort?.trim() || aiState.goldInterpretation?.trim() || '';
+          const interp = candidate && candidate.length <= 90
+            ? candidate
+            : (DEFAULT_INTERPRETATION[aiState.stateCode] || '—');
           return (
             <div style={{
               background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
@@ -91,9 +99,24 @@ export function DashboardScreen({
             }}>
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                marginBottom: 4,
+                marginBottom: 4, gap: 8,
               }}>
-                <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3 }}>AI STATE</div>
+                <div style={{
+                  fontSize: 8, letterSpacing: '0.15em', color: C.fg3,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <span>AI STATE</span>
+                  <button
+                    onClick={() => setShowExplainer(true)}
+                    aria-label="What does this mean?"
+                    style={{
+                      background: 'transparent', border: `1px solid ${C.line2}`,
+                      borderRadius: '50%', width: 14, height: 14, padding: 0,
+                      fontSize: 9, color: C.fg2, cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >ⓘ</button>
+                </div>
                 <div style={{ fontSize: 8, letterSpacing: '0.08em', color: accent }}>
                   {aiState.coherenceType.toUpperCase()}
                 </div>
@@ -118,6 +141,17 @@ export function DashboardScreen({
             </div>
           );
         })()}
+
+        {aiEnabled && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 12,
+            fontSize: 8, color: C.fg4, letterSpacing: '0.06em',
+            padding: '0 2px', marginBottom: 8,
+          }}>
+            <span><span style={{ color: C.fg3 }}>AI State</span> = Environment (GCP + Gold)</span>
+            <span><span style={{ color: C.fg3 }}>Pattern</span> = Event (GCP only)</span>
+          </div>
+        )}
 
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3, padding: '10px 12px', marginBottom: 8 }}>
           <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>NET VARIANCE</div>
@@ -192,37 +226,24 @@ export function DashboardScreen({
         {activePat && (
           <div style={{
             background: C.bg1, border: `1px solid ${C.line1}`,
-            borderLeft: `2px solid ${C.cyan}`, borderRadius: 3,
+            borderLeft: `2px solid ${C.amber}`, borderRadius: 3,
             padding: '10px 12px', marginBottom: 10,
           }}>
-            <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>PATTERN INTERPRETATION</div>
+            <div style={{
+              fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4,
+              display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+            }}>
+              <span>PATTERN INTERPRETATION</span>
+              <span style={{
+                padding: '0 4px', borderRadius: 2,
+                border: `1px solid ${C.line2}`,
+                color: C.fg3, fontSize: 7,
+              }}>GCP EVENT</span>
+            </div>
             <div style={{ fontSize: 13, color: C.fg0, fontWeight: 600, letterSpacing: '0.02em' }}>{activePat.kind}</div>
             <div style={{ fontSize: 10, color: C.fg2, lineHeight: 1.5, marginTop: 4 }}>
               {INTERP[activePat.kind] ?? 'Pattern under observation.'}
             </div>
-            <div style={{
-              marginTop: 6, fontSize: 8, color: C.fg3, lineHeight: 1.5,
-            }}>
-              Patterns are GCP-only events. AI State uses GCP + Gold to interpret the environment.
-            </div>
-            {aiState && (
-              <div style={{
-                marginTop: 8, paddingTop: 6,
-                borderTop: `1px dashed ${C.line1}`,
-              }}>
-                <div style={{ fontSize: 7, letterSpacing: '0.15em', color: C.fg3, marginBottom: 2 }}>
-                  CURRENT AI ENVIRONMENT
-                </div>
-                <div style={{ fontSize: 10, color: C.fg0 }}>
-                  {aiState.direction} / {aiState.phase}
-                </div>
-                <div style={{ fontSize: 9, color: C.fg2, marginTop: 2, lineHeight: 1.45 }}>
-                  {aiState.reasoningShort?.trim() ||
-                   aiState.goldInterpretation?.trim() ||
-                   '—'}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -259,6 +280,11 @@ export function DashboardScreen({
           })}
         </div>
       </div>
+      <AiStateExplainer
+        open={showExplainer}
+        state={aiState}
+        onClose={() => setShowExplainer(false)}
+      />
     </div>
   );
 }
