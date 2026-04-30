@@ -380,24 +380,16 @@ export default function Dashboard({
               value={liveRegime ? `${liveRegime}` : '—'}
               meta={regimeMeta ? `${regimeMeta.label.toUpperCase()} · ${regimeMeta.range} NV` : 'awaiting first sample'}
             />
+            {/* v11.17.1: stats column shows the PSS value + tier
+                only. The progress bar lives inside the PatternCard
+                below (full-width with tier labels), so the mini bar
+                here was pure duplication. */}
             <StatRow
               label="PSS"
               valueColor={activePattern ? '#d4a028' : 'var(--fg-3)'}
               value={activePattern ? `${activePss}` : '—'}
               meta={activePattern ? `${activeTier} · ${activePattern.kind}` : 'no active pattern'}
-            >
-              {activePattern && (
-                <div style={{
-                  height: 3, background: 'var(--bg-2)',
-                  borderRadius: 2, marginTop: 6, overflow: 'hidden',
-                }}>
-                  <div style={{
-                    width: `${activePss}%`, height: '100%',
-                    background: '#d4a028', borderRadius: 2,
-                  }} />
-                </div>
-              )}
-            </StatRow>
+            />
           </div>
         </div>
 
