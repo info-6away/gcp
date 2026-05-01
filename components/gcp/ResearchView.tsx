@@ -339,10 +339,23 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   // of the candle at-or-after the record timestamp; exit uses the
   // close fwdBars later (clamped to the last candle so partial windows
   // are still counted).
-  const aiStatePoints = useMemo<AiStatePoint[]>(() => {
-    if (!aiHistory.length || !candles.length) return [];
+  // v11.20.1: records that don't have a forward candle yet are
+  // counted separately as `pendingByState` so the sidebar can show
+  // the user "you ran AI X times but the forward window hasn't fully
+  // played out yet" instead of dropping them silently.
+  const aiStateData = useMemo(() => {
     const points: AiStatePoint[] = [];
+    const pendingByState: Record<string, number> = {};
+    const totalForSymbol = aiHistory.filter(r => r.symbol === symbol).length;
+    if (!aiHistory.length || !candles.length) {
+      return { points, pendingByState, totalForSymbol, pendingTotal: totalForSymbol };
+    }
     const lastIdx = candles.length - 1;
+    let pendingTotal = 0;
+    const markPending = (code: string) => {
+      pendingByState[code] = (pendingByState[code] ?? 0) + 1;
+      pendingTotal++;
+    };
     for (const rec of aiHistory) {
       if (rec.symbol !== symbol) continue;
       // Find the first candle at-or-after the record timestamp.
@@ -350,14 +363,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       for (let i = 0; i < candles.length; i++) {
         if (candles[i].t >= rec.timestamp) { entryIdx = i; break; }
       }
-      if (entryIdx === -1) continue;
+      if (entryIdx === -1)         { markPending(rec.stateCode); continue; }
       const entry = candles[entryIdx];
       const entryPrice = entry.o > 0 ? entry.o : entry.c;
-      if (entryPrice <= 0) continue;
+      if (entryPrice <= 0)         { markPending(rec.stateCode); continue; }
       const exitIdx = Math.min(entryIdx + fwdBars, lastIdx);
-      if (exitIdx === entryIdx) continue;
+      if (exitIdx === entryIdx)    { markPending(rec.stateCode); continue; }
       const exit = candles[exitIdx];
-      if (!exit || exit.c <= 0) continue;
+      if (!exit || exit.c <= 0)    { markPending(rec.stateCode); continue; }
       const fwdPct = ((exit.c - entryPrice) / entryPrice) * 100;
       points.push({
         kind:       'aistate',
@@ -370,25 +383,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         t:          rec.timestamp,
       });
     }
-    return points;
+    return { points, pendingByState, totalForSymbol, pendingTotal };
   }, [aiHistory, candles, fwdBars, symbol]);
+
+  const aiStatePoints = aiStateData.points;
 
   const aiStateStats = useMemo(() => {
     const map: Record<string, {
-      pts:        AiStatePoint[];
-      avg:        number;
-      bull:       number;
-      bear:       number;
-      avgConf:    number;
-      topPhase:   string;
-      topDir:     string;
+      pts:          AiStatePoint[];
+      pending:      number;
+      avg:          number;
+      bull:         number;
+      bear:         number;
+      avgConf:      number;
+      topPhase:     string;
+      topDir:       string;
       insufficient: boolean;
     }> = {};
     for (const code of Object.keys(AI_STATE_META)) {
-      const pts  = aiStatePoints.filter(p => p.stateCode === code);
-      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
-      const bull = pts.filter(p => p.fwdPct >  0.05).length;
-      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      const pts     = aiStatePoints.filter(p => p.stateCode === code);
+      const pending = aiStateData.pendingByState[code] ?? 0;
+      const avg     = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull    = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear    = pts.filter(p => p.fwdPct < -0.05).length;
       const avgConf = pts.length ? pts.reduce((s, p) => s + p.confidence, 0) / pts.length : 0;
       // Mode of phase / direction within the group.
       const tally = (key: 'phase' | 'direction'): string => {
@@ -399,7 +416,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         return best;
       };
       map[code] = {
-        pts, avg, bull, bear,
+        pts, pending, avg, bull, bear,
         avgConf,
         topPhase: pts.length ? tally('phase')     : '—',
         topDir:   pts.length ? tally('direction') : '—',
@@ -407,7 +424,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       };
     }
     return map;
-  }, [aiStatePoints]);
+  }, [aiStatePoints, aiStateData]);
 
   // ── Geometry ────────────────────────────────────────────────────────────────
   const PAD = { l: 56, r: 24, t: 24, b: 60 };
@@ -456,7 +473,9 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const totalLabel =
     mode === 'regime'  ? `${regimePoints.length} bars`        :
     mode === 'pattern' ? `${patternPoints.length} occurrences`:
-                         `${aiStatePoints.length} analyses`;
+    aiStateData.pendingTotal > 0
+      ? `${aiStateData.totalForSymbol} analyses · ${aiStateData.pendingTotal} pending`
+      : `${aiStateData.totalForSymbol} analyses`;
 
   return (
     <div style={{
@@ -979,10 +998,12 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 );
               })}
 
-              {/* v11.20: AI State summary. Empty-state copy when the
-                  user has never run a manual analysis; otherwise per-
-                  state code rows mirroring the pattern sidebar. */}
-              {mode === 'aistate' && aiHistory.length === 0 && (
+              {/* v11.20.1: empty state only when there is genuinely
+                  no history. If the user has run analyses but their
+                  forward windows haven't fully played out, we show
+                  the records as pending instead of pretending the
+                  ledger is empty. */}
+              {mode === 'aistate' && aiStateData.totalForSymbol === 0 && (
                 <div style={{
                   padding: '14px 12px',
                   background: 'var(--bg-2)',
@@ -997,9 +1018,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 </div>
               )}
 
-              {mode === 'aistate' && aiHistory.length > 0 && Object.entries(AI_STATE_META).map(([code, meta]) => {
+              {mode === 'aistate' && aiStateData.totalForSymbol > 0 && Object.entries(AI_STATE_META).map(([code, meta]) => {
                 const s = aiStateStats[code];
-                if (!s || s.pts.length === 0) {
+                if (!s) return null;
+                const total = s.pts.length + s.pending;
+                if (total === 0) {
                   return (
                     <div key={code} style={{
                       marginBottom: 8, paddingBottom: 8, opacity: 0.45,
@@ -1011,6 +1034,30 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       </div>
                       <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
                         {meta.label}
+                      </div>
+                    </div>
+                  );
+                }
+                // v11.20.1: groups with only-pending records (no
+                // forward outcome yet) get their own treatment so the
+                // user sees the analysis was logged but the window
+                // hasn't finished.
+                if (s.pts.length === 0 && s.pending > 0) {
+                  return (
+                    <div key={code} style={{
+                      marginBottom: 10, paddingBottom: 10,
+                      borderBottom: '1px solid var(--line-0)',
+                      opacity: 0.85,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                        <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>pending</span>
+                      </div>
+                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                        {meta.label} · {s.pending} pending outcome{s.pending === 1 ? '' : 's'}
+                      </div>
+                      <div style={{ fontSize: 8, color: '#7F98A3', lineHeight: 1.5 }}>
+                        Forward window not yet available
                       </div>
                     </div>
                   );
@@ -1035,6 +1082,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                     </div>
                     <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
                       {meta.label} · {s.pts.length} analyses
+                      {s.pending > 0 && ` · ${s.pending} pending`}
                     </div>
                     <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap' }}>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>

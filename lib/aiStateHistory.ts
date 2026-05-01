@@ -87,10 +87,28 @@ export interface AiStateHistoryInput {
 // the last 60 s collapses (we just refresh the timestamp / price /
 // pss / confidence rather than appending a duplicate row). Cap at
 // 500; oldest first when over.
+//
+// v11.20.1: dev logs at save time so the user can verify in the
+// browser console that the manual run is actually persisting.
 export function appendAiStateHistory(input: AiStateHistoryInput): AiStateHistoryRecord[] {
   const history = loadAiStateHistory();
+  const isDev = typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+
+  if (isDev) {
+    console.log('[AI HISTORY] saving classification', {
+      stateCode:  input.stateCode,
+      state:      input.state,
+      phase:      input.phase,
+      direction:  input.direction,
+      confidence: input.confidence,
+      timestamp:  input.timestamp,
+    });
+  }
 
   const last = history[history.length - 1];
+  // Dedup ONLY against the most-recent record. The first record
+  // always falls through this guard (last is undefined on empty
+  // history), guaranteeing the first save lands.
   if (last
       && input.timestamp - last.timestamp < DEDUP_WINDOW_MS
       && last.stateCode === input.stateCode
@@ -106,6 +124,7 @@ export function appendAiStateHistory(input: AiStateHistoryInput): AiStateHistory
     last.patternCode     = input.patternCode;
     last.patternName     = input.patternName;
     saveAiStateHistory(history);
+    if (isDev) console.log(`[AI HISTORY] deduped (refreshed in place) — total records: ${history.length}`);
     return history;
   }
 
@@ -117,6 +136,7 @@ export function appendAiStateHistory(input: AiStateHistoryInput): AiStateHistory
 
   while (history.length > AI_HISTORY_MAX) history.shift();
   saveAiStateHistory(history);
+  if (isDev) console.log(`[AI HISTORY] total records: ${history.length}`);
   return history;
 }
 
