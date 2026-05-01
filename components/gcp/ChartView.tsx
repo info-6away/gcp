@@ -98,6 +98,15 @@ export default function ChartView({
   const gcpLineRef      = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef       = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
+  // v11.20.2: hold the latest live price + its timestamp in refs so
+  // the candles-applied effect can re-apply them after every setData
+  // without taking a dependency on livePrice (which would refire that
+  // whole effect on every tick).
+  const livePriceRef     = useRef<number | null>(livePrice ?? null);
+  const livePriceTimeRef = useRef<Date   | null>(livePriceTime ?? null);
+  useEffect(() => { livePriceRef.current     = livePrice     ?? null; }, [livePrice]);
+  useEffect(() => { livePriceTimeRef.current = livePriceTime ?? null; }, [livePriceTime]);
+
   const [chartTF,       setChartTF]       = useState<ChartTF>('5m');
   const [candles,       setCandles]       = useState<Candle[]>([]);
   const [isLoading,     setIsLoading]     = useState(true);
@@ -508,6 +517,38 @@ export default function ChartView({
 
     try { cs.setData(data); } catch { /* time ordering harmless */ }
 
+    // v11.20.2: re-apply the latest live tick to the rightmost bar
+    // immediately after setData. Without this, the 60 s fetch loop
+    // can leave a stale "API snapshot" candle on screen — and if that
+    // snapshot happened to land while close < open, the bar reads
+    // RED even though subsequent live ticks pushed close above open.
+    // The live-tick effect alone doesn't refire because livePrice
+    // hasn't changed; we have to mutate explicitly here.
+    const lp = livePriceRef.current;
+    const lt = livePriceTimeRef.current;
+    if (lp != null && lt != null && Number.isFinite(lp) && lp > 0) {
+      const tfMs = CHART_TF_MS[chartTF] ?? 60_000;
+      const slot = Math.floor(lt.getTime() / tfMs) * tfMs;
+      const last = allCandlesRef.current[allCandlesRef.current.length - 1];
+      if (last && slot === last.t && isValidCandle(last)) {
+        const bar: Candle = {
+          ...last,
+          h: Math.max(last.h, lp),
+          l: Math.min(last.l, lp),
+          c: lp,
+        };
+        if (isValidCandle(bar)) {
+          allCandlesRef.current[allCandlesRef.current.length - 1] = bar;
+          try {
+            cs.update({ time: toTime(slot), open: bar.o, high: bar.h, low: bar.l, close: bar.c });
+          } catch { /* */ }
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'after-setData' });
+          }
+        }
+      }
+    }
+
     if (isInitRef.current) {
       requestAnimationFrame(() => {
         chartRef.current?.timeScale().fitContent();
@@ -515,7 +556,7 @@ export default function ChartView({
       });
       isInitRef.current = false;
     }
-  }, [chartReady, displayCandles]);
+  }, [chartReady, displayCandles, chartTF]);
 
   // Live-bar update: every spot-price tick mutates the rightmost candle's
   // close (and updates high/low if the tick exceeds them). When the tick
@@ -555,6 +596,12 @@ export default function ChartView({
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
         });
       } catch { /* */ }
+      // v11.20.2 dev log: confirms color decision is per-candle.
+      // isUp computed ONLY from this bar's open/close, never from
+      // previous candle or external feed.
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'new-slot' });
+      }
     } else if (slot === last.t) {
       // v11.13.2: if the existing last candle is corrupt (h/l NaN from
       // a bad upstream bar), Math.max(NaN, livePrice) propagates NaN
@@ -578,6 +625,9 @@ export default function ChartView({
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
         });
       } catch { /* */ }
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'live-tick' });
+      }
     }
     // slot < last.t: out-of-order tick, ignore.
   }, [chartReady, livePrice, livePriceTime, chartTF]);
