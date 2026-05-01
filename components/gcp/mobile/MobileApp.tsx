@@ -102,7 +102,10 @@ export default function MobileApp({
         <PatternsScreen {...shared} patterns={displayPatterns} />
       );
       case 'research': return (
-        <ResearchScreen {...shared} series={baseSeries} />
+        <ResearchScreen {...shared}
+          series={baseSeries}
+          patterns={displayPatterns}
+        />
       );
       case 'settings': return (
         <SettingsScreen {...shared}
