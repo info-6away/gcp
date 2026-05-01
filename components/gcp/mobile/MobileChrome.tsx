@@ -7,6 +7,7 @@ import type { MarketSymbol } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import AiStateBadge from '../AiStateBadge';
 import Heartbeat from '../Heartbeat';
+import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 
 export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'settings';
 
@@ -31,8 +32,22 @@ export function MobileStatus({
       {aiEnabled && (
         <div style={{
           flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center',
-          overflow: 'hidden',
+          alignItems: 'center', gap: 5, overflow: 'hidden',
         }}>
+          {/* v11.21: AI timeframe pill */}
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            padding: '1px 5px',
+            fontSize: 8, fontFamily: 'inherit',
+            letterSpacing: '0.06em',
+            background: `${C.cyan}10`,
+            border: `1px solid ${C.cyan}30`,
+            borderRadius: 2,
+            whiteSpace: 'nowrap', flexShrink: 0,
+          }}>
+            <span style={{ color: C.fg3 }}>AI:</span>
+            <span style={{ color: C.cyan }}>{AI_ANALYSIS_TF}</span>
+          </span>
           <AiStateBadge state={aiState} enabled={aiEnabled} compact />
         </div>
       )}

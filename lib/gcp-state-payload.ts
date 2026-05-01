@@ -61,6 +61,17 @@ export interface GcpStateInputs {
   // AI history ledger (Research → By AI State). Not sent to the
   // Engine — the builder ignores it.
   priceAtAnalysis?: number | null;
+
+  // v11.21: timeframe context surfaces what the AI analysis is
+  // operating on (analysisTf, forwardHorizon) vs what the user is
+  // looking at (chartTf). Forwarded to the Engine for clarity / audit
+  // and rendered in the AI card / header pill so the user understands
+  // the time scale of the signal.
+  timeframeContext?: {
+    chartTf:        string;
+    analysisTf:     string;
+    forwardHorizon: string;
+  };
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -136,5 +147,8 @@ export function buildGcpStatePayload(
       phase:      inputs.previousState.phase,
       confidence: r(inputs.previousState.confidence, 3),
     } : undefined,
+    // v11.21: pass the timeframe context through unchanged. Tiny
+    // 3-string struct — no measurable token impact.
+    timeframeContext: inputs.timeframeContext,
   };
 }

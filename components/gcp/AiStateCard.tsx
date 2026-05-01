@@ -21,6 +21,7 @@ import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
 import { derivePosture, actionToneColor } from '@/lib/aiAction';
+import { AI_ANALYSIS_TF, AI_FORWARD_HORIZON } from '@/lib/aiTimeframe';
 import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
 
@@ -302,6 +303,18 @@ function Card({
         textShadow: '0 0 6px rgba(56, 189, 248, 0.15)',
       }}>
         {oneLiner}
+      </div>
+
+      {/* v11.21: timeframe context — tells the user what time scale
+          the AI is operating on. Subtle cyan-grey, smaller than the
+          explanation, always visible. */}
+      <div style={{
+        marginTop: 4,
+        fontSize: 9,
+        color: '#7F98A3',
+        letterSpacing: '0.04em',
+      }}>
+        Context: {AI_ANALYSIS_TF} environment · {AI_FORWARD_HORIZON} horizon
       </div>
 
       {/* v11.18: posture block — MODE / ACTION / TRIGGER / SIZE.

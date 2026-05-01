@@ -50,6 +50,15 @@ export type GcpStatePayload = {
     phase:      string;
     confidence: number;
   };
+
+  // v11.21: timeframe context — tells the Engine what time scale the
+  // user is looking at vs the time scale the analysis applies to.
+  // No Engine code change required; this is metadata + UI clarity.
+  timeframeContext?: {
+    chartTf:        string;
+    analysisTf:     string;
+    forwardHorizon: string;
+  };
 };
 
 export type GcpStateResponse = {

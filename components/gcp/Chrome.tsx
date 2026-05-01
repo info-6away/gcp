@@ -7,6 +7,7 @@ import { APP_MODEL } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import AiStateBadge from './AiStateBadge';
 import Heartbeat, { type HeartbeatMode } from './Heartbeat';
+import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 
 const TF_DESCRIPTIONS: Record<string, string> = {
   '1m':  'Each bar = 1 minute',
@@ -189,6 +190,29 @@ function Header({
           symbol={symbol}
           onSymbolChange={onSymbolChange}
         />
+
+        {/* v11.21: AI timeframe pill — tells the user what time scale
+            the AI is operating on. Locked to 15m for now. Visible
+            even when AI is disabled so the chart-vs-AI scale is
+            always clear. */}
+        {aiEnabled && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 6px',
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
+            color: '#7F98A3',
+            background: 'rgba(56, 189, 248, 0.04)',
+            border: '1px solid rgba(56, 189, 248, 0.18)',
+            borderRadius: 3,
+            whiteSpace: 'nowrap',
+          }}
+          title="AI analysis timeframe — fixed at 15m for now"
+          >
+            <span style={{ color: 'var(--fg-4)' }}>AI:</span>
+            <span style={{ color: 'var(--cyan)' }}>{AI_ANALYSIS_TF}</span>
+          </div>
+        )}
 
         <AiStateBadge state={aiState} enabled={aiEnabled} />
 

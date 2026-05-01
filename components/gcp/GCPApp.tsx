@@ -14,6 +14,7 @@ import {
 import { useGcpState } from '@/lib/useGcpState';
 import { useStableAiState } from '@/lib/aiState';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
+import { buildTimeframeContext } from '@/lib/aiTimeframe';
 import { windowMetrics } from '@/lib/energy';
 import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
 import Chrome from './Chrome';
@@ -226,6 +227,10 @@ export default function GCPApp() {
       // v11.20: spot price at analysis time, used ONLY for the local
       // AI history ledger. Not forwarded to the Engine.
       priceAtAnalysis: goldData.price,
+      // v11.21: timeframe context — what time scale the user has on
+      // the chart vs what the AI is analysing. Locked to 15m / 1h
+      // for now per spec; switcher comes later.
+      timeframeContext: buildTimeframeContext(timeframe),
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
