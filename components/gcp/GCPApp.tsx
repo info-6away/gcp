@@ -223,6 +223,9 @@ export default function GCPApp() {
       // v11.18.6: do NOT set windowMinutes — let the payload builder's
       // own 15-point default apply. Setting it here was overriding the
       // trim and shipping 100-point payloads.
+      // v11.20: spot price at analysis time, used ONLY for the local
+      // AI history ledger. Not forwarded to the Engine.
+      priceAtAnalysis: goldData.price,
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
@@ -230,6 +233,7 @@ export default function GCPApp() {
     symbol,
     timeframe,
     goldData.changePct,
+    goldData.price,
     displayPatterns.length,
   ]);
 

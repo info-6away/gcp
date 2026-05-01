@@ -56,6 +56,11 @@ export interface GcpStateInputs {
   // priorState struct so the Engine sees the prior label without
   // having to ingest the full prior response.
   previousState?: GcpStateResponse | null;
+
+  // v11.20: spot price at analysis time, used ONLY for the local
+  // AI history ledger (Research → By AI State). Not sent to the
+  // Engine — the builder ignores it.
+  priceAtAnalysis?: number | null;
 }
 
 export const ENGINE_MIN_SERIES = 10;

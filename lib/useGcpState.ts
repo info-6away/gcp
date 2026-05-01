@@ -42,6 +42,7 @@ import {
   loadAiAnalysisInterval,
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
+import { appendAiStateHistory } from '@/lib/aiStateHistory';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -277,6 +278,28 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         if (isDev()) console.log('[AI STATE] response', result);
         setState(result);
         setLastSuccessAt(new Date());
+        // v11.20: append the successful classification to the local
+        // history ledger so the Research → By AI State view can
+        // correlate it against subsequent price moves. Only the
+        // success path records — failed/error responses are skipped.
+        const lastSeries = cur.series[cur.series.length - 1];
+        appendAiStateHistory({
+          timestamp:       Date.now(),
+          symbol:          cur.symbol,
+          timeframe:       cur.timeframe,
+          state:           result.state,
+          stateCode:       result.stateCode,
+          phase:           result.phase,
+          direction:       result.direction,
+          confidence:      result.confidence,
+          marketBias:      result.marketBias,
+          regime:          cur.regime.code,
+          netVariance:     lastSeries ? lastSeries.v : 0,
+          patternCode:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode,
+          patternName:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternName,
+          pss:             cur.recentPatterns[cur.recentPatterns.length - 1]?.pss,
+          priceAtAnalysis: cur.priceAtAnalysis ?? null,
+        });
       } else {
         if (isDev()) console.log('[AI STATE] error, keeping last state');
         setLastErrorAt(new Date());

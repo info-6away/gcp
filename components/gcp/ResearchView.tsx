@@ -4,6 +4,10 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { DataPoint, MarketSymbol } from '@/types/gcp';
 import { fetchCandlesForWindow, type Candle } from '@/lib/fetchCandles';
 import { detectPatterns } from '@/lib/gcp-data';
+import {
+  AI_HISTORY_LS_KEY, loadAiStateHistory,
+  type AiStateHistoryRecord,
+} from '@/lib/aiStateHistory';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -11,7 +15,7 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
 };
 
-type ResearchMode = 'regime' | 'pattern';
+type ResearchMode = 'regime' | 'pattern' | 'aistate';
 
 interface RegimePoint {
   kind:   'regime';
@@ -29,7 +33,18 @@ interface PatternPoint {
   pss:     number;
 }
 
-type Hovered = RegimePoint | PatternPoint;
+interface AiStatePoint {
+  kind:       'aistate';
+  stateCode:  string;
+  state:      string;
+  phase:      string;
+  direction:  string;
+  confidence: number;
+  fwdPct:     number;
+  t:          number;
+}
+
+type Hovered = RegimePoint | PatternPoint | AiStatePoint;
 
 const REGIME_META: Record<string, { label: string; color: string; x: number }> = {
   A: { label: 'A · Silence',         color: '#4a72c4', x: 1 },
@@ -50,6 +65,24 @@ const PATTERN_META: Record<string, { label: string; abbr: string; color: string;
   'Shock Jump':          { label: 'Shock Jump',          abbr: 'SJ', color: '#e24b4a', x: 7 },
 };
 const PATTERN_COLS = 7;
+
+// v11.20: AI State columns. Order roughly follows the lifecycle —
+// compression building → ignition → trend → climax / discharge / shock,
+// with dead-drift on the left as the no-signal baseline. State labels
+// match GcpStateResponse['state']; abbr is the literal stateCode.
+const AI_STATE_META: Record<string, { label: string; abbr: string; color: string; x: number }> = {
+  DD: { label: 'Dead Drift',         abbr: 'DD', color: '#6b7280', x: 1 },
+  CS: { label: 'Compression',        abbr: 'CS', color: '#4dd9e8', x: 2 },
+  IS: { label: 'Ignition',           abbr: 'IS', color: '#22c55e', x: 3 },
+  AT: { label: 'Alignment Trend',    abbr: 'AT', color: '#2db8b4', x: 4 },
+  SS: { label: 'Synchronization',    abbr: 'SS', color: '#d4a028', x: 5 },
+  CL: { label: 'Climax',             abbr: 'CL', color: '#d46428', x: 6 },
+  DS: { label: 'Discharge',          abbr: 'DS', color: '#fb923c', x: 7 },
+  FA: { label: 'Failed Alignment',   abbr: 'FA', color: '#d946ef', x: 8 },
+  SH: { label: 'Shock',              abbr: 'SH', color: '#e24b4a', x: 9 },
+};
+const AI_STATE_COLS = 9;
+const AI_STATE_MIN_COUNT = 10;
 
 function regimeFor(v: number): string {
   if (v < 50)  return 'A';
@@ -288,6 +321,94 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return map;
   }, [patternPoints]);
 
+  // ── AI State history (local-only ledger, v11.20) ────────────────────────────
+  // Loaded once on mount and kept fresh via the same-tab + cross-tab
+  // storage event the appendAiStateHistory helper dispatches. No
+  // network calls here — just localStorage.
+  const [aiHistory, setAiHistory] = useState<AiStateHistoryRecord[]>([]);
+  useEffect(() => {
+    setAiHistory(loadAiStateHistory());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === AI_HISTORY_LS_KEY) setAiHistory(loadAiStateHistory());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Forward returns for each AI history record. Entry uses the open
+  // of the candle at-or-after the record timestamp; exit uses the
+  // close fwdBars later (clamped to the last candle so partial windows
+  // are still counted).
+  const aiStatePoints = useMemo<AiStatePoint[]>(() => {
+    if (!aiHistory.length || !candles.length) return [];
+    const points: AiStatePoint[] = [];
+    const lastIdx = candles.length - 1;
+    for (const rec of aiHistory) {
+      if (rec.symbol !== symbol) continue;
+      // Find the first candle at-or-after the record timestamp.
+      let entryIdx = -1;
+      for (let i = 0; i < candles.length; i++) {
+        if (candles[i].t >= rec.timestamp) { entryIdx = i; break; }
+      }
+      if (entryIdx === -1) continue;
+      const entry = candles[entryIdx];
+      const entryPrice = entry.o > 0 ? entry.o : entry.c;
+      if (entryPrice <= 0) continue;
+      const exitIdx = Math.min(entryIdx + fwdBars, lastIdx);
+      if (exitIdx === entryIdx) continue;
+      const exit = candles[exitIdx];
+      if (!exit || exit.c <= 0) continue;
+      const fwdPct = ((exit.c - entryPrice) / entryPrice) * 100;
+      points.push({
+        kind:       'aistate',
+        stateCode:  rec.stateCode,
+        state:      rec.state,
+        phase:      rec.phase,
+        direction:  rec.direction,
+        confidence: rec.confidence,
+        fwdPct:     +fwdPct.toFixed(3),
+        t:          rec.timestamp,
+      });
+    }
+    return points;
+  }, [aiHistory, candles, fwdBars, symbol]);
+
+  const aiStateStats = useMemo(() => {
+    const map: Record<string, {
+      pts:        AiStatePoint[];
+      avg:        number;
+      bull:       number;
+      bear:       number;
+      avgConf:    number;
+      topPhase:   string;
+      topDir:     string;
+      insufficient: boolean;
+    }> = {};
+    for (const code of Object.keys(AI_STATE_META)) {
+      const pts  = aiStatePoints.filter(p => p.stateCode === code);
+      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      const avgConf = pts.length ? pts.reduce((s, p) => s + p.confidence, 0) / pts.length : 0;
+      // Mode of phase / direction within the group.
+      const tally = (key: 'phase' | 'direction'): string => {
+        const c: Record<string, number> = {};
+        for (const p of pts) c[p[key]] = (c[p[key]] ?? 0) + 1;
+        let best = '—', n = 0;
+        for (const [k, v] of Object.entries(c)) if (v > n) { best = k; n = v; }
+        return best;
+      };
+      map[code] = {
+        pts, avg, bull, bear,
+        avgConf,
+        topPhase: pts.length ? tally('phase')     : '—',
+        topDir:   pts.length ? tally('direction') : '—',
+        insufficient: pts.length < AI_STATE_MIN_COUNT,
+      };
+    }
+    return map;
+  }, [aiStatePoints]);
+
   // ── Geometry ────────────────────────────────────────────────────────────────
   const PAD = { l: 56, r: 24, t: 24, b: 60 };
   const IW  = Math.max(80, W - PAD.l - PAD.r);
@@ -297,8 +418,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const yOf = (pct: number) =>
     PAD.t + (1 - (Math.max(Y_MIN, Math.min(Y_MAX, pct)) - Y_MIN) / (Y_MAX - Y_MIN)) * IH;
 
-  const cols    = mode === 'regime' ? 6 : PATTERN_COLS;
-  const colMeta = mode === 'regime' ? REGIME_META : PATTERN_META;
+  const cols =
+    mode === 'regime'  ? 6 :
+    mode === 'pattern' ? PATTERN_COLS :
+                         AI_STATE_COLS;
+  const colMeta =
+    mode === 'regime'  ? REGIME_META :
+    mode === 'pattern' ? PATTERN_META :
+                         AI_STATE_META;
 
   const xOfRegime = (regime: string) => {
     const meta = REGIME_META[regime];
@@ -310,15 +437,26 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / PATTERN_COLS) * IW;
   };
-  const xOfPoint = (pt: RegimePoint | PatternPoint) =>
-    pt.kind === 'regime' ? xOfRegime(pt.regime) : xOfPattern(pt.pattern);
+  const xOfAiState = (code: string) => {
+    const meta = AI_STATE_META[code];
+    if (!meta) return PAD.l;
+    return PAD.l + ((meta.x - 0.5) / AI_STATE_COLS) * IW;
+  };
+  const xOfPoint = (pt: RegimePoint | PatternPoint | AiStatePoint) =>
+    pt.kind === 'regime'  ? xOfRegime(pt.regime)
+  : pt.kind === 'pattern' ? xOfPattern(pt.pattern)
+  :                         xOfAiState(pt.stateCode);
 
   const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / cols) * 0.35;
 
-  const visiblePoints: (RegimePoint | PatternPoint)[] = mode === 'regime' ? regimePoints : patternPoints;
-  const totalLabel    = mode === 'regime'
-    ? `${regimePoints.length} bars`
-    : `${patternPoints.length} occurrences`;
+  const visiblePoints: (RegimePoint | PatternPoint | AiStatePoint)[] =
+    mode === 'regime'  ? regimePoints  :
+    mode === 'pattern' ? patternPoints :
+                         aiStatePoints;
+  const totalLabel =
+    mode === 'regime'  ? `${regimePoints.length} bars`        :
+    mode === 'pattern' ? `${patternPoints.length} occurrences`:
+                         `${aiStatePoints.length} analyses`;
 
   return (
     <div style={{
@@ -337,13 +475,15 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-2)' }}>
-          {mode === 'regime' ? 'GCP Regime → Price' : 'GCP Pattern → Forward Price'}
+          {mode === 'regime'  ? 'GCP Regime → Price'         :
+           mode === 'pattern' ? 'GCP Pattern → Forward Price' :
+                                'AI State → Forward Price'}
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{symbol}</span>
 
         <div style={{ display: 'flex', gap: 1, marginLeft: 12 }}>
-          {(['regime', 'pattern'] as ResearchMode[]).map(m => (
+          {(['regime', 'pattern', 'aistate'] as ResearchMode[]).map(m => (
             <button key={m}
               onClick={() => { setMode(m); setHovered(null); }}
               style={{
@@ -356,7 +496,9 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 cursor: 'pointer',
               }}
             >
-              {m === 'regime' ? 'BY REGIME' : 'BY PATTERN'}
+              {m === 'regime'  ? 'BY REGIME'  :
+               m === 'pattern' ? 'BY PATTERN' :
+                                 'BY AI STATE'}
             </button>
           ))}
         </div>
@@ -413,7 +555,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
             flexShrink: 0,
           }}>
             <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>How to read this: </span>
-            {mode === 'regime' ? (
+            {mode === 'regime' && (
               <>
                 Each dot = one 15 m price bar, colored by whether price went{' '}
                 <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
@@ -424,7 +566,8 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   D regime trending positive = GCP synchronization tends to precede upward price moves.
                 </span>
               </>
-            ) : (
+            )}
+            {mode === 'pattern' && (
               <>
                 Each dot = one pattern occurrence, colored by whether price went{' '}
                 <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
@@ -432,6 +575,17 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 X-axis is which GCP pattern fired; the horizontal line per column is the average outcome.{' '}
                 <span style={{ color: '#d4a028' }}>
                   AL trending positive = Alignment Ladder reliably precedes upward moves.
+                </span>
+              </>
+            )}
+            {mode === 'aistate' && (
+              <>
+                Each dot = one manual AI analysis, colored by whether price went{' '}
+                <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
+                <span style={{ color: '#ef4444' }}>down ↓</span> in the {FWD_LABEL[fwdBars]} after the
+                AI State was reported. Positive averages mean that state historically preceded upward moves.{' '}
+                <span style={{ color: '#d4a028' }}>
+                  AT trending positive = Alignment Trend reliably precedes upward moves.
                 </span>
               </>
             )}
@@ -533,6 +687,22 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   );
                 })}
 
+                {mode === 'aistate' && Object.entries(aiStateStats).map(([code, s]) => {
+                  if (s.pts.length < 2) return null;
+                  const cx  = xOfAiState(code);
+                  const y   = yOf(s.avg);
+                  const col = AI_STATE_META[code]?.color ?? '#fff';
+                  return (
+                    <g key={code}>
+                      <line x1={cx - 16} x2={cx + 16} y1={y} y2={y} stroke={col} strokeWidth={2} />
+                      <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
+                        fontFamily="IBM Plex Mono, monospace">
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </text>
+                    </g>
+                  );
+                })}
+
                 {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => (
                   <g key={r}>
                     <text
@@ -579,6 +749,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   </g>
                 ))}
 
+                {mode === 'aistate' && Object.entries(AI_STATE_META).map(([code, meta]) => (
+                  <g key={code}>
+                    <text
+                      x={xOfAiState(code)}
+                      y={H - PAD.b + 16}
+                      textAnchor="middle"
+                      fontSize={10} fill={meta.color} fontWeight={600}
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.abbr}
+                    </text>
+                    <text
+                      x={xOfAiState(code)}
+                      y={H - PAD.b + 28}
+                      textAnchor="middle"
+                      fontSize={7} fill="#2a2f37"
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.label.split(' ').slice(-1)[0]}
+                    </text>
+                  </g>
+                ))}
+
                 <text
                   x={14} y={PAD.t + IH / 2}
                   textAnchor="middle" fontSize={8} fill="#464c56"
@@ -606,7 +799,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   borderRadius: 3, padding: '6px 10px',
                   fontSize: 9, fontFamily: 'var(--font-mono)',
                 }}>
-                  {hovered.kind === 'regime' ? (
+                  {hovered.kind === 'regime' && (
                     <>
                       <div style={{ color: REGIME_META[hovered.regime]?.color, marginBottom: 3 }}>
                         {REGIME_META[hovered.regime]?.label}
@@ -621,7 +814,8 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                         {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
                       </div>
                     </>
-                  ) : (
+                  )}
+                  {hovered.kind === 'pattern' && (
                     <>
                       <div style={{ color: PATTERN_META[hovered.pattern]?.color, marginBottom: 3 }}>
                         {hovered.pattern}
@@ -631,6 +825,25 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       </div>
                       <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
                         PSS {hovered.pss}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                    </>
+                  )}
+                  {hovered.kind === 'aistate' && (
+                    <>
+                      <div style={{ color: AI_STATE_META[hovered.stateCode]?.color, marginBottom: 3 }}>
+                        {hovered.stateCode} · {hovered.state}
+                      </div>
+                      <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
+                        {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
+                      </div>
+                      <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+                        {hovered.phase} · {hovered.direction}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        Conf {(hovered.confidence * 100).toFixed(0)}%
                       </div>
                       <div style={{ color: 'var(--fg-4)' }}>
                         {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
@@ -650,7 +863,9 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 fontSize: 8, letterSpacing: '0.12em',
                 color: 'var(--fg-4)', marginBottom: 12,
               }}>
-                {mode === 'regime' ? 'REGIME SUMMARY' : 'PATTERN SUMMARY'}
+                {mode === 'regime'  ? 'REGIME SUMMARY'  :
+                 mode === 'pattern' ? 'PATTERN SUMMARY' :
+                                      'AI STATE SUMMARY'}
               </div>
 
               {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => {
@@ -764,12 +979,99 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 );
               })}
 
+              {/* v11.20: AI State summary. Empty-state copy when the
+                  user has never run a manual analysis; otherwise per-
+                  state code rows mirroring the pattern sidebar. */}
+              {mode === 'aistate' && aiHistory.length === 0 && (
+                <div style={{
+                  padding: '14px 12px',
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-1)',
+                  borderRadius: 4,
+                  fontSize: 10, color: '#7F98A3', lineHeight: 1.55,
+                }}>
+                  <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
+                    No AI State history yet.
+                  </div>
+                  Run AI Analysis from the Dashboard to start collecting outcomes.
+                </div>
+              )}
+
+              {mode === 'aistate' && aiHistory.length > 0 && Object.entries(AI_STATE_META).map(([code, meta]) => {
+                const s = aiStateStats[code];
+                if (!s || s.pts.length === 0) {
+                  return (
+                    <div key={code} style={{
+                      marginBottom: 8, paddingBottom: 8, opacity: 0.45,
+                      borderBottom: '1px solid var(--line-0)',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                        <span style={{ color: 'var(--fg-4)', fontSize: 9 }}>no data</span>
+                      </div>
+                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+                        {meta.label}
+                      </div>
+                    </div>
+                  );
+                }
+                const bullPct = s.pts.length ? (s.bull / s.pts.length * 100) : 0;
+                return (
+                  <div key={code} style={{
+                    marginBottom: 10, paddingBottom: 10,
+                    borderBottom: '1px solid var(--line-0)',
+                    opacity: s.insufficient ? 0.65 : 1,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                      <span style={{
+                        fontSize: 11, fontVariantNumeric: 'tabular-nums',
+                        color: s.insufficient
+                          ? 'var(--fg-3)'
+                          : s.avg > 0.05 ? '#22c55e' : s.avg < -0.05 ? '#ef4444' : 'var(--fg-3)',
+                      }}>
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                      {meta.label} · {s.pts.length} analyses
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap' }}>
+                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                      <span>{bullPct.toFixed(0)}% bullish</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', flexWrap: 'wrap' }}>
+                      <span>conf {(s.avgConf * 100).toFixed(0)}%</span>
+                      <span>· phase {s.topPhase}</span>
+                      <span>· dir {s.topDir}</span>
+                    </div>
+                    {s.insufficient ? (
+                      <div style={{
+                        marginTop: 4,
+                        fontSize: 8, color: '#d4a028',
+                        letterSpacing: '0.04em',
+                      }}>
+                        Insufficient data
+                      </div>
+                    ) : (
+                      <div style={{ height: 3, background: '#ef4444', borderRadius: 1, marginTop: 4, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', background: '#22c55e', width: `${bullPct}%`, borderRadius: 1 }} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
               <div style={{
                 fontSize: 8, color: 'var(--fg-4)',
                 lineHeight: 1.5, marginTop: 8,
               }}>
                 Avg line = mean price change.
-                Bull/bear bar = % of {mode === 'regime' ? 'bars' : 'occurrences'} with positive outcome.
+                Bull/bear bar = % of{' '}
+                {mode === 'regime'  ? 'bars' :
+                 mode === 'pattern' ? 'occurrences' :
+                                      'analyses'} with positive outcome.
               </div>
             </div>
           </div>
