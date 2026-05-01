@@ -14,7 +14,9 @@ import {
 import { useGcpState } from '@/lib/useGcpState';
 import { useStableAiState } from '@/lib/aiState';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
-import { buildTimeframeContext } from '@/lib/aiTimeframe';
+import { buildTimeframeContext, AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
+import { useRecentCandles } from '@/lib/useRecentCandles';
+import { readPriceStructure } from '@/lib/priceStructure';
 import { windowMetrics } from '@/lib/energy';
 import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
 import Chrome from './Chrome';
@@ -251,6 +253,13 @@ export default function GCPApp() {
   const aiState     = useGcpState(aiStateInputs);
   const stableState = useStableAiState(aiState.state);
 
+  // v11.22: Trade Plan candles. Structure is read on the AI's analysis
+  // timeframe (15 m) so the plan and the AI signal are scaled the same
+  // way. 50 candles ≈ 12 h of context — plenty to spot HH/HL or LH/LL
+  // swings without a heavy fetch.
+  const planCandles      = useRecentCandles(symbol, AI_ANALYSIS_TF, 50);
+  const planStructure    = useMemo(() => readPriceStructure(planCandles), [planCandles]);
+
   useEffect(() => {
     if (!live) return;
     const id = setInterval(() => {
@@ -355,6 +364,7 @@ export default function GCPApp() {
         aiIntervalSec={aiState.intervalSec}
         aiInflight={aiState.inflight}
         aiRunNow={aiState.runNow}
+        planStructure={planStructure}
       />
     );
   }
@@ -399,6 +409,7 @@ export default function GCPApp() {
               aiRunNow={aiState.runNow}
               aiInflight={aiState.inflight}
               aiLastSuccess={aiState.lastSuccessAt}
+              planStructure={planStructure}
             />
           )}
           {page === 'pattern' && (

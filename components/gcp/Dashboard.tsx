@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { StructureRead } from '@/lib/priceStructure';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
 import AiStateCard from './AiStateCard';
 
@@ -311,11 +312,12 @@ interface DashboardProps {
   aiRunNow:       () => void;
   aiInflight:     boolean;
   aiLastSuccess:  Date | null;
+  planStructure:  StructureRead;
 }
 
 export default function Dashboard({
-  gcpData, series, patterns, pssFlash = false,
-  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess,
+  gcpData, series, patterns, symbol, pssFlash = false,
+  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess, planStructure,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
 
@@ -367,6 +369,8 @@ export default function Dashboard({
             runNow={aiRunNow}
             inflight={aiInflight}
             lastSuccessAt={aiLastSuccess}
+            planStructure={planStructure}
+            symbol={symbol}
           />
           <div style={{
             background: 'var(--bg-1)', borderLeft: '1px solid var(--line-0)',
