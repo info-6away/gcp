@@ -11,8 +11,9 @@ import {
 } from '@/lib/aiState';
 import { derivePosture, actionToneColor } from '@/lib/aiAction';
 import { AI_ANALYSIS_TF, AI_FORWARD_HORIZON } from '@/lib/aiTimeframe';
-import { deriveTradePlan } from '@/lib/tradePlan';
+import { deriveTradePlan, formatPriceAnchor } from '@/lib/tradePlan';
 import type { StructureRead } from '@/lib/priceStructure';
+import type { Candle } from '@/lib/fetchCandles';
 import AiStateExplainer from '../../AiStateExplainer';
 
 const REGIME_NAMES: Record<string, string> = {
@@ -37,7 +38,7 @@ export function DashboardScreen({
   symbol, price, onSymbolPress,
   aiState, aiEnabled,
   aiRunNow, aiInflight = false, aiLastSuccess = null,
-  planStructure,
+  planStructure, planAnalysisCandle = null,
 }: {
   series: DataPoint[]; patterns: Pattern[];
   liveNV: number | null; liveRegime: string | null; connected: boolean;
@@ -48,6 +49,7 @@ export function DashboardScreen({
   aiInflight?:    boolean;
   aiLastSuccess?: Date | null;
   planStructure?: StructureRead;
+  planAnalysisCandle?: Candle | null;
 }) {
   const last15   = series.slice(-15);
   const sparkMax = Math.max(...last15.map(p => p.v), 50);
@@ -200,18 +202,27 @@ export function DashboardScreen({
                 Context: {AI_ANALYSIS_TF} environment · {AI_FORWARD_HORIZON} horizon
               </div>
 
-              {/* v11.18 + v11.22: posture block — MODE / ACTION /
-                  TRADE PLAN / TRIGGER / SIZE. Same deterministic
-                  mapping as desktop. */}
+              {/* v11.18 + v11.22 + v11.22.1: posture block — MODE /
+                  ACTION / ANALYSIS AT / TRADE PLAN / TRIGGER / SIZE.
+                  Mobile uses 50px label width to fit phone widths. */}
               {(() => {
                 const posture = derivePosture(aiState, activePat);
                 if (!posture) return null;
                 const actionAccent = actionToneColor(posture.action.tone);
                 const sizeAccent   = actionToneColor(posture.sizeTone);
                 const plan = planStructure
-                  ? deriveTradePlan(aiState, planStructure, activePat, symbol)
+                  ? deriveTradePlan({
+                      state:           aiState,
+                      structure:       planStructure,
+                      latestPattern:   activePat,
+                      symbol,
+                      analysisCandle:  planAnalysisCandle,
+                      analysisTf:      AI_ANALYSIS_TF,
+                      currentPrice:    price,
+                    })
                   : null;
                 const planAccent = plan ? actionToneColor(plan.tone) : actionAccent;
+                const anchor = plan ? formatPriceAnchor(plan, symbol) : null;
                 const Row = (label: string, value: string, accent: string, emphasised: boolean) => (
                   <div key={label} style={{
                     display: 'flex', alignItems: 'baseline', gap: 8,
@@ -239,6 +250,40 @@ export function DashboardScreen({
                   }}>
                     {Row('MODE',    posture.mode,        actionAccent, false)}
                     {Row('ACTION',  posture.action.text, actionAccent, true)}
+
+                    {anchor && anchor.anchorLabel && (
+                      <div style={{
+                        padding: '5px 8px',
+                        background: 'rgba(127, 152, 163, 0.08)',
+                        borderLeft: '2px solid rgba(127, 152, 163, 0.35)',
+                        borderRadius: 3,
+                        fontSize: 11,
+                        lineHeight: 1.35,
+                        display: 'flex', flexDirection: 'column', gap: 1,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          <span style={{
+                            fontSize: 8, letterSpacing: '0.18em',
+                            color: '#7F98A3', fontWeight: 600,
+                            flexShrink: 0, minWidth: 50,
+                          }}>AT</span>
+                          <span style={{ color: C.fg1, fontFamily: 'var(--font-mono)' }}>
+                            {anchor.anchorLabel}
+                          </span>
+                        </div>
+                        {anchor.currentLabel && (
+                          <div style={{
+                            fontSize: 9, marginLeft: 58, fontFamily: 'var(--font-mono)',
+                            color: plan && plan.distance != null
+                              ? plan.distance > 0 ? '#22c55e' : plan.distance < 0 ? '#ef4444' : '#7F98A3'
+                              : '#7F98A3',
+                          }}>
+                            {anchor.currentLabel}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {plan && (
                       <div style={{
                         padding: '5px 8px',
@@ -261,9 +306,12 @@ export function DashboardScreen({
                         </div>
                         {plan.entryType !== 'No entry' ? (
                           <>
-                            <div style={{ fontSize: 10, color: C.fg1, marginLeft: 58, lineHeight: 1.4 }}>
-                              <span style={{ color: '#7F98A3' }}>Trigger: </span>{plan.trigger}
-                            </div>
+                            {plan.triggers.map((line, i) => (
+                              <div key={i} style={{ fontSize: 10, color: C.fg1, marginLeft: 58, lineHeight: 1.4 }}>
+                                <span style={{ color: '#7F98A3' }}>{i === 0 ? 'Trigger: ' : ''}</span>
+                                {line}
+                              </div>
+                            ))}
                             <div style={{ fontSize: 10, color: C.fg1, marginLeft: 58, lineHeight: 1.4 }}>
                               <span style={{ color: '#7F98A3' }}>Invalidation: </span>{plan.invalidation}
                             </div>
@@ -275,6 +323,7 @@ export function DashboardScreen({
                         )}
                       </div>
                     )}
+
                     {Row('TRIGGER', posture.trigger,     actionAccent, false)}
                     {Row('SIZE',    posture.size,        sizeAccent,   false)}
                   </div>

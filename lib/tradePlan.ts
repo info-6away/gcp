@@ -1,20 +1,23 @@
 // v11.22: Trade Plan layer. Translates AI State + Price Structure into
-// a deterministic execution-readiness summary:
+// a deterministic execution-readiness summary.
 //
-//   Direction    Buy / Sell / Both / None
-//   Entry type   Pullback / Breakout / Fade / No entry
-//   Trigger      one-line condition the user is waiting for
-//   Invalidation one-line condition that kills the idea
-//   Size         Full / Half / Small / No trade
-//   Reason       (only when "No entry") why we're standing aside
+// v11.22.1: language pass + price anchor.
+//  - "fade" jargon replaced with explicit Buy/Sell at support /
+//    resistance.
+//  - Range mode now exposes BOTH a buy and a sell trigger so the user
+//    sees both extremes.
+//  - New fields: analysisPrice, analysisOHLC, analysisTf, currentPrice,
+//    so the Trade Plan card can show "Analysis at 4567.25 (15m)" and
+//    "Now: 4569.80 · +2.55 from analysis".
+//  - triggers is now a string[] (was a single string). Renderers treat
+//    each element as its own line.
 //
 // NOT a buy/sell signal. NOT AI. Frontend logic only — same inputs in,
-// same plan out. Builds on priceStructure (HH/HL detection from
-// candles), the AI state's stateCode + phase + direction, and the
-// existing posture sizing from aiAction.
+// same plan out.
 
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { Pattern, MarketSymbol } from '@/types/gcp';
+import type { Candle } from '@/lib/fetchCandles';
 import type { PriceStructure, StructureRead } from '@/lib/priceStructure';
 import { derivePosture, type SizeGuidance, type ActionTone } from '@/lib/aiAction';
 
@@ -24,15 +27,21 @@ export type TradeEntryType = 'Pullback' | 'Breakout' | 'Fade' | 'No entry';
 export interface TradePlan {
   direction:    TradeDirection;
   entryType:    TradeEntryType;
-  headline:     string;          // "Sell pullback", "Range scalp only", "No entry"
-  trigger:      string;          // human-readable wait condition
-  invalidation: string;          // human-readable kill condition
+  headline:     string;
+  triggers:     string[];        // 1+ trigger lines (range has 2)
+  invalidation: string;
   size:         SizeGuidance;
-  reason?:      string;          // only set when entryType === 'No entry'
-  tone:         ActionTone;      // colour mapping for the row
+  reason?:      string;
+  tone:         ActionTone;
+  // v11.22.1 price anchor:
+  analysisPrice?:   number | null;
+  analysisOHLC?:    { o: number; h: number; l: number; c: number } | null;
+  analysisTf?:      string;
+  currentPrice?:    number | null;
+  distance?:        number | null;     // currentPrice - analysisPrice
 }
 
-function priceLabel(symbol: MarketSymbol, n: number | null): string | null {
+function priceLabel(symbol: MarketSymbol, n: number | null | undefined): string | null {
   if (n == null || !isFinite(n) || n <= 0) return null;
   if (symbol === 'BTC')    return Math.round(n).toLocaleString();
   if (symbol === 'XAGUSD') return n.toFixed(3);
@@ -46,21 +55,47 @@ function directionFromStructure(s: PriceStructure): TradeDirection {
   return 'None';
 }
 
-export function deriveTradePlan(
-  state:         GcpStateResponse | null,
-  structure:     StructureRead,
-  latestPattern: Pattern | null,
-  symbol:        MarketSymbol,
-): TradePlan | null {
+export interface DerivePlanArgs {
+  state:           GcpStateResponse | null;
+  structure:       StructureRead;
+  latestPattern:   Pattern | null;
+  symbol:          MarketSymbol;
+  analysisCandle?: Candle | null;
+  analysisTf?:     string;
+  currentPrice?:   number | null;
+}
+
+export function deriveTradePlan(args: DerivePlanArgs): TradePlan | null {
+  const {
+    state, structure, latestPattern, symbol,
+    analysisCandle = null, analysisTf, currentPrice = null,
+  } = args;
   if (!state) return null;
 
   const posture = derivePosture(state, latestPattern);
   const size    = posture?.size ?? 'Small';
   const tone    = posture?.action.tone ?? 'wait';
 
-  const dir = directionFromStructure(structure.structure);
   const swingHigh = priceLabel(symbol, structure.recentSwingHigh);
   const swingLow  = priceLabel(symbol, structure.recentSwingLow);
+  const rangeHi   = priceLabel(symbol, structure.rangeHigh);
+  const rangeLo   = priceLabel(symbol, structure.rangeLow);
+
+  // Price anchor metadata that every plan carries regardless of branch.
+  const analysisPrice = analysisCandle?.c ?? null;
+  const analysisOHLC  = analysisCandle
+    ? { o: analysisCandle.o, h: analysisCandle.h, l: analysisCandle.l, c: analysisCandle.c }
+    : null;
+  const distance = (currentPrice != null && analysisPrice != null)
+    ? +(currentPrice - analysisPrice).toFixed(symbol === 'BTC' ? 0 : symbol === 'XAGUSD' ? 3 : 2)
+    : null;
+  const anchor = {
+    analysisPrice,
+    analysisOHLC,
+    analysisTf,
+    currentPrice,
+    distance,
+  };
 
   const code  = state.stateCode;
   const phase = state.phase;
@@ -84,84 +119,103 @@ export function deriveTradePlan(
       direction:    'None',
       entryType:    'No entry',
       headline:     'No entry',
-      trigger:      '—',
+      triggers:     [],
       invalidation: '—',
       size:         'No trade',
       reason,
       tone:         'avoid',
+      ...anchor,
     };
   }
 
-  // Range market — fade extremes with small size regardless of state.
+  // Range market — explicit buy + sell triggers at support / resistance.
   if (structure.structure === 'Range') {
     return {
       direction:    'Both',
       entryType:    'Fade',
       headline:     'Range scalp only',
-      trigger:      swingHigh && swingLow
-                      ? `fade rejection near ${swingHigh} / ${swingLow}`
-                      : 'fade range extremes only',
-      invalidation: swingHigh && swingLow
-                      ? `clean breakout above ${swingHigh} or below ${swingLow}`
-                      : 'clean breakout from the range',
+      triggers: [
+        rangeHi ? `Sell rejection near ${rangeHi} resistance` : 'Sell rejection near recent resistance',
+        rangeLo ? `Buy rejection near ${rangeLo} support`     : 'Buy rejection near recent support',
+      ],
+      invalidation: 'Clean breakout outside range',
       size:         'Small',
       tone:         'wait',
+      ...anchor,
     };
   }
 
-  // Unclear structure — wait for direction even if AI state suggests
-  // a posture; we don't want to commit a trade direction without
-  // visible structure on the chart.
+  // Unclear structure — wait for direction.
   if (structure.structure === 'Unclear') {
     return {
       direction:    'None',
       entryType:    'No entry',
       headline:     'No entry',
-      trigger:      'wait for clear higher highs/lows or lower highs/lows',
+      triggers:     ['Wait for clear higher highs/lows or lower highs/lows'],
       invalidation: '—',
       size:         'No trade',
       reason:       'Unclear structure — wait for direction',
       tone:         'wait',
+      ...anchor,
     };
   }
 
-  // Bullish or Bearish — derive entry type from AI state code.
   const isBullish = structure.structure === 'Bullish';
-  const verb = isBullish ? 'Buy' : 'Sell';
 
-  // Compression in a directional structure: breakout in the structure
-  // direction is the high-confidence trade; pullback is the secondary.
+  // Compression in a directional structure: breakout watch with
+  // explicit buy AND sell conditions tied to range bounds.
   if (code === 'CS') {
     return {
       direction:    isBullish ? 'Buy' : 'Sell',
       entryType:    'Breakout',
-      headline:     `${verb} breakout`,
-      trigger:      isBullish
-        ? (swingHigh ? `clean break above ${swingHigh}` : 'clean break above recent swing high')
-        : (swingLow  ? `clean break below ${swingLow}`  : 'clean break below recent swing low'),
-      invalidation: isBullish
-        ? (swingLow  ? `loss of ${swingLow}` : 'loss of recent swing low')
-        : (swingHigh ? `reclaim of ${swingHigh}` : 'reclaim of recent swing high'),
+      headline:     'Breakout watch',
+      triggers: [
+        rangeHi ? `Buy only after clean break above ${rangeHi}`  : 'Buy only after clean break above recent swing high',
+        rangeLo ? `Sell only after clean break below ${rangeLo}` : 'Sell only after clean break below recent swing low',
+      ],
+      invalidation: 'Failed breakout back inside range',
       size,
       tone,
+      ...anchor,
     };
   }
 
-  // Ignition early/mid in a directional structure: pullback continuation.
-  // Late / exhausted: still pullback but smaller, posture sizing handles it.
+  // Ignition / Alignment / Sync in a directional structure: pullback
+  // continuation, single trigger + single invalidation per spec.
   if (code === 'IS' || code === 'AT' || code === 'SS') {
+    if (isBullish) {
+      return {
+        direction:    'Buy',
+        entryType:    'Pullback',
+        headline:     'Buy pullback',
+        triggers: [
+          swingLow
+            ? `Rejection above recent higher low ${swingLow}`
+            : 'Rejection above recent higher low',
+        ],
+        invalidation: swingLow
+          ? `Break below recent swing low ${swingLow}`
+          : 'Break below recent swing low',
+        size,
+        tone,
+        ...anchor,
+      };
+    }
     return {
-      direction:    isBullish ? 'Buy' : 'Sell',
+      direction:    'Sell',
       entryType:    'Pullback',
-      headline:     `${verb} pullback`,
-      trigger:      isBullish
-        ? (swingLow  ? `bounce / higher low above ${swingLow}` : 'bounce off recent higher low')
-        : (swingHigh ? `rejection below ${swingHigh}`          : 'rejection below recent lower high'),
-      invalidation: isBullish
-        ? (swingLow  ? `close below ${swingLow}` : 'close below recent swing low')
-        : (swingHigh ? `close above ${swingHigh}` : 'close above recent swing high'),
+      headline:     'Sell pullback',
+      triggers: [
+        swingHigh
+          ? `Rejection below recent lower high ${swingHigh}`
+          : 'Rejection below recent lower high',
+      ],
+      invalidation: swingHigh
+        ? `Reclaim above recent swing high ${swingHigh}`
+        : 'Reclaim above recent swing high',
       size,
       tone,
+      ...anchor,
     };
   }
 
@@ -171,10 +225,45 @@ export function deriveTradePlan(
     direction:    'None',
     entryType:    'No entry',
     headline:     'No entry',
-    trigger:      'wait for confirmation',
+    triggers:     ['Wait for confirmation'],
     invalidation: '—',
     size:         'No trade',
     reason:       'Insufficient confirmation',
     tone:         'wait',
+    ...anchor,
   };
+}
+
+// v11.22.1 helper used by the Trade Plan card to render the anchor row.
+export function formatPriceAnchor(plan: TradePlan, symbol: MarketSymbol): {
+  anchorLabel:  string | null;
+  ohlcLabel:    string | null;
+  currentLabel: string | null;
+} {
+  const ap = priceLabel(symbol, plan.analysisPrice ?? null);
+  const cp = priceLabel(symbol, plan.currentPrice  ?? null);
+  const tf = plan.analysisTf ?? '';
+  const anchorLabel = ap
+    ? (tf ? `${ap} (${tf})` : ap)
+    : null;
+  let ohlcLabel: string | null = null;
+  if (plan.analysisOHLC) {
+    const { o, h, l, c } = plan.analysisOHLC;
+    const oL = priceLabel(symbol, o);
+    const hL = priceLabel(symbol, h);
+    const lL = priceLabel(symbol, l);
+    const cL = priceLabel(symbol, c);
+    if (oL && hL && lL && cL) ohlcLabel = `O ${oL} · H ${hL} · L ${lL} · C ${cL}`;
+  }
+  let currentLabel: string | null = null;
+  if (cp != null && plan.distance != null) {
+    const sign = plan.distance >= 0 ? '+' : '−';
+    const abs  = priceLabel(symbol, Math.abs(plan.distance));
+    currentLabel = abs
+      ? `Now: ${cp} · ${sign}${abs} from analysis`
+      : `Now: ${cp}`;
+  } else if (cp) {
+    currentLabel = `Now: ${cp}`;
+  }
+  return { anchorLabel, ohlcLabel, currentLabel };
 }

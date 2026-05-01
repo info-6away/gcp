@@ -18,11 +18,12 @@ import { memo, useEffect, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { Pattern, MarketSymbol } from '@/types/gcp';
 import type { StructureRead } from '@/lib/priceStructure';
+import type { Candle } from '@/lib/fetchCandles';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
 import { derivePosture, actionToneColor } from '@/lib/aiAction';
-import { deriveTradePlan } from '@/lib/tradePlan';
+import { deriveTradePlan, formatPriceAnchor } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF, AI_FORWARD_HORIZON } from '@/lib/aiTimeframe';
 import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
@@ -41,8 +42,13 @@ interface Props {
   lastSuccessAt?: Date | null;
   // v11.22: Trade Plan layer needs price-structure context (HH/HL or
   // LH/LL) and the symbol for level formatting.
-  planStructure?: StructureRead;
-  symbol?:        MarketSymbol;
+  planStructure?:      StructureRead;
+  symbol?:             MarketSymbol;
+  // v11.22.1: anchor the plan to the latest 15m candle's OHLC and the
+  // current live price so the user sees the price the plan was based
+  // on AND how far price has moved since.
+  planAnalysisCandle?: Candle | null;
+  currentPrice?:       number | null;
 }
 
 // v11.18: thin row used for MODE / ACTION / TRIGGER / SIZE in the
@@ -110,6 +116,7 @@ function Card({
   state, enabled, flash = false, latestPattern = null,
   runNow, inflight = false, lastSuccessAt = null,
   planStructure, symbol = 'XAUUSD',
+  planAnalysisCandle = null, currentPrice = null,
 }: Props) {
   const [showExplainer, setShowExplainer] = useState(false);
   // v11.18.3: tick every 5 s so the "Last AI analysis: Xs ago" stamp
@@ -324,21 +331,27 @@ function Card({
         Context: {AI_ANALYSIS_TF} environment · {AI_FORWARD_HORIZON} horizon
       </div>
 
-      {/* v11.18: posture block — MODE / ACTION / TRIGGER / SIZE.
-          Deterministic mapping in lib/aiAction.ts.
-          v11.22: TRADE PLAN row sits between ACTION and TRIGGER and
-          surfaces direction + entry type + invalidation derived from
-          AI state + price structure. NOT a buy/sell signal — concrete
-          execution guidance. */}
+      {/* v11.18 + v11.22 + v11.22.1: posture block — MODE / ACTION /
+          ANALYSIS AT / TRADE PLAN / TRIGGER / SIZE. Deterministic
+          mapping in lib/aiAction.ts + lib/tradePlan.ts. */}
       {(() => {
         const posture = derivePosture(state, latestPattern);
         if (!posture) return null;
         const actionAccent = actionToneColor(posture.action.tone);
         const sizeAccent   = actionToneColor(posture.sizeTone);
         const plan = planStructure
-          ? deriveTradePlan(state, planStructure, latestPattern, symbol)
+          ? deriveTradePlan({
+              state,
+              structure:       planStructure,
+              latestPattern,
+              symbol,
+              analysisCandle:  planAnalysisCandle,
+              analysisTf:      AI_ANALYSIS_TF,
+              currentPrice,
+            })
           : null;
         const planAccent = plan ? actionToneColor(plan.tone) : actionAccent;
+        const anchor = plan ? formatPriceAnchor(plan, symbol) : null;
         return (
           <div style={{
             marginTop: 8,
@@ -346,6 +359,47 @@ function Card({
           }}>
             <PostureRow label="MODE"    value={posture.mode}        accent={actionAccent} />
             <PostureRow label="ACTION"  value={posture.action.text} accent={actionAccent} emphasised />
+
+            {/* v11.22.1: ANALYSIS AT — anchors the plan to a specific
+                price + bar so the user knows the context. */}
+            {anchor && anchor.anchorLabel && (
+              <div style={{
+                padding: '5px 10px',
+                background: 'rgba(127, 152, 163, 0.06)',
+                borderLeft: '2px solid rgba(127, 152, 163, 0.35)',
+                borderRadius: 3,
+                fontSize: 10,
+                lineHeight: 1.45,
+                display: 'flex', flexDirection: 'column', gap: 1,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                  <span style={{
+                    fontSize: 8, letterSpacing: '0.18em',
+                    color: '#7F98A3', fontWeight: 600,
+                    flexShrink: 0, minWidth: 56,
+                  }}>ANALYSIS AT</span>
+                  <span style={{ color: 'var(--fg-1)', fontFamily: 'var(--font-mono)' }}>
+                    {anchor.anchorLabel}
+                  </span>
+                </div>
+                {anchor.ohlcLabel && (
+                  <div style={{ fontSize: 9, color: '#7F98A3', marginLeft: 66, fontFamily: 'var(--font-mono)' }}>
+                    {anchor.ohlcLabel}
+                  </div>
+                )}
+                {anchor.currentLabel && (
+                  <div style={{
+                    fontSize: 9, marginLeft: 66, fontFamily: 'var(--font-mono)',
+                    color: plan && plan.distance != null
+                      ? plan.distance > 0 ? 'var(--green)' : plan.distance < 0 ? 'var(--red)' : '#7F98A3'
+                      : '#7F98A3',
+                  }}>
+                    {anchor.currentLabel}
+                  </div>
+                )}
+              </div>
+            )}
+
             {plan && (
               <div style={{
                 padding: '6px 10px',
@@ -368,9 +422,12 @@ function Card({
                 </div>
                 {plan.entryType !== 'No entry' ? (
                   <>
-                    <div style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
-                      <span style={{ color: '#7F98A3' }}>Trigger: </span>{plan.trigger}
-                    </div>
+                    {plan.triggers.map((line, i) => (
+                      <div key={i} style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
+                        <span style={{ color: '#7F98A3' }}>{i === 0 ? 'Trigger: ' : ''}</span>
+                        {line}
+                      </div>
+                    ))}
                     <div style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
                       <span style={{ color: '#7F98A3' }}>Invalidation: </span>{plan.invalidation}
                     </div>
@@ -382,6 +439,7 @@ function Card({
                 )}
               </div>
             )}
+
             <PostureRow label="TRIGGER" value={posture.trigger}     accent={actionAccent} />
             <PostureRow label="SIZE"    value={posture.size}        accent={sizeAccent} />
           </div>

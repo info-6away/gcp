@@ -5,6 +5,7 @@ import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { StructureRead } from '@/lib/priceStructure';
+import type { Candle } from '@/lib/fetchCandles';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
 import AiStateCard from './AiStateCard';
 
@@ -313,11 +314,13 @@ interface DashboardProps {
   aiInflight:     boolean;
   aiLastSuccess:  Date | null;
   planStructure:  StructureRead;
+  planAnalysisCandle: Candle | null;
 }
 
 export default function Dashboard({
-  gcpData, series, patterns, symbol, pssFlash = false,
-  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess, planStructure,
+  gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
+  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess,
+  planStructure, planAnalysisCandle,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
 
@@ -370,6 +373,8 @@ export default function Dashboard({
             inflight={aiInflight}
             lastSuccessAt={aiLastSuccess}
             planStructure={planStructure}
+            planAnalysisCandle={planAnalysisCandle}
+            currentPrice={symbolPrice}
             symbol={symbol}
           />
           <div style={{

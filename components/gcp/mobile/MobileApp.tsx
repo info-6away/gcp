@@ -13,6 +13,7 @@ import type { GoldState } from '@/lib/useGoldData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiAnalysisInterval } from '@/lib/aiAnalysisInterval';
 import type { StructureRead } from '@/lib/priceStructure';
+import type { Candle } from '@/lib/fetchCandles';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 const DEFAULT_PREFS: Record<string, boolean> = {
@@ -49,12 +50,13 @@ interface MobileAppProps {
   aiInflight:      boolean;
   aiRunNow:        () => void;
   planStructure:   StructureRead;
+  planAnalysisCandle: Candle | null;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
-  aiIntervalSec, aiInflight, aiRunNow, planStructure,
+  aiIntervalSec, aiInflight, aiRunNow, planStructure, planAnalysisCandle,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -92,6 +94,7 @@ export default function MobileApp({
           aiInflight={aiInflight}
           aiLastSuccess={aiLastSuccess}
           planStructure={planStructure}
+          planAnalysisCandle={planAnalysisCandle}
         />
       );
       case 'chart': return (

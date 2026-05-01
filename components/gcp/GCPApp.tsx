@@ -257,8 +257,11 @@ export default function GCPApp() {
   // timeframe (15 m) so the plan and the AI signal are scaled the same
   // way. 50 candles ≈ 12 h of context — plenty to spot HH/HL or LH/LL
   // swings without a heavy fetch.
-  const planCandles      = useRecentCandles(symbol, AI_ANALYSIS_TF, 50);
-  const planStructure    = useMemo(() => readPriceStructure(planCandles), [planCandles]);
+  const planCandles       = useRecentCandles(symbol, AI_ANALYSIS_TF, 50);
+  const planStructure     = useMemo(() => readPriceStructure(planCandles), [planCandles]);
+  // v11.22.1: anchor the trade plan to the most recent candle's OHLC
+  // and surface the current live price for distance-from-analysis.
+  const planAnalysisCandle = planCandles.length ? planCandles[planCandles.length - 1] : null;
 
   useEffect(() => {
     if (!live) return;
@@ -365,6 +368,7 @@ export default function GCPApp() {
         aiInflight={aiState.inflight}
         aiRunNow={aiState.runNow}
         planStructure={planStructure}
+        planAnalysisCandle={planAnalysisCandle}
       />
     );
   }
@@ -410,6 +414,7 @@ export default function GCPApp() {
               aiInflight={aiState.inflight}
               aiLastSuccess={aiState.lastSuccessAt}
               planStructure={planStructure}
+              planAnalysisCandle={planAnalysisCandle}
             />
           )}
           {page === 'pattern' && (
