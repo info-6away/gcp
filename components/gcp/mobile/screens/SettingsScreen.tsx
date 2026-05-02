@@ -11,6 +11,7 @@ import {
   AI_INTERVAL_OPTIONS, formatAiInterval, saveAiAnalysisInterval,
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
+import { formatDurationSec, type GcpQuality } from '@/lib/alignGcp';
 
 type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
 
@@ -59,7 +60,7 @@ export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
   aiIntervalSec, aiInflight, aiRunNow,
-  gcpLastUpdate, gcpNextPollAt,
+  gcpLastUpdate, gcpNextPollAt, gcpQuality,
 }: {
   liveNV: number | null; liveRegime: string | null; connected: boolean;
   settings: Record<string, boolean>; updateSetting: (k: string, v: boolean) => void;
@@ -74,6 +75,7 @@ export function SettingsScreen({
   aiRunNow:      () => void;
   gcpLastUpdate: Date | null;
   gcpNextPollAt: Date | null;
+  gcpQuality:    GcpQuality;
 }) {
   // v11.19: AI section is now a control panel — Status / Mode / Run /
   // Last run only. Removed: interval picker buttons, Current interval,
@@ -147,20 +149,43 @@ export function SettingsScreen({
     );
   }
 
+  // v11.23.1: Coherence status sub-line includes feed quality so the
+  // user sees stale / gap conditions inline instead of having to dig.
+  const qualityStatusSub = (() => {
+    const q = gcpQuality;
+    const ageStr = q.lastUpdateAgeSec >= 0 ? formatDurationSec(q.lastUpdateAgeSec) : '—';
+    const status = q.stale ? `Stale · last update ${ageStr} ago` : `Live · last update ${ageStr} ago`;
+    const gapStr = q.gapCount === 0
+      ? '0 gaps'
+      : `${q.gapCount} gap${q.gapCount === 1 ? '' : 's'} · largest ${formatDurationSec(q.largestGapSec)}`;
+    return `${status} · ${gapStr}`;
+  })();
+
   const cohRows: { label: string; val: ReactNode; valColor: string; sub?: string }[] = [
     {
       label: 'Status',
-      val: valueWithHeartbeat(phaseToHeartbeat(gcpPhase), gcpStatusLabel, gcpStatusColor),
+      val: valueWithHeartbeat(
+        gcpQuality.stale ? 'stale' : phaseToHeartbeat(gcpPhase),
+        gcpStatusLabel,
+        gcpStatusColor,
+      ),
       valColor: gcpStatusColor,
       sub: gcpPhase === 'initial'      ? 'gcp2.net · 120s poll · fetching first sample'
          : gcpPhase === 'reconnecting' ? 'gcp2.net · 120s poll · last fetch failed, will retry'
-         : 'gcp2.net · 120s poll · browser direct',
+         : `gcp2.net · 120s poll · ${qualityStatusSub}`,
     },
     { label: 'Last update',
       val:  gcpPhase === 'initial' ? '—' : formatRelative(gcpLastUpdate),
       valColor: C.fg2 },
     { label: 'Next update in', val: `${gcpNextSecs}s`, valColor: C.fg1 },
   ];
+  if (gcpQuality.gapCount > 0) {
+    cohRows.push({
+      label: 'Gaps in window',
+      val: `${gcpQuality.gapCount} · largest ${formatDurationSec(gcpQuality.largestGapSec)}`,
+      valColor: C.amber,
+    });
+  }
   if (liveNV != null) {
     cohRows.push({ label: 'Net Variance', val: `${liveNV.toFixed(1)} NV`, valColor: C.fg1 });
   }

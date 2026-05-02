@@ -16,6 +16,7 @@ import {
   AI_INTERVAL_OPTIONS, formatAiInterval, saveAiAnalysisInterval,
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
+import { formatDurationSec, type GcpQuality } from '@/lib/alignGcp';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
@@ -38,6 +39,7 @@ interface SettingsPanelProps {
   aiIntervalSec:    AiAnalysisInterval;
   aiInflight:       boolean;
   aiRunNow:         () => void;
+  gcpQuality:       GcpQuality;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
 
@@ -226,11 +228,24 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             sub={
               gcpPhase === 'initial'      ? 'gcp2.net — 120s poll — fetching first sample…'
               : gcpPhase === 'reconnecting' ? 'gcp2.net — 120s poll — last fetch failed, will retry'
-              : 'gcp2.net — 120s poll — browser direct'
+              : (() => {
+                  // v11.23.1 quality diagnostic appended to the live row
+                  const q = props.gcpQuality;
+                  const ageStr = q.lastUpdateAgeSec >= 0 ? formatDurationSec(q.lastUpdateAgeSec) : '—';
+                  const status = q.stale ? `Stale · last update ${ageStr} ago` : `Live · last update ${ageStr} ago`;
+                  const gapStr = q.gapCount === 0
+                    ? '0 gaps'
+                    : `${q.gapCount} gap${q.gapCount === 1 ? '' : 's'} · largest ${formatDurationSec(q.largestGapSec)}`;
+                  return `gcp2.net · ${status} · ${gapStr}`;
+                })()
             }
             value={
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <Heartbeat mode={phaseToHeartbeat(gcpPhase)} />
+                <Heartbeat mode={
+                  gcpPhase === 'reconnecting' ? 'stale'
+                  : props.gcpQuality.stale     ? 'stale'
+                  : phaseToHeartbeat(gcpPhase)
+                } />
                 {gcpPhase === 'connected'      ? `${props.gcpNetvar?.toFixed(1)} NV` :
                  gcpPhase === 'reconnecting'   ? 'Reconnecting…' :
                                                  'Loading data…'}

@@ -471,6 +471,15 @@ export default function ChartView({
     }
 
     line.setData(filled.map(p => ({ time: p.time as Time, value: p.value })));
+
+    // v11.23.1: dev-only alignment trace. The chart pane works in
+    // timestamp space (Unix seconds) so the GCP line and candle pane
+    // align by time, not by index. Surface the counts so future
+    // regressions are easy to spot.
+    if (process.env.NODE_ENV !== 'production') {
+      const interp = filled.length - base.length;
+      console.log(`[ALIGN] gcp pts: ${base.length} · interpolated: ${interp} · filled: ${filled.length}`);
+    }
   }, [chartGCPSeries]);
 
   // ── Apply candles to the single series ─────────────────────────────────────
@@ -802,12 +811,26 @@ export default function ChartView({
       'Shock Jump':               C.red,
     };
 
-    const gcpMarkers: SeriesMarker<Time>[] = chartPatterns
+    // v11.23.1: marker placement is timestamp-based — find the GCP
+    // point closest in time to pattern.tStart. Reject markers whose
+    // closest point is more than MARKER_MAX_OFFSET_MS away; those are
+    // patterns whose timestamp falls outside the visible GCP range
+    // (would otherwise clamp to the nearest edge and lie about
+    // position).
+    const MARKER_MAX_OFFSET_MS = 60 * 60_000;   // 60 min
+    const skippedForLog: { code?: string; kind: string; tStart: number }[] = [];
+
+    const gcpMarkers: SeriesMarker<Time>[] = (chartPatterns
       .filter(p => p.tStart > 0)
       .map(p => {
         const closest = chartGCPSeries.reduce((best, pt) =>
           Math.abs(pt.t - p.tStart) < Math.abs(best.t - p.tStart) ? pt : best
         );
+        // Out-of-range guard. Closest point too far away → skip.
+        if (Math.abs(closest.t - p.tStart) > MARKER_MAX_OFFSET_MS) {
+          skippedForLog.push({ code: p.patternCode, kind: p.kind, tStart: p.tStart });
+          return null;
+        }
         const isSelected = selectedPattern?.id === p.id;
         return {
           time:     toTime(closest.t),
@@ -820,8 +843,15 @@ export default function ChartView({
           text:     p.patternCode ?? p.kind.split(' ').map(w => w[0]).join(''),
           size:     isSelected ? 2 : 1,
         };
-      })
+      }) as (SeriesMarker<Time> | null)[])
+      .filter((m): m is SeriesMarker<Time> => m !== null)
       .sort((a, b) => (a.time as number) - (b.time as number));
+
+    if (process.env.NODE_ENV !== 'production' && skippedForLog.length) {
+      for (const s of skippedForLog) {
+        console.log(`[ALIGN] skipped marker outside range: ${s.code ?? s.kind} ${new Date(s.tStart).toISOString()}`);
+      }
+    }
 
     if (markersRef.current) markersRef.current.setMarkers(gcpMarkers);
     else                    markersRef.current = createSeriesMarkers<Time>(gcpLine, gcpMarkers);

@@ -14,6 +14,7 @@ import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiAnalysisInterval } from '@/lib/aiAnalysisInterval';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
+import type { GcpQuality } from '@/lib/alignGcp';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 const DEFAULT_PREFS: Record<string, boolean> = {
@@ -51,12 +52,14 @@ interface MobileAppProps {
   aiRunNow:        () => void;
   planStructure:   StructureRead;
   planAnalysisCandle: Candle | null;
+  gcpQuality:      GcpQuality;
 }
 
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
   aiIntervalSec, aiInflight, aiRunNow, planStructure, planAnalysisCandle,
+  gcpQuality,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
   const [settings, setSettings] = useState<Record<string, boolean>>(DEFAULT_PREFS);
@@ -125,6 +128,7 @@ export default function MobileApp({
           aiRunNow={aiRunNow}
           gcpLastUpdate={gcpData.lastUpdate}
           gcpNextPollAt={gcpData.nextPollAt}
+          gcpQuality={gcpQuality}
         />
       );
     }

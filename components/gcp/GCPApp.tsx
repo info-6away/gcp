@@ -17,6 +17,7 @@ import type { GcpStateInputs } from '@/lib/gcp-state-payload';
 import { buildTimeframeContext, AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { useRecentCandles } from '@/lib/useRecentCandles';
 import { readPriceStructure } from '@/lib/priceStructure';
+import { computeGcpQuality, type GcpQuality } from '@/lib/alignGcp';
 import { windowMetrics } from '@/lib/energy';
 import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
 import Chrome from './Chrome';
@@ -156,6 +157,23 @@ export default function GCPApp() {
     alertRecentWindowMs,
   );
 
+  // v11.23.1: GCP feed quality — recomputed on a slow 30 s cadence so
+  // the age / gap counts in Settings stay fresh without a re-render
+  // every minute when baseSeries changes. Used by both Settings
+  // diagnostics and the AI payload's gcpQuality field.
+  const [qualityNonce, setQualityNonce] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setQualityNonce(n => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const gcpQuality: GcpQuality = useMemo(
+    () => computeGcpQuality(baseSeries),
+    // qualityNonce in deps so the memo refreshes time-dependent values
+    // (lastUpdateAgeSec) even when baseSeries hasn't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [baseSeries, qualityNonce],
+  );
+
   // v11.14: Engine AI state classification. Inputs assembled from the
   // existing live data; useGcpState polls /api/gcp-state on a 25 s
   // cadence with overlapping-request prevention. Result held but NOT
@@ -233,6 +251,9 @@ export default function GCPApp() {
       // the chart vs what the AI is analysing. Locked to 15m / 1h
       // for now per spec; switcher comes later.
       timeframeContext: buildTimeframeContext(timeframe),
+      // v11.23.1: GCP feed quality — stale / age / gap stats. Engine
+      // can use this to lower confidence; UI surfaces it in Settings.
+      gcpQuality,
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
@@ -242,6 +263,7 @@ export default function GCPApp() {
     goldData.changePct,
     goldData.price,
     displayPatterns.length,
+    gcpQuality,
   ]);
 
   // v11.14b: connection meta is surfaced into Settings so the user can
@@ -369,6 +391,7 @@ export default function GCPApp() {
         aiRunNow={aiState.runNow}
         planStructure={planStructure}
         planAnalysisCandle={planAnalysisCandle}
+        gcpQuality={gcpQuality}
       />
     );
   }
@@ -473,6 +496,7 @@ export default function GCPApp() {
               aiIntervalSec={aiState.intervalSec}
               aiInflight={aiState.inflight}
               aiRunNow={aiState.runNow}
+              gcpQuality={gcpQuality}
               onTestAlert={testAlert}
             />
           )}

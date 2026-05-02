@@ -72,6 +72,16 @@ export interface GcpStateInputs {
     analysisTf:     string;
     forwardHorizon: string;
   };
+
+  // v11.23.1: GCP feed quality summary — stale flag, age, gap count,
+  // largest gap. Lets the Engine lower confidence on bad feed data
+  // and lets the UI surface a stale/gap warning. Optional; tiny size.
+  gcpQuality?: {
+    stale:            boolean;
+    lastUpdateAgeSec: number;
+    gapCount:         number;
+    largestGapSec:    number;
+  };
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -150,5 +160,9 @@ export function buildGcpStatePayload(
     // v11.21: pass the timeframe context through unchanged. Tiny
     // 3-string struct — no measurable token impact.
     timeframeContext: inputs.timeframeContext,
+    // v11.23.1: forward the GCP quality summary if the caller
+    // attached it. Engine may use it to lower confidence on stale
+    // / gappy data; no Engine code change required.
+    gcpQuality: inputs.gcpQuality,
   };
 }

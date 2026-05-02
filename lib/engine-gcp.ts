@@ -59,6 +59,16 @@ export type GcpStatePayload = {
     analysisTf:     string;
     forwardHorizon: string;
   };
+
+  // v11.23.1: optional GCP feed-quality flag. The Engine can use it
+  // to lower confidence when the feed has gaps or staleness; if
+  // ignored, no behavioural change. Tiny token impact.
+  gcpQuality?: {
+    stale:            boolean;
+    lastUpdateAgeSec: number;
+    gapCount:         number;
+    largestGapSec:    number;
+  };
 };
 
 export type GcpStateResponse = {
