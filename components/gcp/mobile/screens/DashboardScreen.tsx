@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { C, regimeColor } from '../colors';
 import { MobileStatus, SymbolBar } from '../MobileChrome';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import { symbolEnvLabel } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import { useNewsData } from '@/lib/useNewsData';
@@ -68,7 +69,7 @@ export function DashboardScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} symbol={symbol} />
       <SymbolBar symbol={symbol} price={price} onSymbolPress={onSymbolPress} />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 16px' }}>
@@ -385,7 +386,7 @@ export function DashboardScreen({
             fontSize: 8, color: C.fg4, letterSpacing: '0.06em',
             padding: '0 2px', marginBottom: 8,
           }}>
-            <span><span style={{ color: C.fg3 }}>AI State</span> = Environment (GCP + Gold)</span>
+            <span><span style={{ color: C.fg3 }}>AI State</span> = Environment (GCP + {symbolEnvLabel(symbol)})</span>
             <span><span style={{ color: C.fg3 }}>Pattern</span> = Event (GCP only)</span>
           </div>
         )}
@@ -521,6 +522,7 @@ export function DashboardScreen({
         open={showExplainer}
         state={aiState}
         onClose={() => setShowExplainer(false)}
+        symbol={symbol}
       />
     </div>
   );

@@ -78,6 +78,20 @@ export function getSymbolMeta(id: MarketSymbol): SymbolMeta {
   return SYMBOLS.find(s => s.id === id) ?? SYMBOLS[0];
 }
 
+// v11.23.3: short uppercase label used in AI-context titles. The full
+// `label` (e.g. "Gold Spot") is too long; the AI card / settings need
+// a one-word environment tag. BTC stays "BTC" because the symbol IS
+// the brand; gold/silver collapse to their commodity name.
+const SYMBOL_ENV_LABEL: Record<MarketSymbol, string> = {
+  XAUUSD: 'GOLD',
+  BTC:    'BTC',
+  XAGUSD: 'SILVER',
+};
+
+export function symbolEnvLabel(id: MarketSymbol): string {
+  return SYMBOL_ENV_LABEL[id] ?? id;
+}
+
 export function formatPrice(price: number, symbol: MarketSymbol): string {
   const meta = getSymbolMeta(symbol);
   return meta.prefix + price.toLocaleString('en-US', {

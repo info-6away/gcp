@@ -216,7 +216,7 @@ function Header({
           </div>
         )}
 
-        <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} />
+        <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} symbol={symbol} />
 
         {showTF && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

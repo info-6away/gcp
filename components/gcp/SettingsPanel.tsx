@@ -9,6 +9,7 @@ import {
   type Sensitivity,
 } from '@/lib/sensitivity';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
+import { symbolEnvLabel } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import { useCountdown } from '@/lib/useCountdown';
@@ -294,7 +295,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             gone from the primary view; the user sees Status, Mode,
             Cost, Run, and Last run only. Power users can still pick
             an auto interval under Advanced. */}
-        <Section title="AI Engine · GCP + Gold Environment">
+        <Section title={`AI Engine · GCP + ${symbolEnvLabel(props.symbol)} Environment`}>
           {(() => {
             const isManual  = props.aiIntervalSec === 'manual';
             const connected = props.aiLastSuccess != null

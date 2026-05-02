@@ -18,6 +18,7 @@ import { memo, useEffect, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import type { Pattern, MarketSymbol } from '@/types/gcp';
+import { symbolEnvLabel } from '@/types/gcp';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
 import {
@@ -126,6 +127,9 @@ function Card({
   // "Analyzing…" / "RUNNING…" copy. Everything else is "not analyzing".
   const isRunning = aiStatus === 'running';
   const isError   = aiStatus === 'error';
+  // v11.23.3: title reflects the active symbol so BTC analyses don't
+  // read as "GOLD ENVIRONMENT" while the user is on the BTC chart.
+  const envLabel  = symbolEnvLabel(symbol);
   const [showExplainer, setShowExplainer] = useState(false);
   // v11.18.3: tick every 5 s so the "Last AI analysis: Xs ago" stamp
   // grows visibly without depending on parent re-renders. With the
@@ -168,7 +172,7 @@ function Card({
         ...flashStyle,
       }}>
         <div style={{ fontSize: 9, letterSpacing: '0.14em', color: 'var(--fg-4)', marginBottom: 10 }}>
-          AI STATE · GCP + GOLD ENVIRONMENT
+          AI STATE · GCP + {envLabel} ENVIRONMENT
         </div>
         <div style={{ fontSize: 16, color: 'var(--fg-4)' }}>Disabled</div>
         <div style={{ fontSize: 10, color: 'var(--fg-4)', marginTop: 4 }}>
@@ -189,7 +193,7 @@ function Card({
           fontSize: 9, letterSpacing: '0.14em', color: 'var(--fg-4)',
           marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <span>AI STATE · GCP + GOLD ENVIRONMENT</span>
+          <span>AI STATE · GCP + {envLabel} ENVIRONMENT</span>
           {InfoButton}
         </div>
         {/* v11.18.3 + v11.23.2: no auto-call. Manual-first means the
@@ -239,6 +243,7 @@ function Card({
           open={showExplainer}
           state={null}
           onClose={() => setShowExplainer(false)}
+          symbol={symbol}
         />
       </div>
     );
@@ -264,7 +269,7 @@ function Card({
           fontSize: 9, letterSpacing: '0.14em', color: 'var(--fg-4)',
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
-          <span>AI STATE · GCP + GOLD ENVIRONMENT</span>
+          <span>AI STATE · GCP + {envLabel} ENVIRONMENT</span>
           {InfoButton}
         </div>
         <div style={{
@@ -494,6 +499,7 @@ function Card({
         open={showExplainer}
         state={state}
         onClose={() => setShowExplainer(false)}
+        symbol={symbol}
       />
     </div>
   );

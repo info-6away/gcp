@@ -16,6 +16,7 @@
 import { memo, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
+import type { MarketSymbol } from '@/types/gcp';
 import { directionArrow, stateColor } from '@/lib/aiState';
 import AiStateExplainer from './AiStateExplainer';
 
@@ -25,10 +26,13 @@ interface Props {
   // v11.23.2: optional for backward compat — defaults to 'idle' so a
   // missing prop never accidentally shows "Analyzing…".
   aiStatus?: AiStatus;
+  // v11.23.3: forwarded to the explainer modal so its title and
+  // glossary read "BTC environment" / "BTC response" on the BTC chart.
+  symbol?:  MarketSymbol;
   compact?: boolean;
 }
 
-function Badge({ state, enabled, aiStatus = 'idle', compact = false }: Props) {
+function Badge({ state, enabled, aiStatus = 'idle', symbol = 'XAUUSD', compact = false }: Props) {
   const [open, setOpen] = useState(false);
   if (!enabled) return null;
 
@@ -80,7 +84,7 @@ function Badge({ state, enabled, aiStatus = 'idle', compact = false }: Props) {
             marginLeft: 2, opacity: 0.6, fontSize: fontSize - 1, fontWeight: 600,
           }}>ⓘ</span>
         </button>
-        <AiStateExplainer open={open} state={state} onClose={() => setOpen(false)} />
+        <AiStateExplainer open={open} state={state} onClose={() => setOpen(false)} symbol={symbol} />
       </>
     );
   }

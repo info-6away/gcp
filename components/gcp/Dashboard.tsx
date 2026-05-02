@@ -7,6 +7,7 @@ import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
+import { symbolEnvLabel } from '@/types/gcp';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
 import AiStateCard from './AiStateCard';
 
@@ -412,7 +413,7 @@ export default function Dashboard({
           fontSize: 8, letterSpacing: '0.06em', color: 'var(--fg-4)',
           display: 'flex', flexWrap: 'wrap', gap: 14,
         }}>
-          <span><span style={{ color: 'var(--fg-3)' }}>AI State</span> = Environment (GCP + Gold)</span>
+          <span><span style={{ color: 'var(--fg-3)' }}>AI State</span> = Environment (GCP + {symbolEnvLabel(symbol)})</span>
           <span><span style={{ color: 'var(--fg-3)' }}>Pattern</span> = Event (GCP only)</span>
         </div>
 

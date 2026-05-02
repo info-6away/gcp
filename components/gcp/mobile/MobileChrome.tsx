@@ -14,11 +14,13 @@ export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'setti
 
 export function MobileStatus({
   nv, regime, connected, aiState = null, aiEnabled = false, aiStatus = 'idle',
+  symbol = 'XAUUSD',
 }: {
   nv: number | null; regime: string | null; connected: boolean;
   aiState?:   GcpStateResponse | null;
   aiEnabled?: boolean;
   aiStatus?:  AiStatus;
+  symbol?:    MarketSymbol;
 }) {
   return (
     <div style={{
@@ -50,7 +52,7 @@ export function MobileStatus({
             <span style={{ color: C.fg3 }}>AI:</span>
             <span style={{ color: C.cyan }}>{AI_ANALYSIS_TF}</span>
           </span>
-          <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} compact />
+          <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} symbol={symbol} compact />
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>

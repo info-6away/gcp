@@ -21,7 +21,7 @@ export function ChartScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} symbol={symbol} />
       <SymbolBar symbol={symbol} price={price} onSymbolPress={onSymbolPress} />
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <ChartView

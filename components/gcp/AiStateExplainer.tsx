@@ -11,19 +11,27 @@
 import { useEffect } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import { directionArrow, stateColor } from '@/lib/aiState';
+import type { MarketSymbol } from '@/types/gcp';
+import { symbolEnvLabel } from '@/types/gcp';
 
 interface Props {
   open:    boolean;
   state:   GcpStateResponse | null;
   onClose: () => void;
+  // v11.23.3: explainer copy adapts to the active symbol so BTC users
+  // don't see "gold response" definitions on a Bitcoin chart.
+  symbol?: MarketSymbol;
 }
 
-const DIRECTION_DEF: { key: string; def: string }[] = [
-  { key: 'Up',      def: 'Environment favors upward gold response' },
-  { key: 'Down',    def: 'Environment favors downward gold response' },
-  { key: 'Neutral', def: 'No directional edge' },
-  { key: 'Mixed',   def: 'Conflicting signals' },
-];
+function directionDefs(envLabel: string): { key: string; def: string }[] {
+  const lower = envLabel.toLowerCase();
+  return [
+    { key: 'Up',      def: `Environment favors upward ${lower} response` },
+    { key: 'Down',    def: `Environment favors downward ${lower} response` },
+    { key: 'Neutral', def: 'No directional edge' },
+    { key: 'Mixed',   def: 'Conflicting signals' },
+  ];
+}
 
 const PHASE_DEF: { key: string; def: string }[] = [
   { key: 'Early',     def: 'Move may be forming' },
@@ -32,16 +40,20 @@ const PHASE_DEF: { key: string; def: string }[] = [
   { key: 'Exhausted', def: 'Risk of reversal or discharge' },
 ];
 
-const STATE_DEF: { key: string; def: string }[] = [
-  { key: 'Compression',           def: 'GCP energy is building' },
-  { key: 'Alignment Trend',       def: 'GCP and gold are moving together' },
-  { key: 'Failed Alignment',      def: 'GCP rises but gold does not confirm' },
-  { key: 'Dead Drift / Noise',    def: 'No meaningful environment' },
-  { key: 'Discharge',             def: 'Energy release / exhaustion risk' },
-  { key: 'Shock Synchronization', def: 'Extreme coherence event' },
-];
+function stateDefs(envLabel: string): { key: string; def: string }[] {
+  const lower = envLabel.toLowerCase();
+  return [
+    { key: 'Compression',           def: 'GCP energy is building' },
+    { key: 'Alignment Trend',       def: `GCP and ${lower} are moving together` },
+    { key: 'Failed Alignment',      def: `GCP rises but ${lower} does not confirm` },
+    { key: 'Dead Drift / Noise',    def: 'No meaningful environment' },
+    { key: 'Discharge',             def: 'Energy release / exhaustion risk' },
+    { key: 'Shock Synchronization', def: 'Extreme coherence event' },
+  ];
+}
 
-export default function AiStateExplainer({ open, state, onClose }: Props) {
+export default function AiStateExplainer({ open, state, onClose, symbol = 'XAUUSD' }: Props) {
+  const envLabel = symbolEnvLabel(symbol);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -87,7 +99,7 @@ export default function AiStateExplainer({ open, state, onClose }: Props) {
           marginBottom: 14, gap: 10,
         }}>
           <div style={{ fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-3)' }}>
-            AI STATE · GCP + GOLD ENVIRONMENT
+            AI STATE · GCP + {envLabel} ENVIRONMENT
           </div>
           <button
             onClick={onClose}
@@ -176,9 +188,9 @@ export default function AiStateExplainer({ open, state, onClose }: Props) {
           </Detail>
         )}
 
-        <Glossary title="DIRECTION" items={DIRECTION_DEF} />
+        <Glossary title="DIRECTION" items={directionDefs(envLabel)} />
         <Glossary title="PHASE"     items={PHASE_DEF} />
-        <Glossary title="STATE EXAMPLES" items={STATE_DEF} />
+        <Glossary title="STATE EXAMPLES" items={stateDefs(envLabel)} />
       </div>
     </div>
   );
