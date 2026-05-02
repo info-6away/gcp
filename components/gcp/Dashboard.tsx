@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
@@ -311,7 +312,7 @@ interface DashboardProps {
   aiState:        GcpStateResponse | null;
   aiEnabled:      boolean;
   aiRunNow:       () => void;
-  aiInflight:     boolean;
+  aiStatus:       AiStatus;
   aiLastSuccess:  Date | null;
   planStructure:  StructureRead;
   planAnalysisCandle: Candle | null;
@@ -319,7 +320,7 @@ interface DashboardProps {
 
 export default function Dashboard({
   gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
-  aiState, aiEnabled, aiRunNow, aiInflight, aiLastSuccess,
+  aiState, aiEnabled, aiRunNow, aiStatus, aiLastSuccess,
   planStructure, planAnalysisCandle,
 }: DashboardProps) {
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
@@ -370,7 +371,7 @@ export default function Dashboard({
             flash={pssFlash}
             latestPattern={activePattern}
             runNow={aiRunNow}
-            inflight={aiInflight}
+            aiStatus={aiStatus}
             lastSuccessAt={aiLastSuccess}
             planStructure={planStructure}
             planAnalysisCandle={planAnalysisCandle}

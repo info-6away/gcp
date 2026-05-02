@@ -4,6 +4,7 @@ import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import type { Pattern } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 
 const PATTERN_COLORS: Record<string, string> = {
   'Alignment Ladder':         '#4dd9e8',
@@ -38,17 +39,18 @@ const KINDS = [
 const pssOf = (p: Pattern) => Math.round(p.strength * 100);
 
 export function PatternsScreen({
-  patterns, liveNV, liveRegime, connected, aiState, aiEnabled,
+  patterns, liveNV, liveRegime, connected, aiState, aiEnabled, aiStatus,
 }: {
   patterns: Pattern[]; liveNV: number | null;
   liveRegime: string | null; connected: boolean;
   aiState:   GcpStateResponse | null;
   aiEnabled: boolean;
+  aiStatus:  AiStatus;
 }) {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
 
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.line1}`, background: C.bg, flexShrink: 0 }}>
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3 }}>PATTERN LIBRARY</div>

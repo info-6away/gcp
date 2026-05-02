@@ -5,6 +5,7 @@ import { C, regimeColor } from '../colors';
 import { MobileStatus, SymbolBar } from '../MobileChrome';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import { useNewsData } from '@/lib/useNewsData';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
@@ -36,8 +37,8 @@ const pssOf = (p: Pattern) => Math.round(p.strength * 100);
 export function DashboardScreen({
   series, patterns, liveNV, liveRegime, connected,
   symbol, price, onSymbolPress,
-  aiState, aiEnabled,
-  aiRunNow, aiInflight = false, aiLastSuccess = null,
+  aiState, aiEnabled, aiStatus = 'idle',
+  aiRunNow, aiLastSuccess = null,
   planStructure, planAnalysisCandle = null,
 }: {
   series: DataPoint[]; patterns: Pattern[];
@@ -45,12 +46,16 @@ export function DashboardScreen({
   symbol: MarketSymbol; price: number | null; onSymbolPress?: () => void;
   aiState:        GcpStateResponse | null;
   aiEnabled:      boolean;
+  aiStatus?:      AiStatus;
   aiRunNow?:      () => void;
-  aiInflight?:    boolean;
   aiLastSuccess?: Date | null;
   planStructure?: StructureRead;
   planAnalysisCandle?: Candle | null;
 }) {
+  // v11.23.2: 'running' is the only status that should surface
+  // analyzing copy. Manual mode rests in 'idle' until the user clicks.
+  const isRunning = aiStatus === 'running';
+  const isError   = aiStatus === 'error';
   const last15   = series.slice(-15);
   const sparkMax = Math.max(...last15.map(p => p.v), 50);
   const activePat = patterns[patterns.length - 1] ?? null;
@@ -63,7 +68,7 @@ export function DashboardScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
       <SymbolBar symbol={symbol} price={price} onSymbolPress={onSymbolPress} />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 16px' }}>
@@ -78,10 +83,12 @@ export function DashboardScreen({
               }}>
                 <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 4 }}>AI STATE</div>
                 <div style={{
-                  fontSize: 14, color: C.fg2, fontWeight: 600,
+                  fontSize: 14,
+                  color: isError ? '#e24b4a' : C.fg2,
+                  fontWeight: 600,
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}>
-                  {aiInflight ? (
+                  {isRunning ? (
                     <>
                       <span style={{
                         width: 6, height: 6, borderRadius: '50%', background: C.cyan,
@@ -89,28 +96,29 @@ export function DashboardScreen({
                       }} />
                       Analyzing…
                     </>
-                  ) : 'AI State not run yet'}
+                  ) : isError ? 'AI analysis failed — retry'
+                    : 'AI State not run yet'}
                 </div>
                 <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 6, lineHeight: 1.5 }}>
                   AI analysis uses LLM tokens. Run manually to control cost.
                 </div>
                 <button
                   onClick={() => aiRunNow?.()}
-                  disabled={!aiRunNow || aiInflight}
+                  disabled={!aiRunNow || isRunning}
                   style={{
                     marginTop: 10,
                     padding: '8px 12px',
-                    background: aiInflight ? `${C.cyan}1f` : 'transparent',
-                    border: `1px solid ${(!aiRunNow || aiInflight) ? C.line2 : C.cyan}`,
+                    background: isRunning ? `${C.cyan}1f` : 'transparent',
+                    border: `1px solid ${(!aiRunNow || isRunning) ? C.line2 : C.cyan}`,
                     borderRadius: 3,
-                    color: (!aiRunNow || aiInflight) ? C.fg3 : C.cyan,
+                    color: (!aiRunNow || isRunning) ? C.fg3 : C.cyan,
                     fontFamily: 'inherit',
                     fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
-                    cursor: (!aiRunNow || aiInflight) ? 'default' : 'pointer',
+                    cursor: (!aiRunNow || isRunning) ? 'default' : 'pointer',
                     width: '100%',
                   }}
                 >
-                  {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+                  {isRunning ? 'RUNNING…' : isError ? 'RETRY AI ANALYSIS' : 'RUN AI ANALYSIS'}
                 </button>
               </div>
             );
@@ -352,19 +360,19 @@ export function DashboardScreen({
                 </div>
                 <button
                   onClick={() => aiRunNow?.()}
-                  disabled={!aiRunNow || aiInflight}
+                  disabled={!aiRunNow || isRunning}
                   style={{
                     padding: '4px 8px',
-                    background: aiInflight ? `${C.cyan}1f` : 'transparent',
-                    border: `1px solid ${(!aiRunNow || aiInflight) ? C.line2 : C.cyan}`,
+                    background: isRunning ? `${C.cyan}1f` : 'transparent',
+                    border: `1px solid ${(!aiRunNow || isRunning) ? C.line2 : C.cyan}`,
                     borderRadius: 3,
-                    color: (!aiRunNow || aiInflight) ? C.fg3 : C.cyan,
+                    color: (!aiRunNow || isRunning) ? C.fg3 : C.cyan,
                     fontFamily: 'inherit',
                     fontSize: 9, letterSpacing: '0.1em', fontWeight: 600,
-                    cursor: (!aiRunNow || aiInflight) ? 'default' : 'pointer',
+                    cursor: (!aiRunNow || isRunning) ? 'default' : 'pointer',
                   }}
                 >
-                  {aiInflight ? 'RUNNING…' : 'REFRESH'}
+                  {isRunning ? 'RUNNING…' : 'REFRESH'}
                 </button>
               </div>
             </div>

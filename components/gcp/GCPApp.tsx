@@ -387,7 +387,7 @@ export default function GCPApp() {
         aiLastError={aiState.lastErrorAt}
         aiNextPollAt={aiState.nextPollAt}
         aiIntervalSec={aiState.intervalSec}
-        aiInflight={aiState.inflight}
+        aiStatus={aiState.aiStatus}
         aiRunNow={aiState.runNow}
         planStructure={planStructure}
         planAnalysisCandle={planAnalysisCandle}
@@ -419,6 +419,7 @@ export default function GCPApp() {
         gcpError={!!gcpError}
         aiState={stableState}
         aiEnabled={aiState.enabled}
+        aiStatus={aiState.aiStatus}
       />
       <div className="app-body">
         <Chrome.LeftRail page={page} onNav={handleNav} lastDataDate={lastDataDate} />
@@ -434,7 +435,7 @@ export default function GCPApp() {
               aiState={stableState}
               aiEnabled={aiState.enabled}
               aiRunNow={aiState.runNow}
-              aiInflight={aiState.inflight}
+              aiStatus={aiState.aiStatus}
               aiLastSuccess={aiState.lastSuccessAt}
               planStructure={planStructure}
               planAnalysisCandle={planAnalysisCandle}
@@ -494,7 +495,7 @@ export default function GCPApp() {
               aiLastError={aiState.lastErrorAt}
               aiNextPollAt={aiState.nextPollAt}
               aiIntervalSec={aiState.intervalSec}
-              aiInflight={aiState.inflight}
+              aiStatus={aiState.aiStatus}
               aiRunNow={aiState.runNow}
               gcpQuality={gcpQuality}
               onTestAlert={testAlert}

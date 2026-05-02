@@ -29,6 +29,19 @@
 // interval. nextPollAt is now derived from lastAttempt + interval, not
 // from the 25s decide loop tick, so the Settings countdown reflects
 // the actual user expectation (e.g., 600s -> 9m 50s, not 25s).
+//
+// v11.23.2: replaced the boolean `inflight` flag with an explicit
+// `aiStatus` state machine — 'idle' | 'running' | 'success' | 'error' —
+// so the UI can distinguish "haven't run yet" from "analysis is
+// actively in flight". The previous boolean caused the header badge
+// and Dashboard card to show "Analyzing…" by default in manual mode
+// even though no API call had been issued. Transitions:
+//   idle      -> running     (runCall starts an actual fetch)
+//   running   -> success     (Engine returned a classification)
+//   running   -> error       (Engine returned null / threw)
+//   {success|error} -> running on the next runCall
+// `finally` defensively resets a lingering 'running' to 'idle' so a
+// thrown exception cannot leave the UI stuck in the analyzing state.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -70,6 +83,8 @@ function loadAiStatePref(): boolean {
   }
 }
 
+export type AiStatus = 'idle' | 'running' | 'success' | 'error';
+
 export interface UseGcpStateResult {
   state:         GcpStateResponse | null;
   enabled:       boolean;
@@ -79,7 +94,10 @@ export interface UseGcpStateResult {
   nextPollAt:    Date | null;
   // v11.16.4
   intervalSec:   AiAnalysisInterval;
-  inflight:      boolean;
+  // v11.23.2: explicit state machine. Replaces the old `inflight`
+  // boolean so the UI can render distinct idle / analyzing / success /
+  // error views instead of inferring "analyzing" from a null state.
+  aiStatus:      AiStatus;
   runNow:        () => void;
 }
 
@@ -125,7 +143,10 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   // init the ref would start at 120 and runCall(false) would fire
   // an Engine call before the storage-read effect resolved.
   const [intervalSec, setIntervalSec]     = useState<AiAnalysisInterval>(() => loadAiAnalysisInterval());
-  const [inflight, setInflight]           = useState<boolean>(false);
+  // v11.23.2: status begins at 'idle' — "no analysis run yet". Manual
+  // mode never spontaneously flips this to 'running'; only an actual
+  // runCall() that survives the gating checks does.
+  const [aiStatus, setAiStatus]           = useState<AiStatus>('idle');
 
   const inputsRef            = useRef<GcpStateInputs | null>(inputs);
   const stateRef             = useRef<GcpStateResponse | null>(null);
@@ -261,13 +282,15 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     }
 
     inflightRef.current         = true;
-    setInflight(true);
+    setAiStatus('running');
+    if (isDev()) console.log('[AI UI] run started');
     lastCallAtRef.current       = Date.now();
     lastSentSnapshotRef.current = currentSnap;
     pendingReasonRef.current    = null;
     // Settings countdown updates the instant a call fires so the UI
     // never shows a stale "Ready now" mid-flight.
     recomputeNextPollAt();
+    let resolved = false;
     try {
       // v11.18.5: stamp the manual flag only when this is a deliberate
       // user-triggered run. The proxy's server-side kill switch refuses
@@ -278,6 +301,9 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         if (isDev()) console.log('[AI STATE] response', result);
         setState(result);
         setLastSuccessAt(new Date());
+        setAiStatus('success');
+        if (isDev()) console.log('[AI UI] run success');
+        resolved = true;
         // v11.20: append the successful classification to the local
         // history ledger so the Research → By AI State view can
         // correlate it against subsequent price moves. Only the
@@ -303,10 +329,25 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       } else {
         if (isDev()) console.log('[AI STATE] error, keeping last state');
         setLastErrorAt(new Date());
+        setAiStatus('error');
+        if (isDev()) console.log('[AI UI] run error');
+        resolved = true;
       }
+    } catch (err) {
+      console.error('[AI UI] run error', err);
+      setLastErrorAt(new Date());
+      setAiStatus('error');
+      resolved = true;
     } finally {
       inflightRef.current = false;
-      setInflight(false);
+      // Defensive: never leave the UI stuck in 'running' if neither
+      // branch above ran (would imply an unexpected control-flow
+      // escape). Falls back to 'idle' so the UI exits the analyzing
+      // state regardless of what happened.
+      if (!resolved) {
+        setAiStatus('idle');
+        if (isDev()) console.log('[AI UI] state reset to idle');
+      }
       // Reset the countdown anchor regardless of success/failure so
       // the user sees the interval restart whenever an attempt
       // completes — including manual runs.
@@ -323,6 +364,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     if (!enabled) {
       setState(null);
       setNextPollAt(null);
+      setAiStatus('idle');
       return;
     }
     let cancelled = false;
@@ -346,6 +388,6 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
 
   return {
     state, enabled, lastSuccessAt, lastErrorAt, nextPollAt,
-    intervalSec, inflight, runNow,
+    intervalSec, aiStatus, runNow,
   };
 }

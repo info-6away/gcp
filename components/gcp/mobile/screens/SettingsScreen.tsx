@@ -5,6 +5,7 @@ import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from '../../Heartbeat';
 import {
@@ -59,7 +60,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
-  aiIntervalSec, aiInflight, aiRunNow,
+  aiIntervalSec, aiStatus, aiRunNow,
   gcpLastUpdate, gcpNextPollAt, gcpQuality,
 }: {
   liveNV: number | null; liveRegime: string | null; connected: boolean;
@@ -71,12 +72,13 @@ export function SettingsScreen({
   aiLastError:   Date | null;
   aiNextPollAt:  Date | null;
   aiIntervalSec: AiAnalysisInterval;
-  aiInflight:    boolean;
+  aiStatus:      AiStatus;
   aiRunNow:      () => void;
   gcpLastUpdate: Date | null;
   gcpNextPollAt: Date | null;
   gcpQuality:    GcpQuality;
 }) {
+  const isRunning = aiStatus === 'running';
   // v11.19: AI section is now a control panel — Status / Mode / Run /
   // Last run only. Removed: interval picker buttons, Current interval,
   // Next analysis countdown. GCP coherence row still uses the
@@ -199,7 +201,7 @@ export function SettingsScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
 
       {/* v11.18.2: version now visible in the page header. The "Hard
           to find on mobile" complaint was real — the Version row was
@@ -338,21 +340,21 @@ export function SettingsScreen({
         {/* v11.19 primary action — full-width prominent RUN button */}
         <button
           onClick={() => aiRunNow()}
-          disabled={!aiEnabled || aiInflight}
+          disabled={!aiEnabled || isRunning}
           style={{
             width: '100%', padding: '14px 16px', marginBottom: 8,
-            background: aiInflight ? `${C.cyan}1f` : 'transparent',
+            background: isRunning ? `${C.cyan}1f` : 'transparent',
             border: `1px solid ${
-              !aiEnabled || aiInflight ? C.line2 : C.cyan
+              !aiEnabled || isRunning ? C.line2 : C.cyan
             }`,
             borderRadius: 4,
-            color: !aiEnabled || aiInflight ? C.fg3 : C.cyan,
+            color: !aiEnabled || isRunning ? C.fg3 : C.cyan,
             fontFamily: 'inherit',
             fontSize: 12, letterSpacing: '0.12em', fontWeight: 600,
-            cursor: !aiEnabled || aiInflight ? 'default' : 'pointer',
+            cursor: !aiEnabled || isRunning ? 'default' : 'pointer',
           }}
         >
-          {aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+          {isRunning ? 'RUNNING…' : 'RUN AI ANALYSIS'}
         </button>
 
         {/* v11.19 Advanced — collapsed by default. Auto interval lives

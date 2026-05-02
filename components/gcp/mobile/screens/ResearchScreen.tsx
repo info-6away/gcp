@@ -12,6 +12,7 @@ import { C, regimeColor } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import type { DataPoint, Pattern } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
@@ -59,7 +60,7 @@ function formatRelative(ms: number): string {
 }
 
 export function ResearchScreen({
-  series, patterns, liveNV, liveRegime, connected, aiState, aiEnabled,
+  series, patterns, liveNV, liveRegime, connected, aiState, aiEnabled, aiStatus,
 }: {
   series:    DataPoint[];
   patterns:  Pattern[];
@@ -68,6 +69,7 @@ export function ResearchScreen({
   connected: boolean;
   aiState:   GcpStateResponse | null;
   aiEnabled: boolean;
+  aiStatus:  AiStatus;
 }) {
   const [mode, setMode] = useState<ResearchMode>('regime');
 
@@ -128,7 +130,7 @@ export function ResearchScreen({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MobileStatus nv={liveNV} regime={liveRegime} connected={connected}
-        aiState={aiState} aiEnabled={aiEnabled} />
+        aiState={aiState} aiEnabled={aiEnabled} aiStatus={aiStatus} />
 
       <div style={{
         padding: '10px 14px', borderBottom: `1px solid ${C.line1}`,

@@ -16,6 +16,7 @@
 
 import { memo, useEffect, useState } from 'react';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import type { Pattern, MarketSymbol } from '@/types/gcp';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
@@ -38,7 +39,10 @@ interface Props {
   // the default mode, so the user must press the button to get the
   // first classification.
   runNow?:        () => void;
-  inflight?:      boolean;
+  // v11.23.2: explicit state machine. 'running' is the ONLY value that
+  // surfaces "Analyzing…"; every other value resolves to idle / success /
+  // error copy so manual mode never shows analyzing by default.
+  aiStatus?:      AiStatus;
   lastSuccessAt?: Date | null;
   // v11.22: Trade Plan layer needs price-structure context (HH/HL or
   // LH/LL) and the symbol for level formatting.
@@ -114,10 +118,14 @@ function formatRelative(d: Date | null | undefined): string {
 
 function Card({
   state, enabled, flash = false, latestPattern = null,
-  runNow, inflight = false, lastSuccessAt = null,
+  runNow, aiStatus = 'idle', lastSuccessAt = null,
   planStructure, symbol = 'XAUUSD',
   planAnalysisCandle = null, currentPrice = null,
 }: Props) {
+  // v11.23.2: 'running' is the only state that should surface
+  // "Analyzing…" / "RUNNING…" copy. Everything else is "not analyzing".
+  const isRunning = aiStatus === 'running';
+  const isError   = aiStatus === 'error';
   const [showExplainer, setShowExplainer] = useState(false);
   // v11.18.3: tick every 5 s so the "Last AI analysis: Xs ago" stamp
   // grows visibly without depending on parent re-renders. With the
@@ -184,20 +192,24 @@ function Card({
           <span>AI STATE · GCP + GOLD ENVIRONMENT</span>
           {InfoButton}
         </div>
-        {/* v11.18.3: no auto-call. Manual-first means the user must
-            click to get a classification. Inflight state shows a
-            pulsing dot; otherwise an explicit CTA. */}
+        {/* v11.18.3 + v11.23.2: no auto-call. Manual-first means the
+            user must click to get a classification. The aiStatus state
+            machine drives copy: running = pulsing "Analyzing…", error
+            = retry hint, idle = "not run yet". */}
         <div style={{
-          fontSize: 22, color: 'var(--fg-2)',
+          fontSize: 22,
+          color: isError ? 'var(--red)' : 'var(--fg-2)',
           fontWeight: 600,
           display: 'flex', alignItems: 'center', gap: 10,
           letterSpacing: '0.01em',
         }}>
-          {inflight ? (
+          {isRunning ? (
             <>
               <Heartbeat mode="init" size={9} />
               Analyzing…
             </>
+          ) : isError ? (
+            'AI analysis failed — retry'
           ) : (
             'AI State not run yet'
           )}
@@ -207,21 +219,21 @@ function Card({
         </div>
         <button
           onClick={() => runNow?.()}
-          disabled={!runNow || !enabled || inflight}
+          disabled={!runNow || !enabled || isRunning}
           style={{
             marginTop: 14,
             padding: '8px 14px',
             fontSize: 11, letterSpacing: '0.1em', fontWeight: 600,
-            background: inflight ? 'rgba(77,217,232,0.1)' : 'transparent',
-            border: `1px solid ${(!runNow || !enabled || inflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
+            background: isRunning ? 'rgba(77,217,232,0.1)' : 'transparent',
+            border: `1px solid ${(!runNow || !enabled || isRunning) ? 'var(--line-2)' : 'var(--cyan)'}`,
             borderRadius: 4,
-            color: (!runNow || !enabled || inflight) ? 'var(--fg-3)' : 'var(--cyan)',
+            color: (!runNow || !enabled || isRunning) ? 'var(--fg-3)' : 'var(--cyan)',
             fontFamily: 'inherit',
-            cursor: (!runNow || !enabled || inflight) ? 'default' : 'pointer',
+            cursor: (!runNow || !enabled || isRunning) ? 'default' : 'pointer',
             alignSelf: 'flex-start',
           }}
         >
-          {inflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+          {isRunning ? 'RUNNING…' : isError ? 'RETRY AI ANALYSIS' : 'RUN AI ANALYSIS'}
         </button>
         <AiStateExplainer
           open={showExplainer}
@@ -462,19 +474,19 @@ function Card({
         </div>
         <button
           onClick={() => runNow?.()}
-          disabled={!runNow || !enabled || inflight}
+          disabled={!runNow || !enabled || isRunning}
           style={{
             padding: '4px 10px',
             fontSize: 9, letterSpacing: '0.1em', fontWeight: 600,
-            background: inflight ? 'rgba(77,217,232,0.1)' : 'transparent',
-            border: `1px solid ${(!runNow || !enabled || inflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
+            background: isRunning ? 'rgba(77,217,232,0.1)' : 'transparent',
+            border: `1px solid ${(!runNow || !enabled || isRunning) ? 'var(--line-2)' : 'var(--cyan)'}`,
             borderRadius: 3,
-            color: (!runNow || !enabled || inflight) ? 'var(--fg-3)' : 'var(--cyan)',
+            color: (!runNow || !enabled || isRunning) ? 'var(--fg-3)' : 'var(--cyan)',
             fontFamily: 'inherit',
-            cursor: (!runNow || !enabled || inflight) ? 'default' : 'pointer',
+            cursor: (!runNow || !enabled || isRunning) ? 'default' : 'pointer',
           }}
         >
-          {inflight ? 'RUNNING…' : 'REFRESH AI ANALYSIS'}
+          {isRunning ? 'RUNNING…' : 'REFRESH AI ANALYSIS'}
         </button>
       </div>
 

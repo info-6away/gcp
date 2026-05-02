@@ -5,6 +5,7 @@ import type { DataPoint, CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPag
 import { SYMBOLS, formatPrice, getSymbolMeta, TIMEFRAME_LABELS, VIEW_LABELS } from '@/types/gcp';
 import { APP_MODEL } from '@/lib/version';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import AiStateBadge from './AiStateBadge';
 import Heartbeat, { type HeartbeatMode } from './Heartbeat';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
@@ -64,6 +65,7 @@ interface HeaderProps {
   gcpError:          boolean;
   aiState:           GcpStateResponse | null;
   aiEnabled:         boolean;
+  aiStatus:          AiStatus;
 }
 
 function SymbolPicker({
@@ -164,7 +166,7 @@ function Header({
   viewWindow, onViewWindowChange,
   goldPrice, goldLoading, goldMarketStatus, goldSessionDate, goldSource,
   gcpLive, gcpNetvar, gcpError,
-  aiState, aiEnabled,
+  aiState, aiEnabled, aiStatus,
 }: HeaderProps) {
   // On Patterns we only expose VIEW. Pattern detection always runs at 1m
   // resolution (compression coils etc. are meaningless at 4h/1D), so the
@@ -214,7 +216,7 @@ function Header({
           </div>
         )}
 
-        <AiStateBadge state={aiState} enabled={aiEnabled} />
+        <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} />
 
         {showTF && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>

@@ -12,6 +12,7 @@ import type { GCPDataState } from '@/lib/useGCPData';
 import type { GoldState } from '@/lib/useGoldData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiAnalysisInterval } from '@/lib/aiAnalysisInterval';
+import type { AiStatus } from '@/lib/useGcpState';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
 import type { GcpQuality } from '@/lib/alignGcp';
@@ -48,7 +49,7 @@ interface MobileAppProps {
   aiLastError:     Date | null;
   aiNextPollAt:    Date | null;
   aiIntervalSec:   AiAnalysisInterval;
-  aiInflight:      boolean;
+  aiStatus:        AiStatus;
   aiRunNow:        () => void;
   planStructure:   StructureRead;
   planAnalysisCandle: Candle | null;
@@ -58,7 +59,7 @@ interface MobileAppProps {
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
-  aiIntervalSec, aiInflight, aiRunNow, planStructure, planAnalysisCandle,
+  aiIntervalSec, aiStatus, aiRunNow, planStructure, planAnalysisCandle,
   gcpQuality,
 }: MobileAppProps) {
   const [page, setPage] = useState<MobilePage>('dashboard');
@@ -84,6 +85,7 @@ export default function MobileApp({
     connected:  gcpData.isLive && !gcpData.gcpError,
     aiState,
     aiEnabled,
+    aiStatus,
   };
 
   const screen = (() => {
@@ -94,7 +96,7 @@ export default function MobileApp({
           symbol={symbol} price={goldData.price}
           onSymbolPress={cycleSymbol}
           aiRunNow={aiRunNow}
-          aiInflight={aiInflight}
+          aiStatus={aiStatus}
           aiLastSuccess={aiLastSuccess}
           planStructure={planStructure}
           planAnalysisCandle={planAnalysisCandle}
@@ -124,7 +126,7 @@ export default function MobileApp({
           aiLastError={aiLastError}
           aiNextPollAt={aiNextPollAt}
           aiIntervalSec={aiIntervalSec}
-          aiInflight={aiInflight}
+          aiStatus={aiStatus}
           aiRunNow={aiRunNow}
           gcpLastUpdate={gcpData.lastUpdate}
           gcpNextPollAt={gcpData.nextPollAt}

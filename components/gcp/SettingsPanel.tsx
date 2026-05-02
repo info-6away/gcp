@@ -10,6 +10,7 @@ import {
 } from '@/lib/sensitivity';
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from './Heartbeat';
 import {
@@ -37,7 +38,7 @@ interface SettingsPanelProps {
   aiLastError:      Date | null;
   aiNextPollAt:     Date | null;
   aiIntervalSec:    AiAnalysisInterval;
-  aiInflight:       boolean;
+  aiStatus:         AiStatus;
   aiRunNow:         () => void;
   gcpQuality:       GcpQuality;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
@@ -341,20 +342,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 {/* Primary action — full-width, prominent. */}
                 <button
                   onClick={() => props.aiRunNow()}
-                  disabled={!props.aiEnabled || props.aiInflight}
+                  disabled={!props.aiEnabled || props.aiStatus === 'running'}
                   style={{
                     width: '100%', marginTop: 4, marginBottom: 8,
                     padding: '12px 16px',
                     fontSize: 12, letterSpacing: '0.12em', fontWeight: 600,
                     fontFamily: 'var(--font-mono)',
-                    background: props.aiInflight ? 'rgba(77,217,232,0.12)' : 'transparent',
-                    border: `1px solid ${(!props.aiEnabled || props.aiInflight) ? 'var(--line-2)' : 'var(--cyan)'}`,
-                    color: (!props.aiEnabled || props.aiInflight) ? 'var(--fg-3)' : 'var(--cyan)',
+                    background: props.aiStatus === 'running' ? 'rgba(77,217,232,0.12)' : 'transparent',
+                    border: `1px solid ${(!props.aiEnabled || props.aiStatus === 'running') ? 'var(--line-2)' : 'var(--cyan)'}`,
+                    color: (!props.aiEnabled || props.aiStatus === 'running') ? 'var(--fg-3)' : 'var(--cyan)',
                     borderRadius: 4,
-                    cursor: (!props.aiEnabled || props.aiInflight) ? 'default' : 'pointer',
+                    cursor: (!props.aiEnabled || props.aiStatus === 'running') ? 'default' : 'pointer',
                   }}
                 >
-                  {props.aiInflight ? 'RUNNING…' : 'RUN AI ANALYSIS'}
+                  {props.aiStatus === 'running' ? 'RUNNING…' : 'RUN AI ANALYSIS'}
                 </button>
 
                 <Row

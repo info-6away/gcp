@@ -5,6 +5,7 @@ import { MiniLogo } from './MiniLogo';
 import { C, regimeColor } from './colors';
 import type { MarketSymbol } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { AiStatus } from '@/lib/useGcpState';
 import AiStateBadge from '../AiStateBadge';
 import Heartbeat from '../Heartbeat';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
@@ -12,11 +13,12 @@ import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'settings';
 
 export function MobileStatus({
-  nv, regime, connected, aiState = null, aiEnabled = false,
+  nv, regime, connected, aiState = null, aiEnabled = false, aiStatus = 'idle',
 }: {
   nv: number | null; regime: string | null; connected: boolean;
   aiState?:   GcpStateResponse | null;
   aiEnabled?: boolean;
+  aiStatus?:  AiStatus;
 }) {
   return (
     <div style={{
@@ -48,7 +50,7 @@ export function MobileStatus({
             <span style={{ color: C.fg3 }}>AI:</span>
             <span style={{ color: C.cyan }}>{AI_ANALYSIS_TF}</span>
           </span>
-          <AiStateBadge state={aiState} enabled={aiEnabled} compact />
+          <AiStateBadge state={aiState} enabled={aiEnabled} aiStatus={aiStatus} compact />
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
