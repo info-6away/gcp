@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { APP_VERSION, APP_MODEL } from '@/lib/version';
+import { checkForUpdate, type UpdateCheckResult } from '@/lib/pwaUpdate';
 import { PageHeader } from '@/components/gcp/Chrome';
 import { PSS_THRESHOLD } from '@/lib/usePSSAlert';
 import {
@@ -100,20 +101,82 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 // blue-grey (#7F98A3) so Settings explanations don't read as disabled
 // text. Labels stay subtle, values stay bright — only the helper text
 // gets the boost.
-function Row({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+function Row({
+  label, value, sub, right,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: string;
+  // v11.24.3: optional auxiliary slot rendered to the right of the
+  // value column (used by the System row's "Check for Updates" button).
+  right?: React.ReactNode;
+}) {
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      padding: '7px 0', borderBottom: '1px solid var(--line-0)',
+      padding: '7px 0', borderBottom: '1px solid var(--line-0)', gap: 12,
     }}>
       <div>
         <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>{label}</div>
         {sub && <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 2, lineHeight: 1.5 }}>{sub}</div>}
       </div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-0)', textAlign: 'right' }}>
-        {value}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-0)', textAlign: 'right' }}>
+          {value}
+        </div>
+        {right}
       </div>
     </div>
+  );
+}
+
+// v11.24.3: manual update fallback. Calls registration.update() and
+// gives the user immediate feedback. The toast itself is still driven
+// by PWARegister's updatefound listener — this button just kicks the
+// check off-cycle.
+function UpdateCheckButton() {
+  const [state, setState] = useState<'idle' | 'checking' | UpdateCheckResult>('idle');
+  const click = async () => {
+    setState('checking');
+    const result = await checkForUpdate();
+    setState(result);
+    // Reset to idle after a moment so the row doesn't sit in the
+    // "current/updated/unsupported" pose forever.
+    if (result === 'current' || result === 'unsupported') {
+      setTimeout(() => setState('idle'), 2_500);
+    }
+  };
+  const label =
+    state === 'checking'    ? 'CHECKING…'
+  : state === 'updated'     ? 'UPDATE READY'
+  : state === 'current'     ? 'UP TO DATE'
+  : state === 'unsupported' ? 'UNSUPPORTED'
+  :                           'CHECK FOR UPDATES';
+  const accent =
+    state === 'updated' ? 'var(--cyan)'
+  : state === 'current' ? 'var(--green)'
+  : state === 'unsupported' ? 'var(--fg-3)'
+  : 'var(--fg-2)';
+  return (
+    <button
+      onClick={click}
+      disabled={state === 'checking'}
+      style={{
+        padding: '3px 9px',
+        fontSize: 9, letterSpacing: '0.1em', fontWeight: 600,
+        fontFamily: 'var(--font-mono)',
+        background: 'transparent',
+        border: `1px solid ${state === 'updated' ? 'var(--cyan)' : 'var(--line-2)'}`,
+        color: accent,
+        borderRadius: 2,
+        cursor: state === 'checking' ? 'default' : 'pointer',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -576,7 +639,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </Section>
 
         <Section title="System">
-          <Row label="Version"     value={APP_VERSION} />
+          <Row
+            label="Version"
+            value={APP_VERSION}
+            right={<UpdateCheckButton />}
+          />
           <Row label="Model"       value={APP_MODEL} />
           <Row
             label="GCP Scale"

@@ -5,8 +5,18 @@
 // postMessage SKIP_WAITING to the waiting SW -> browser fires
 // controllerchange -> we reload so the new bundle takes over.
 // No auto-refresh: the user must click.
+//
+// v11.24.3: full audit pass for update detection.
+//   - reg.update() runs every 60 s, on visibilitychange, and on focus.
+//   - updatefound listener watches the installing worker through to
+//     the 'installed' state; if a controller exists, surface the toast.
+//   - registration is published to lib/pwaUpdate so the Settings
+//     "Check for Updates" button can call reg.update() on demand.
+//   - Dev logs use the spec'd `[PWA] ...` strings so the upgrade flow
+//     can be traced in the browser console end-to-end.
 
 import { useEffect, useState } from 'react';
+import { setRegistration } from '@/lib/pwaUpdate';
 
 export default function PWARegister() {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
@@ -18,12 +28,15 @@ export default function PWARegister() {
     const watchInstalling = (sw: ServiceWorker | null) => {
       if (!sw) return;
       const onState = () => {
-        // 'installed' + an existing controller means this is an UPDATE,
-        // not the first ever install. (First install has no controller
-        // yet -- we don't want to prompt on initial visit.)
-        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-          console.log('[SW] update available, showing toast');
-          setWaiting(sw);
+        if (sw.state === 'installed') {
+          console.log('[PWA] worker installed');
+          // 'installed' + an existing controller means this is an UPDATE,
+          // not the first ever install. (First install has no controller
+          // yet -- we don't want to prompt on initial visit.)
+          if (navigator.serviceWorker.controller) {
+            console.log('[PWA] waiting worker available');
+            setWaiting(sw);
+          }
         }
       };
       sw.addEventListener('statechange', onState);
@@ -43,7 +56,8 @@ export default function PWARegister() {
 
     const checkForUpdate = () => {
       if (!registration) return;
-      registration.update().catch(e => console.debug('[SW] update check failed', e));
+      console.log('[PWA] checking for update');
+      registration.update().catch(e => console.debug('[PWA] update check failed', e));
     };
 
     const register = () => {
@@ -51,24 +65,29 @@ export default function PWARegister() {
         .register('/sw.js')
         .then(reg => {
           registration = reg;
-          console.log('[SW] registered, scope:', reg.scope);
+          setRegistration(reg);
+          console.log('[PWA] registered, scope:', reg.scope);
 
           // A waiting worker may already exist if the user reloaded
           // twice quickly or if a previous tab installed the new SW.
           if (reg.waiting && navigator.serviceWorker.controller) {
+            console.log('[PWA] waiting worker available (already present)');
             setWaiting(reg.waiting);
           }
 
           // Future updates: updatefound fires when registration.installing
           // becomes non-null, before it transitions to installed/waiting.
-          reg.addEventListener('updatefound', () => watchInstalling(reg.installing));
+          reg.addEventListener('updatefound', () => {
+            console.log('[PWA] updatefound');
+            watchInstalling(reg.installing);
+          });
 
           // Kick the first poll so a deploy that happened seconds ago
           // is found before the user notices the page is "old".
           checkForUpdate();
           updateInterval = setInterval(checkForUpdate, POLL_MS);
         })
-        .catch(e => console.warn('[SW] registration failed', e));
+        .catch(e => console.warn('[PWA] registration failed', e));
     };
 
     if (document.readyState === 'complete') register();
@@ -81,6 +100,9 @@ export default function PWARegister() {
       if (document.visibilityState === 'visible') checkForUpdate();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
+    // Belt-and-braces: some browsers fire focus but not visibilitychange
+    // when switching between windows on the same monitor.
+    window.addEventListener('focus', checkForUpdate);
 
     // Reload exactly once after a new SW takes control. Guard prevents
     // a controllerchange storm from looping reloads if the user has
@@ -89,6 +111,7 @@ export default function PWARegister() {
     const onControllerChange = () => {
       if (reloading) return;
       reloading = true;
+      console.log('[PWA] controller changed — reloading');
       window.location.reload();
     };
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
@@ -96,13 +119,16 @@ export default function PWARegister() {
     return () => {
       navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', checkForUpdate);
       if (updateInterval !== null) clearInterval(updateInterval);
+      setRegistration(null);
     };
   }, []);
 
   if (!waiting) return null;
 
   const refresh = () => {
+    console.log('[PWA] refresh clicked');
     // Tell the waiting SW to skipWaiting; the controllerchange listener
     // above will reload the page once activation completes.
     waiting.postMessage({ type: 'SKIP_WAITING' });

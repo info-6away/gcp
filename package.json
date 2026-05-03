@@ -1,6 +1,7 @@
 {
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/sync-sw-version.mjs",
     "build": "next build",
     "start": "next start"
   },
