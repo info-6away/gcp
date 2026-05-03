@@ -8,7 +8,7 @@ import { usePSSAlert } from '@/lib/usePSSAlert';
 import { useMobile } from '@/lib/useMobile';
 import MobileApp from './mobile/MobileApp';
 import {
-  loadSensitivity, SENSITIVITY_THRESHOLDS, SENSITIVITY_LABEL,
+  loadSensitivity, SENSITIVITY_THRESHOLDS,
   type Sensitivity,
 } from '@/lib/sensitivity';
 import { useGcpState } from '@/lib/useGcpState';
@@ -80,10 +80,11 @@ export default function GCPApp() {
   const goldData = useGoldData(symbol);
   const isMobile = useMobile();
 
-  // Sensitivity: drives detector thresholds (v11.2+) and is shown in the
-  // status bar. Persisted to gcpro-settings.sensitivity. Re-read on the
-  // browser `storage` event so changes propagate across tabs and from
-  // SettingsPanel without a full reload.
+  // Sensitivity: drives detector thresholds (v11.2+). v11.24.4 removed
+  // the user-facing LOW / MEDIUM / HIGH control — defaults to 'medium'
+  // and stays there for normal users. The localStorage hook still
+  // reads gcpro-settings.sensitivity so a hidden dev override (set via
+  // browser console) keeps working without exposing the dial in the UI.
   const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
   useEffect(() => {
     setSensitivity(loadSensitivity());
@@ -548,7 +549,6 @@ export default function GCPApp() {
         series={displaySeries}
         symbol={symbol}
         timeframe={timeframe}
-        sensitivityLabel={SENSITIVITY_LABEL[sensitivity]}
       />
     </div>
   );

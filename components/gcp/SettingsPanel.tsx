@@ -5,10 +5,12 @@ import { APP_VERSION, APP_MODEL } from '@/lib/version';
 import { checkForUpdate, type UpdateCheckResult } from '@/lib/pwaUpdate';
 import { PageHeader } from '@/components/gcp/Chrome';
 import { PSS_THRESHOLD } from '@/lib/usePSSAlert';
-import {
-  loadSensitivity, saveSensitivity, SENSITIVITY_LABEL,
-  type Sensitivity,
-} from '@/lib/sensitivity';
+// v11.24.4: pattern sensitivity is no longer user-tunable. The
+// detector ships on a single calibrated default; the lib/sensitivity
+// infrastructure remains intact for a hidden localStorage override
+// during development, but the UI no longer surfaces LOW / MEDIUM /
+// HIGH controls — pattern correctness comes from the rules, not the
+// user's tuning choice.
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import { symbolEnvLabel } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
@@ -222,13 +224,11 @@ type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
 export default function SettingsPanel(props: SettingsPanelProps) {
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [notifStatus, setNotifStatus] = useState<'idle' | 'sent' | 'blocked' | 'focused'>('idle');
-  const [sensitivity, setSensitivity] = useState<Sensitivity>('medium');
   // v11.19: Advanced section (auto-interval picker) collapsed by default.
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setPrefs(loadPrefs());
-    setSensitivity(loadSensitivity());
   }, []);
 
   // v11.15.3: derive a clean state machine for both connection rows
@@ -258,15 +258,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     props.goldStatus === 'error'  ? 'stale'
     : props.goldStatus === 'closed' ? 'disabled'
     : 'live';
-
-  const updateSensitivity = (s: Sensitivity) => {
-    setSensitivity(s);
-    saveSensitivity(s);
-    // Storage events don't fire in the same tab; nudge listeners directly.
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new StorageEvent('storage', { key: PREFS_LS_KEY }));
-    }
-  };
 
   const setPref = (key: keyof Prefs, value: boolean) => {
     const next = { ...prefs, [key]: value };
@@ -509,41 +500,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </Section>
 
         <Section title="Preferences">
-          <div style={{
-            padding: '10px 0', borderBottom: '1px solid var(--line-0)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ flex: 1, paddingRight: 12 }}>
-                <div style={{ fontSize: 12, color: 'var(--fg-1)' }}>Pattern Sensitivity</div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
-                  Low = fewer, higher-confidence patterns. High = early warnings, more noise.
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 0 }}>
-                {(['low','medium','high'] as Sensitivity[]).map(s => {
-                  const active = sensitivity === s;
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => updateSensitivity(s)}
-                      style={{
-                        padding: '4px 10px',
-                        fontSize: 9, letterSpacing: '0.08em',
-                        fontFamily: 'var(--font-mono)',
-                        background: active ? 'var(--bg-3)' : 'transparent',
-                        border: `1px solid ${active ? 'var(--cyan)' : 'var(--line-2)'}`,
-                        color: active ? 'var(--cyan)' : 'var(--fg-3)',
-                        cursor: 'pointer',
-                        marginLeft: -1,
-                      }}
-                    >
-                      {SENSITIVITY_LABEL[s].toUpperCase()}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
           <ToggleRow
             label="Regime color bands"
             sub="Show colored bands behind Dashboard widgets"
