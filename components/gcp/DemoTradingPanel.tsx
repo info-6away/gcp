@@ -28,8 +28,10 @@ import {
   computePnl, computeEquity,
   classifyAlignment, isCautionPosture,
   alignmentLabel, alignmentColor,
+  computePerformanceSummary, MIN_TRADES_FOR_SUMMARY,
   STARTING_BALANCE, DEFAULT_NOTIONAL, QUICK_SIZES, DEMO_LS_KEY,
   type DemoAccount, type Side, type TradeContext,
+  type Alignment, type BucketStats,
 } from '@/lib/demoAccount';
 
 interface Props {
@@ -319,6 +321,11 @@ function PanelImpl({
           })()}
         </Section>
 
+        {/* ── Performance summary (v11.24.1) ── */}
+        <Section title="PERFORMANCE SUMMARY">
+          <PerformanceBlock trades={acct.trades} />
+        </Section>
+
         {/* ── History ── */}
         <Section title={`HISTORY (${acct.trades.length})`}>
           {acct.trades.length === 0 ? (
@@ -426,6 +433,132 @@ function Row({
       }}>
         {value}
       </span>
+    </div>
+  );
+}
+
+function pnlColor(n: number): string {
+  if (n > 0) return 'var(--green)';
+  if (n < 0) return 'var(--red)';
+  return 'var(--fg-3)';
+}
+
+function PerformanceBlock({ trades }: { trades: DemoAccount['trades'] }) {
+  const summary = useMemo(() => computePerformanceSummary(trades), [trades]);
+
+  // Spec guardrail: < 5 trades, win rates are noise. Render placeholder
+  // until the user has accumulated enough closed trades.
+  if (summary.total.count < MIN_TRADES_FOR_SUMMARY) {
+    return (
+      <div style={{ fontSize: 10, color: 'var(--fg-3)', padding: '4px 0', lineHeight: 1.5 }}>
+        Not enough data yet — need at least {MIN_TRADES_FOR_SUMMARY} closed trades
+        ({summary.total.count}/{MIN_TRADES_FOR_SUMMARY}).
+      </div>
+    );
+  }
+
+  const t = summary.total;
+  const buckets: { key: Alignment; label: string }[] = [
+    { key: 'followed', label: 'Followed AI'        },
+    { key: 'against',  label: 'Against AI'         },
+    { key: 'neutral',  label: 'Neutral / unclear'  },
+    { key: 'unknown',  label: 'No AI context'      },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Headline overall stats */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <Row label="Total Trades" value={`${t.count}`} />
+        <Row label="Wins / Losses" value={`${t.wins}W · ${t.losses}L`} />
+        <Row
+          label="Win Rate"
+          value={`${Math.round(t.winRate * 100)}%`}
+          valueColor={t.winRate >= 0.5 ? 'var(--green)' : t.winRate > 0 ? 'var(--fg-3)' : 'var(--red)'}
+        />
+        <Row
+          label="Total PnL"
+          value={fmtMoney(t.totalPnl, true)}
+          valueColor={pnlColor(t.totalPnl)}
+        />
+      </div>
+
+      {/* Per-alignment breakdown */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {buckets.map(b => (
+          <BucketRow key={b.key} label={b.label} alignment={b.key} stats={summary.byAlignment[b.key]} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BucketRow({
+  label, alignment, stats,
+}: {
+  label:     string;
+  alignment: Alignment;
+  stats:     BucketStats;
+}) {
+  const accent = alignmentColor(alignment);
+  if (stats.count === 0) {
+    return (
+      <div style={{
+        padding: '6px 8px',
+        background: 'var(--bg-2)',
+        border: '1px solid var(--line-1)',
+        borderRadius: 3,
+        fontSize: 9, lineHeight: 1.5,
+        opacity: 0.5,
+      }}>
+        <div style={{ color: accent, fontWeight: 600, letterSpacing: '0.06em' }}>
+          {label}
+        </div>
+        <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+          0 trades
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      padding: '6px 8px',
+      background: 'var(--bg-2)',
+      border: `1px solid ${accent}33`,
+      borderLeft: `2px solid ${accent}`,
+      borderRadius: 3,
+      fontSize: 9, lineHeight: 1.55,
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      }}>
+        <span style={{ color: accent, fontWeight: 600, letterSpacing: '0.06em' }}>
+          {label}
+        </span>
+        <span style={{
+          color: pnlColor(stats.totalPnl),
+          fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+        }}>
+          {fmtMoney(stats.totalPnl, true)}
+        </span>
+      </div>
+      <div style={{
+        display: 'flex', gap: 8, flexWrap: 'wrap',
+        color: 'var(--fg-3)', marginTop: 2,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        <span>{stats.count} trade{stats.count === 1 ? '' : 's'}</span>
+        <span>·</span>
+        <span style={{
+          color: stats.winRate >= 0.5 ? 'var(--green)' : stats.winRate > 0 ? 'var(--fg-3)' : 'var(--red)',
+        }}>
+          {Math.round(stats.winRate * 100)}% win
+        </span>
+        <span>·</span>
+        <span style={{ color: pnlColor(stats.avgPnl) }}>
+          avg {fmtMoney(stats.avgPnl, true)}
+        </span>
+      </div>
     </div>
   );
 }

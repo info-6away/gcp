@@ -269,3 +269,59 @@ export function alignmentColor(a: Alignment): string {
     case 'unknown':  return '#7F98A3';
   }
 }
+
+// --------------------------- Performance summary (v11.24.1) ---------------------------
+
+// Minimum closed trades before the TRD panel renders the summary
+// instead of the "not enough data yet" placeholder. Below this, win
+// rates are noise — three trades with one win shows 33% which tells
+// the user nothing useful.
+export const MIN_TRADES_FOR_SUMMARY = 5;
+
+export interface BucketStats {
+  count:   number;
+  wins:    number;
+  losses:  number;
+  winRate: number;   // 0..1, NaN-safe (0 when count === 0)
+  avgPnl:  number;
+  totalPnl: number;
+}
+
+export interface PerformanceSummary {
+  total:     BucketStats;
+  byAlignment: Record<Alignment, BucketStats>;
+}
+
+const EMPTY_BUCKET: BucketStats = {
+  count: 0, wins: 0, losses: 0, winRate: 0, avgPnl: 0, totalPnl: 0,
+};
+
+function bucketize(trades: ClosedTrade[]): BucketStats {
+  if (!trades.length) return { ...EMPTY_BUCKET };
+  let wins = 0, losses = 0, totalPnl = 0;
+  for (const t of trades) {
+    totalPnl += t.pnl;
+    if (t.pnl > 0)      wins++;
+    else if (t.pnl < 0) losses++;
+  }
+  return {
+    count:    trades.length,
+    wins,
+    losses,
+    winRate:  trades.length ? wins / trades.length : 0,
+    avgPnl:   trades.length ? totalPnl / trades.length : 0,
+    totalPnl,
+  };
+}
+
+export function computePerformanceSummary(trades: ClosedTrade[]): PerformanceSummary {
+  return {
+    total: bucketize(trades),
+    byAlignment: {
+      followed: bucketize(trades.filter(t => t.alignment === 'followed')),
+      against:  bucketize(trades.filter(t => t.alignment === 'against')),
+      neutral:  bucketize(trades.filter(t => t.alignment === 'neutral')),
+      unknown:  bucketize(trades.filter(t => t.alignment === 'unknown')),
+    },
+  };
+}
