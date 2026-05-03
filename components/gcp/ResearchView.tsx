@@ -104,6 +104,11 @@ interface ResearchViewProps {
 
 export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const [candles, setCandles] = useState<Candle[]>([]);
+  // v11.23.4: track which symbol the loaded candles correspond to so
+  // we can guard the memos against a brief render where `candles` is
+  // still XAUUSD but `symbol` has flipped to BTC. Also surfaces in dev
+  // logs for the symbol-mismatch warning.
+  const [candleSymbol, setCandleSymbol] = useState<MarketSymbol | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [fwdBars, setFwdBars] = useState(4);
@@ -142,22 +147,54 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   // across 6 regimes — and every row showed Insufficient data.
   // Now: fetch candles ending at the last available GCP timestamp
   // (so the candle window is inside the historical coverage), and
-  // pull 2000 of them for ~21 days of overlap. Re-fetch only when
-  // symbol changes; we don't need a fresh candle window every time
-  // a new GCP minute arrives.
+  // pull 2000 of them for ~21 days of overlap.
+  //
+  // v11.23.4: two bug fixes for symbol awareness:
+  //   1) Old XAUUSD candles persisted in state during a symbol switch
+  //      to BTC, so the regime scatter rendered "BTC" copy over gold
+  //      data until the BTC fetch resolved. Now setCandles([]) clears
+  //      the array immediately on the deps trigger, and candleSymbol
+  //      tracks which symbol the loaded array belongs to.
+  //   2) Deps were [symbol] only with `lastGcpTs` referenced inside
+  //      the body. If Research mounted before the GCP series loaded,
+  //      lastGcpTs was 0, the early-return fired, and the effect never
+  //      re-ran — so no candles ever loaded until the user manually
+  //      switched symbols. Adding `gcpReady` (a boolean) to deps fires
+  //      the fetch exactly once when the series first appears, and
+  //      again on every symbol change, without re-firing on each new
+  //      GCP minute (the boolean stays true).
   const lastGcpTs = series.length ? series[series.length - 1].t : 0;
+  const gcpReady  = lastGcpTs > 0;
   useEffect(() => {
-    if (!lastGcpTs) return;
-    let cancelled = false;
+    // Always reset on the deps trigger so a stale symbol's candles
+    // never paint under the new symbol's title.
+    setCandles([]);
+    setCandleSymbol(null);
     setLoading(true);
     setError(null);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Research] symbol: ${symbol}`);
+      console.log(`[Research] candles source: ${TD_SYMBOLS[symbol]}`);
+    }
+
+    if (!gcpReady) return; // wait for GCP series; effect re-fires when ready
+
+    let cancelled = false;
     fetchCandlesForWindow(TD_SYMBOLS[symbol], '15m', 2000, lastGcpTs)
-      .then(data => { if (!cancelled) setCandles(data); })
+      .then(data => {
+        if (cancelled) return;
+        setCandles(data);
+        setCandleSymbol(symbol);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[Research] candles loaded for ${symbol}: ${data.length} bars`);
+        }
+      })
       .catch(e   => { if (!cancelled) setError(String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [symbol, gcpReady]);
 
   // ── Regime scatter (one dot per candle) ─────────────────────────────────────
   // v11.19.3: allow partial forward windows + bar-OPEN entry. The
@@ -177,6 +214,16 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       survivedByRegime: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 } as Record<string, number>,
     };
     if (!candles.length || !series.length) return empty;
+    // v11.23.4: refuse to compute when the loaded candles belong to a
+    // different symbol than the one the user has selected. Without this
+    // guard, a symbol flip from XAUUSD → BTC would render gold-derived
+    // regime points under the BTC label for one render cycle.
+    if (candleSymbol && candleSymbol !== symbol) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`[Research] symbol mismatch — selected ${symbol} but candles ${candleSymbol}`);
+      }
+      return empty;
+    }
 
     const gcpByTs = new Map<number, { v: number; r: string }>();
     series.forEach(p => gcpByTs.set(Math.floor(p.t / 1000), { v: p.v, r: p.r ?? regimeFor(p.v) }));
@@ -245,16 +292,19 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       const totalSurvived = Object.values(survivedByRegime).reduce((a, b) => a + b, 0);
       const totalTagged   = Object.values(taggedByRegime).reduce((a, b) => a + b, 0);
       console.log(`[Research] totals — tagged ${totalTagged}, survived ${totalSurvived}, points ${points.length}`);
+      console.log(`[Research] regime samples: ${points.length}`);
     }
 
     return { points, taggedByRegime, survivedByRegime };
-  }, [candles, series, fwdBars]);
+  }, [candles, candleSymbol, symbol, series, fwdBars]);
 
   const regimePoints = regimeData.points;
 
   // ── Pattern scatter (one dot per pattern occurrence) ────────────────────────
   const patternPoints = useMemo<PatternPoint[]>(() => {
     if (!candles.length || !series.length) return [];
+    // v11.23.4: same symbol-mismatch guard as regimeData.
+    if (candleSymbol && candleSymbol !== symbol) return [];
 
     const candleStart = candles[0].t;
     const candleEnd   = candles[candles.length - 1].t;
@@ -282,7 +332,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       });
     }
     return points;
-  }, [candles, series, fwdBars]);
+  }, [candles, candleSymbol, symbol, series, fwdBars]);
 
   // ── Stats per axis ──────────────────────────────────────────────────────────
   // v11.19.3: stats include `tagged` (raw per-regime count before
@@ -350,6 +400,10 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!aiHistory.length || !candles.length) {
       return { points, pendingByState, totalForSymbol, pendingTotal: totalForSymbol };
     }
+    // v11.23.4: same symbol-mismatch guard as regimeData / patternPoints.
+    if (candleSymbol && candleSymbol !== symbol) {
+      return { points, pendingByState, totalForSymbol, pendingTotal: totalForSymbol };
+    }
     const lastIdx = candles.length - 1;
     let pendingTotal = 0;
     const markPending = (code: string) => {
@@ -384,7 +438,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       });
     }
     return { points, pendingByState, totalForSymbol, pendingTotal };
-  }, [aiHistory, candles, fwdBars, symbol]);
+  }, [aiHistory, candles, candleSymbol, fwdBars, symbol]);
 
   const aiStatePoints = aiStateData.points;
 
