@@ -42,6 +42,7 @@ const PATTERN_ONELINER: Record<string, string> = {
   'Discharge Wave':           'Climax burst. Volatility spike, possible exhaustion.',
   'Double Spike Exhaustion':  'Twin spikes. Discharge complete, post-event vacuum.',
   'Synchronization Plateau':  'Strong gold trend zone. One of the highest-quality setups.',
+  'Plateau Decay':            'Sync plateau fading without confirmed release. Watch for discharge or re-anchor.',
 };
 
 // REGIME_ORDER previously powered the per-regime mini-bar in RegimeCard.

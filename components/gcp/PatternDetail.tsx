@@ -104,6 +104,13 @@ const LIB_META: Record<string, {
     summary: 'Sustained D regime hold; minimal collapse below C.',
     market:  'One of the highest-quality gold trend continuation zones.',
   },
+  'Plateau Decay': {
+    glyph:   'D# fading',
+    color:   '#9ca3af',
+    summary: 'Sustained D run flattens out without confirmed release.',
+    market:  'Plateau is fading. Watch for either a clean discharge '
+             + '(slope/volatility expansion) or a re-anchor in D.',
+  },
 };
 
 const PATTERN_ORDER = [
@@ -118,6 +125,7 @@ const PATTERN_ORDER = [
   'Echo Spike',
   'Discharge Wave',
   'Discharge Break',
+  'Plateau Decay',
   'Double Spike Exhaustion',
   'Ignition Drift',
   'Pulse Train',

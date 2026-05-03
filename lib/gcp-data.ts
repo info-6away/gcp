@@ -2,7 +2,7 @@ import type {
   RegimeId, RegimeDef, DataPoint, Dataset,
   Pattern, EnergyMetrics, PersistenceInfo,
 } from '@/types/gcp';
-import { windowMetrics, ced } from '@/lib/energy';
+import { windowMetrics, ced, dischargeConfirmation } from '@/lib/energy';
 import {
   PATTERN_CODE, PATTERN_GOLD_INTERP, PATTERN_INVALIDATORS,
   REGIME_NAME, regimeForValue,
@@ -482,17 +482,51 @@ export function detectPatterns(
 
   // Discharge Break: D or E run that ends abruptly with a strong drop into
   // A/B within a few bars (negative slope, alignment lost).
+  //
+  // v11.24.2: regime-only gating produced a false positive every time
+  // a Synchronization Plateau flattened down without an actual energy
+  // release. Now we require the dischargeConfirmation() layer to
+  // confirm at least 2 of 4 quantitative conditions (slope drop,
+  // curvature spike, volatility expansion, structure break). If <2
+  // fire, we still record the event — but as a softer "Plateau Decay"
+  // pattern so the user sees that the plateau is fading without the
+  // misleading "discharge in progress" framing.
   const DB_DROP = scale(8, 2);
   for (const [a, b] of [...dRuns, ...runs(r => r === 'E')]) {
     if (b - a + 1 < scale(8, 2)) continue;
     const after = regs.slice(b + 1, Math.min(regs.length, b + 1 + DB_DROP));
     const lowAfter = after.filter(r => r === 'A' || r === 'B').length;
     if (lowAfter < after.length * 0.6 || after.length === 0) continue;
-    patterns.push({
-      id: `db-${b}`, kind: 'Discharge Break',
-      start: a, end: Math.min(regs.length - 1, b + DB_DROP),
-      tStart: 0, tEnd: 0, glyph: 'D/E → B/A', strength: 0.65,
-    });
+
+    // Confirmation windows:
+    //   drop  = NV values during the post-run drop (the candidate event)
+    //   prior = NV values across the run itself (baseline volatility +
+    //           structure reference for localMin / std comparison).
+    const dropEnd  = Math.min(regs.length, b + 1 + DB_DROP);
+    const drop     = series.slice(b + 1, dropEnd).map(p => p.v);
+    const prior    = series.slice(a, b + 1).map(p => p.v);
+    const conf     = dischargeConfirmation(drop, prior);
+
+    if (conf.conditionsMet >= 2) {
+      // Strength leans on how many conditions confirmed (2/4 = 0.55,
+      // 4/4 = 0.85) so a weakly-confirmed break ranks below a clean one.
+      const strength = Math.min(0.85, 0.45 + 0.1 * conf.conditionsMet);
+      patterns.push({
+        id: `db-${b}`, kind: 'Discharge Break',
+        start: a, end: Math.min(regs.length - 1, b + DB_DROP),
+        tStart: 0, tEnd: 0, glyph: 'D/E → B/A', strength,
+      });
+    } else {
+      // No real release — the plateau is just decaying. PD strength
+      // tracks how close the run came to confirming so the user can
+      // tell a "barely 1/4" decay from a "0/4 just drifting" decay.
+      const strength = Math.max(0.40, Math.min(0.60, 0.40 + 0.1 * conf.conditionsMet));
+      patterns.push({
+        id: `pd-${b}`, kind: 'Plateau Decay',
+        start: a, end: Math.min(regs.length - 1, b + DB_DROP),
+        tStart: 0, tEnd: 0, glyph: 'D# fading', strength,
+      });
+    }
   }
 
   // Pulse Train: 3+ alternating low/mid pulses (A->B->A->B...) within a

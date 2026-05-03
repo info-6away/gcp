@@ -148,7 +148,12 @@ export type PatternKind =
   | 'Discharge Break'
   | 'Discharge Wave'
   | 'Double Spike Exhaustion'
-  | 'Synchronization Plateau';
+  | 'Synchronization Plateau'
+  // v11.24.2: intermediate state between Synchronization Plateau and
+  // Discharge Break. Fires when a sustained D run flattens out without
+  // the slope / curvature / volatility / structure expansion that
+  // confirms an actual energy release. Sits in the SP → PD → DB chain.
+  | 'Plateau Decay';
 
 export type SlopeLabel     = 'positive' | 'negative' | 'flat';
 export type CurvatureLabel = 'positive' | 'negative' | 'flat';

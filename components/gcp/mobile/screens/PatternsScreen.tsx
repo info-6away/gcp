@@ -23,6 +23,7 @@ const PATTERN_COLORS: Record<string, string> = {
   'Discharge Wave':           '#ea580c',
   'Double Spike Exhaustion':  '#9333ea',
   'Synchronization Plateau':  '#15803d',
+  'Plateau Decay':            '#9ca3af',
 };
 
 const KINDS = [
@@ -31,9 +32,10 @@ const KINDS = [
   'Ignition Rise',            'Staircase Alignment',
   'Failed Alignment',         'Coherence Volcano',
   'Echo Spike',               'Discharge Wave',
-  'Discharge Break',          'Double Spike Exhaustion',
-  'Ignition Drift',           'Pulse Train',
-  'Dead Drift',               'Shock Jump',
+  'Discharge Break',          'Plateau Decay',
+  'Double Spike Exhaustion',  'Ignition Drift',
+  'Pulse Train',              'Dead Drift',
+  'Shock Jump',
 ];
 
 const pssOf = (p: Pattern) => Math.round(p.strength * 100);

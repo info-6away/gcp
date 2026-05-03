@@ -807,6 +807,9 @@ export default function ChartView({
       'Discharge Break':          '#dc2626',
       'Discharge Wave':           '#ea580c',
       'Double Spike Exhaustion':  '#9333ea',
+      // v11.24.2: intermediate state — softer grey since this is the
+      // "decaying but not confirmed discharge" warning, not a release.
+      'Plateau Decay':            '#9ca3af',
       // Shock — red
       'Shock Jump':               C.red,
     };

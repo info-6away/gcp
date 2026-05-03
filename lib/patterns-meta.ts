@@ -41,6 +41,7 @@ export const PATTERN_CODE: Record<PatternKind, string> = {
   'Discharge Wave':           'DW',
   'Double Spike Exhaustion':  'DSE',
   'Synchronization Plateau':  'SP',
+  'Plateau Decay':            'PD',
 };
 
 export const PATTERN_GLYPH: Record<PatternKind, string> = {
@@ -60,6 +61,7 @@ export const PATTERN_GLYPH: Record<PatternKind, string> = {
   'Discharge Wave':           'A → E → A',
   'Double Spike Exhaustion':  'A → E → A → E → A',
   'Synchronization Plateau':  'C → D# sustained',
+  'Plateau Decay':            'D# fading',
 };
 
 export const PATTERN_GOLD_INTERP: Record<PatternKind, string> = {
@@ -95,6 +97,9 @@ export const PATTERN_GOLD_INTERP: Record<PatternKind, string> = {
     'Coherence discharge complete. Likely post-event vacuum.',
   'Synchronization Plateau':
     'Strong gold trend continuation zone. One of the highest-quality setups.',
+  'Plateau Decay':
+    'Sync plateau is fading without confirmed release. Watch for either '
+    + 'a clean discharge (slope/volatility expansion) or a re-anchor in D.',
 };
 
 export const PATTERN_INVALIDATORS: Record<PatternKind, string[]> = {
@@ -164,5 +169,10 @@ export const PATTERN_INVALIDATORS: Record<PatternKind, string[]> = {
   'Synchronization Plateau': [
     'Drop below 100 within 30 minutes',
     'Spike to E (becomes Climax / Discharge Wave)',
+  ],
+  'Plateau Decay': [
+    'Slope < -1.5 NV/bar in the drop window (becomes Discharge Break)',
+    'Volatility expands >30% vs the prior plateau (becomes Discharge Break)',
+    'Re-anchors in D within a few bars (false alarm — back to Plateau)',
   ],
 };
