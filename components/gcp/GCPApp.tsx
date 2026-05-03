@@ -27,6 +27,9 @@ import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
 import ResearchView from './ResearchView';
 import TradingView from './TradingView';
+import DemoTradingPanel from './DemoTradingPanel';
+import { derivePosture } from '@/lib/aiAction';
+import { deriveTradePlan } from '@/lib/tradePlan';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
@@ -469,12 +472,49 @@ export default function GCPApp() {
               symbol={symbol}
             />
           )}
-          {page === 'trading' && (
-            <TradingView
-              symbol={symbol}
-              timeframe={timeframe}
-            />
-          )}
+          {page === 'trading' && (() => {
+            // v11.24: paper-trading layer. Live price, AI posture,
+            // pattern, and trade plan are computed here so the demo
+            // panel can snapshot the full context the moment the user
+            // clicks BUY/SELL. Pure local — no broker, no orders.
+            const latestPattern = displayPatterns[displayPatterns.length - 1] ?? null;
+            const posture       = derivePosture(stableState, latestPattern);
+            const tradePlan     = stableState && planStructure
+              ? deriveTradePlan({
+                  state:          stableState,
+                  structure:      planStructure,
+                  latestPattern,
+                  symbol,
+                  analysisCandle: planAnalysisCandle,
+                  analysisTf:     AI_ANALYSIS_TF,
+                  currentPrice:   goldData.price,
+                })
+              : null;
+            const lastBase = baseSeries[baseSeries.length - 1] ?? null;
+            return (
+              <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                  <TradingView
+                    symbol={symbol}
+                    timeframe={timeframe}
+                  />
+                </div>
+                <div style={{ width: 320, flexShrink: 0 }}>
+                  <DemoTradingPanel
+                    symbol={symbol}
+                    timeframe={timeframe}
+                    currentPrice={goldData.price}
+                    aiState={stableState}
+                    posture={posture}
+                    latestPattern={latestPattern}
+                    tradePlan={tradePlan}
+                    regime={lastBase?.r ?? null}
+                    netVariance={lastBase?.v ?? null}
+                  />
+                </div>
+              </div>
+            );
+          })()}
           {page === 'settings' && (
             <SettingsPanel
               gcpLive={gcpIsLive}
