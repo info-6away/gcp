@@ -284,6 +284,25 @@ export function detectPatterns(
     }
   }
 
+  // v11.24.5: Shock Jump confirmation pass. Previously any F-regime
+  // run that cleared the boundary / NV-threshold guards was tagged
+  // SJ, which produced false positives during sustained climbs that
+  // happened to reach F and stay there. A real shock spikes fast and
+  // reverts fast — without reversion, an upward push is just a trend
+  // extension, not a shock. Three new constraints:
+  //
+  //   1. Duration cap:    peak run ≤ SH_MAX_DURATION bars (~5).
+  //   2. Spike magnitude: peakValue - preBaseline must be positive.
+  //   3. Reversion ratio: (peakValue - nextMin) / spikeMagnitude ≥ 0.6
+  //                       within SH_REVERSION_LOOKAHEAD bars.
+  //
+  // Candidates whose post-window hasn't fully played out (recent live
+  // tail) are deferred — under-tagging beats over-tagging here.
+  const SH_MAX_DURATION       = scale(5, 1);
+  const SH_BASELINE_LOOKBACK  = scale(5, 1);
+  const SH_REVERSION_LOOKAHEAD = scale(10, 2);
+  const SH_REVERSION_RATIO    = 0.6;
+
   const fruns = runs(r => r === 'F');
   for (const [a, b] of fruns) {
     // Skip boundary artifacts: a single F-regime point that sits next to a
@@ -300,7 +319,51 @@ export function detectPatterns(
     // against detector noise where a regime label disagrees with the value.
     if (series[a] && series[a].v < 220) continue;
 
-    patterns.push({ id: `sh-${a}`, kind: 'Shock Jump', start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER, tStart: 0, tEnd: 0, glyph: 'B → F', strength: 0.95 });
+    // Duration: real shocks resolve fast. A sustained F hold (e.g. an
+    // extended climax / climb) is an Alignment / Climax read, not SJ.
+    if (b - a + 1 > SH_MAX_DURATION) continue;
+
+    // Baseline: NV a few bars before the spike begins. Caps at series
+    // start so an early-window F run still has a reference value.
+    const baseIdx  = Math.max(0, a - SH_BASELINE_LOOKBACK);
+    const baseline = series[baseIdx]?.v ?? series[a].v;
+
+    // Peak: max NV inside the F run.
+    let peakV = -Infinity;
+    for (let k = a; k <= b; k++) {
+      const v = series[k]?.v;
+      if (typeof v === 'number' && v > peakV) peakV = v;
+    }
+    if (!Number.isFinite(peakV)) continue;
+
+    const spikeMag = peakV - baseline;
+    if (spikeMag <= 0) continue;          // no real spike (steady high — not SJ)
+
+    // Reversion: min NV in the post-window. If we can't see far enough
+    // ahead yet (live tail), defer the candidate rather than tagging it.
+    const lookEnd = b + 1 + SH_REVERSION_LOOKAHEAD;
+    if (lookEnd > regs.length) continue;
+    let postMin = Infinity;
+    for (let k = b + 1; k < lookEnd; k++) {
+      const v = series[k]?.v;
+      if (typeof v === 'number' && v < postMin) postMin = v;
+    }
+    if (!Number.isFinite(postMin)) continue;
+
+    const reversion      = peakV - postMin;
+    const reversionRatio = reversion / spikeMag;
+    if (reversionRatio < SH_REVERSION_RATIO) continue;  // sustained — not a shock
+
+    // Strength scales with how complete the reversion was. A bare-min
+    // 0.60-ratio spike sits at ~0.69; a clean ≥1.0-ratio (full retrace)
+    // pins to 0.92.
+    const strength = Math.max(0.65, Math.min(0.92, 0.50 + reversionRatio * 0.42));
+
+    patterns.push({
+      id: `sh-${a}`, kind: 'Shock Jump',
+      start: Math.max(0, a - SH_BUFFER), end: b + SH_BUFFER,
+      tStart: 0, tEnd: 0, glyph: 'B → F → revert', strength,
+    });
   }
 
   for (let i = CV_HALF; i < regs.length - CV_LOOP_END; i++) {
