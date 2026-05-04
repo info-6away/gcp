@@ -54,6 +54,36 @@ function toTime(ms: number): Time {
   return Math.floor(ms / 1000) as Time;
 }
 
+// v11.25.2: explicit per-candle color normalizer.
+//
+// LW Charts retains previously-set per-bar color/borderColor/wickColor
+// fields across cs.update() calls, so a partial update that omits the
+// color triplet inherits whatever the previous payload supplied. That
+// caused mixed-direction artifacts: a live tick flipped a bar's OHLC
+// from up to down (or vice versa), but the per-bar color stuck to the
+// original direction — the body / wick / border read green even
+// though close < open. Worse, the synthetic-weekend transparent
+// override leaked into bars whose slot was later mutated by a live
+// tick, painting them invisibly.
+//
+// The fix: derive color SOLELY from this bar's own close >= open at
+// every write site (initial setData, post-setData re-apply, new-slot
+// tick, same-slot tick). All three color fields (body + border +
+// wick) are written explicitly on every payload so LW Charts can't
+// merge stale state.
+function normalizeCandleColors<T extends CandlestickData>(d: T): T {
+  // Synthetic weekend / overnight gap fillers want to stay invisible.
+  // Detect them by close === open AND a fully transparent fill on the
+  // input — caller is responsible for setting that up. For the normal
+  // candle path we always overwrite color triplets from OHLC.
+  if (typeof d.color === 'string' && d.color.startsWith('rgba(0,0,0,0)')) {
+    return d;
+  }
+  const isUp = (d.close as number) >= (d.open as number);
+  const col  = isUp ? C.green : C.redCdl;
+  return { ...d, color: col, borderColor: col, wickColor: col };
+}
+
 // Thin wrapper around the shared tdTimeSeries helper. The lazy-scroll
 // path doesn't want the synthetic weekend / extend-to-now passes that
 // fetchCandlesForWindow applies — backfill candles need to land at their
@@ -539,8 +569,9 @@ export default function ChartView({
         close: c.c,
       };
       // Strict synthetic check: only apply transparent override when the
-      // flag is explicitly true. Real candles (synthetic absent/undefined)
-      // fall through with no per-bar color and inherit the series defaults.
+      // flag is explicitly true. Synthetic weekend / overnight fillers
+      // stay invisible; the normalizer below short-circuits when it
+      // sees the rgba(0,0,0,0) marker.
       if (c.synthetic === true) {
         return {
           ...base,
@@ -549,8 +580,28 @@ export default function ChartView({
           borderColor: 'rgba(0,0,0,0)',
         };
       }
-      return base;
+      // v11.25.2: explicitly stamp body/border/wick from THIS bar's
+      // OHLC every time. Without this, a later cs.update() that omits
+      // the color triplet inherits whatever color stuck from a prior
+      // payload — the source of the mixed-direction artifacts.
+      return normalizeCandleColors(base as CandlestickData);
     });
+
+    if (process.env.NODE_ENV !== 'production') {
+      // Audit pass: warn if any of the last 10 bars has a color that
+      // disagrees with its OHLC. Mismatches here would indicate a
+      // regression in the normalizer or an upstream bar with stale
+      // color fields.
+      for (const d of data.slice(-10)) {
+        const isUp = (d.close as number) >= (d.open as number);
+        const expected = isUp ? C.green : C.redCdl;
+        if (d.color && d.color !== 'rgba(0,0,0,0)' && d.color !== expected) {
+          console.warn('[CANDLE COLOR] mismatch', {
+            time: d.time, open: d.open, close: d.close, color: d.color,
+          });
+        }
+      }
+    }
 
     try { cs.setData(data); } catch { /* time ordering harmless */ }
 
@@ -577,7 +628,9 @@ export default function ChartView({
         if (isValidCandle(bar)) {
           allCandlesRef.current[allCandlesRef.current.length - 1] = bar;
           try {
-            cs.update({ time: toTime(slot), open: bar.o, high: bar.h, low: bar.l, close: bar.c });
+            cs.update(normalizeCandleColors({
+              time: toTime(slot), open: bar.o, high: bar.h, low: bar.l, close: bar.c,
+            } as CandlestickData));
           } catch { /* */ }
           if (process.env.NODE_ENV !== 'production') {
             console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'after-setData' });
@@ -628,10 +681,10 @@ export default function ChartView({
       if (!isValidCandle(bar)) return;
       allCandlesRef.current.push(bar);
       try {
-        cs.update({
+        cs.update(normalizeCandleColors({
           time:  toTime(slot),
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
-        });
+        } as CandlestickData));
       } catch { /* */ }
       // v11.20.2 dev log: confirms color decision is per-candle.
       // isUp computed ONLY from this bar's open/close, never from
@@ -657,10 +710,10 @@ export default function ChartView({
       if (!isValidCandle(bar)) return;
       allCandlesRef.current[allCandlesRef.current.length - 1] = bar;
       try {
-        cs.update({
+        cs.update(normalizeCandleColors({
           time:  toTime(slot),
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
-        });
+        } as CandlestickData));
       } catch { /* */ }
       if (process.env.NODE_ENV !== 'production') {
         console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'live-tick' });
