@@ -120,16 +120,44 @@ export default function ChartView({
   const earliestTsRef = useRef<number | null>(null);
   const isInitRef     = useRef(true);
   const prevSymbolRef = useRef<MarketSymbol>(symbol);
+  const prevChartTfRef = useRef<ChartTF>('5m');
 
-  // Wipe series immediately when the symbol changes so the old ticker's
-  // data doesn't briefly bleed onto the new symbol's axes.
+  // v11.25.1: hard reset on symbol OR timeframe change. Previously the
+  // wipe only fired on symbol change, so 15m → 1m left old candles,
+  // GCP line, markers, and the logical range pinned to the prior
+  // timeframe — the new bars then rendered on top of stale geometry,
+  // producing the distorted-spacing / misaligned-marker artifacts.
+  // Now we tear EVERYTHING down (series data + markers + refs + visible
+  // range) before the new fetch lands, and the candle/GCP/marker
+  // effects rebuild from scratch when the fresh data arrives.
   useEffect(() => {
-    if (prevSymbolRef.current === symbol) return;
-    prevSymbolRef.current = symbol;
+    const symbolChanged = prevSymbolRef.current  !== symbol;
+    const tfChanged     = prevChartTfRef.current !== chartTF;
+    if (!symbolChanged && !tfChanged) return;
+    prevSymbolRef.current  = symbol;
+    prevChartTfRef.current = chartTF;
+
+    // Clear series data (no-op if the chart hasn't created the series
+    // yet — refs are nulled until the chart-creation effect runs).
     try { candleSeriesRef.current?.setData([]); } catch { /* */ }
-    try { gcpLineRef.current?.setData([]); } catch { /* */ }
-    isInitRef.current = true;
-  }, [symbol]);
+    try { gcpLineRef.current?.setData([]); }    catch { /* */ }
+    try { markersRef.current?.setMarkers([]); } catch { /* */ }
+
+    // Reset internal scratch refs so lazy scroll-back, live append,
+    // and the "first init fitContent" path all behave as if the chart
+    // were freshly mounted.
+    allCandlesRef.current = [];
+    earliestTsRef.current = null;
+    isInitRef.current     = true;
+
+    // v11.25.1: reset the time-scale visible range. LW Charts keeps
+    // its previous logical range across setData() calls, which means
+    // a 15m chart that scrolled to a specific window keeps that
+    // window after switching to 1m — but the bar density is now 15×
+    // tighter, so the same logical range visually compresses the new
+    // bars. Resetting forces the next fitContent() to recompute.
+    try { chartRef.current?.timeScale().resetTimeScale(); } catch { /* */ }
+  }, [symbol, chartTF]);
 
   const [ctxMenu, setCtxMenu] = useState<{
     x: number; y: number; price: number | null; time: number | null;
