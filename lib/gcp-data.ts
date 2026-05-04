@@ -3,6 +3,7 @@ import type {
   Pattern, EnergyMetrics, PersistenceInfo,
 } from '@/types/gcp';
 import { windowMetrics, ced, dischargeConfirmation } from '@/lib/energy';
+import { resolvePatternConflicts, inferTimeframeMs } from '@/lib/patternResolve';
 import {
   PATTERN_CODE, PATTERN_GOLD_INTERP, PATTERN_INVALIDATORS,
   REGIME_NAME, regimeForValue,
@@ -719,7 +720,18 @@ export function detectPatterns(
   const minConf = _thresholds?.minPatternConfidence ?? 0.60;
   const filtered = patterns.filter(p => (p.confidence ?? p.strength) >= minConf);
 
-  return filtered;
+  // v11.24.6: post-detection conflict resolver. Each individual
+  // detector still fires the same way, but overlapping signals from
+  // different phases of the same lifecycle are now compressed to a
+  // single highest-priority pattern per local window. See
+  // lib/patternResolve.ts for the priority + group rules. This is the
+  // single source of "patterns the user actually sees" — chart
+  // markers, pattern feed, research, demo trading all consume the
+  // resolved list because they all read from detectPatterns()'s
+  // return value.
+  const tfMs = inferTimeframeMs(series);
+  const { kept } = resolvePatternConflicts(filtered, tfMs);
+  return kept;
 }
 
 // v11.2: delegates to lib/energy.ts. Public API and EnergyMetrics shape
