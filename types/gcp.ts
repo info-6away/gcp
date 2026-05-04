@@ -183,6 +183,13 @@ export interface Pattern {
   ced?:                number;        // raw CED value over the window
   goldInterpretation?: string;
   invalidators?:       string[];
+
+  // v11.24.7: visibility tier assigned by lib/patternVisibility.ts after
+  // conflict resolution. 'primary' = chart marker + feed; 'secondary' =
+  // dimmed chart marker + feed; 'hidden' = filtered out before reaching
+  // the consumer. Optional so detectors that don't go through the
+  // visibility pass still type-check.
+  visibility?:         'primary' | 'secondary' | 'hidden';
 }
 
 export interface EnergyMetrics {

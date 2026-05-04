@@ -834,17 +834,25 @@ export default function ChartView({
           skippedForLog.push({ code: p.patternCode, kind: p.kind, tStart: p.tStart });
           return null;
         }
-        const isSelected = selectedPattern?.id === p.id;
+        const isSelected  = selectedPattern?.id === p.id;
+        // v11.24.7: secondary patterns render with a dimmer marker
+        // color so the eye reads them as background context rather
+        // than headline events. LW Charts doesn't expose per-marker
+        // opacity, so we emulate it by mixing the category color with
+        // a low-alpha hex suffix.
+        const isSecondary = p.visibility === 'secondary' && !isSelected;
+        const baseColor   = MARKER_COLORS[p.kind] ?? C.text;
+        const dimmedColor = isSecondary ? `${baseColor}73` : baseColor;
         return {
           time:     toTime(closest.t),
           position: 'aboveBar' as const,
           // Selected marker: cyan-tinted color override + bumped size +
           // arrowDown shape so it stands out from the other circles. Other
           // markers stay at their category color and circle size 1.
-          color:    isSelected ? C.cyan : (MARKER_COLORS[p.kind] ?? C.text),
+          color:    isSelected ? C.cyan : dimmedColor,
           shape:    isSelected ? ('arrowDown' as const) : ('circle' as const),
           text:     p.patternCode ?? p.kind.split(' ').map(w => w[0]).join(''),
-          size:     isSelected ? 2 : 1,
+          size:     isSelected ? 2 : isSecondary ? 0.7 : 1,
         };
       }) as (SeriesMarker<Time> | null)[])
       .filter((m): m is SeriesMarker<Time> => m !== null)

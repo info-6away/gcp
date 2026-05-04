@@ -4,6 +4,7 @@ import type {
 } from '@/types/gcp';
 import { windowMetrics, ced, dischargeConfirmation } from '@/lib/energy';
 import { resolvePatternConflicts, inferTimeframeMs } from '@/lib/patternResolve';
+import { assignPatternVisibility } from '@/lib/patternVisibility';
 import {
   PATTERN_CODE, PATTERN_GOLD_INTERP, PATTERN_INVALIDATORS,
   REGIME_NAME, regimeForValue,
@@ -731,7 +732,14 @@ export function detectPatterns(
   // return value.
   const tfMs = inferTimeframeMs(series);
   const { kept } = resolvePatternConflicts(filtered, tfMs);
-  return kept;
+
+  // v11.24.7: visibility pass. Tags each surviving pattern as
+  // 'primary' / 'secondary' / 'hidden' and drops the hidden bucket so
+  // chart markers, the pattern feed, research, and demo trading all
+  // consume the same selective list. Primary + secondary survive;
+  // chart consumers can still dim secondary using p.visibility.
+  const { visible } = assignPatternVisibility(kept, tfMs);
+  return visible;
 }
 
 // v11.2: delegates to lib/energy.ts. Public API and EnergyMetrics shape

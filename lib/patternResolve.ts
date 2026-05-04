@@ -109,9 +109,10 @@ function priorityOf(k: PatternKind): number {
 function conflictsWith(a: PatternKind, b: PatternKind): boolean {
   if (a === b) return true;                          // dedupe same-kind
   if (NARRATIVE.has(a) && NARRATIVE.has(b)) return true;
-  if (NARRATIVE.has(a) && SUPPORT.has(b))   return true;  // narrative > support
-  if (SUPPORT.has(a) && NARRATIVE.has(b))   return true;
-  return false;                                      // two distinct supports coexist
+  // v11.24.7: narrative no longer hard-suppresses support at the
+  // resolver layer — that decision now lives in lib/patternVisibility.ts
+  // which keeps the strongest support per window and hides the rest.
+  return false;                                      // distinct supports / narrative+support coexist
 }
 
 function reasonFor(kept: PatternKind, dropped: PatternKind): string {

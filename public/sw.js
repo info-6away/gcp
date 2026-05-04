@@ -15,7 +15,7 @@
 // /data/* JSON) and rethrows network errors so the browser handles
 // them natively rather than getting a fake 504.
 
-const SW_VERSION  = 'gcppro-v11.24.6';
+const SW_VERSION  = 'gcppro-v11.24.7';
 const SHELL_CACHE = `${SW_VERSION}-shell`;
 const API_CACHE   = `${SW_VERSION}-api`;
 
