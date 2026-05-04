@@ -82,6 +82,19 @@ export interface GcpStateInputs {
     gapCount:         number;
     largestGapSec:    number;
   };
+
+  // v11.25: compact prior-plan context (see PriorPlanContext in
+  // lib/aiPlanMemory). Forwarded as-is in the payload so the Engine
+  // can branch on "we already triggered SELL 12 min ago" rather than
+  // re-emit a fresh breakout-watch story.
+  priorPlan?: {
+    status:               'waiting' | 'triggered' | 'invalidated' | 'expired';
+    triggeredSide?:       'buy' | 'sell';
+    triggeredPrice?:      number;
+    currentPrice?:        number;
+    distanceFromTrigger?: number;
+    ageMin:               number;
+  };
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -164,5 +177,9 @@ export function buildGcpStatePayload(
     // attached it. Engine may use it to lower confidence on stale
     // / gappy data; no Engine code change required.
     gcpQuality: inputs.gcpQuality,
+    // v11.25: forward the compact prior-plan context untouched. Tiny
+    // payload (8 fields max), but lets the Engine recognise that the
+    // last cycle already played out.
+    priorPlan: inputs.priorPlan,
   };
 }

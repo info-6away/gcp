@@ -69,6 +69,19 @@ export type GcpStatePayload = {
     gapCount:         number;
     largestGapSec:    number;
   };
+
+  // v11.25: compact prior-plan context. Lets the engine know whether
+  // its last published plan triggered, was invalidated, expired, or is
+  // still pending — so a re-run doesn't repeat the same breakout-watch
+  // framing after the breakout already played out.
+  priorPlan?: {
+    status:               'waiting' | 'triggered' | 'invalidated' | 'expired';
+    triggeredSide?:       'buy' | 'sell';
+    triggeredPrice?:      number;
+    currentPrice?:        number;
+    distanceFromTrigger?: number;
+    ageMin:               number;
+  };
 };
 
 export type GcpStateResponse = {

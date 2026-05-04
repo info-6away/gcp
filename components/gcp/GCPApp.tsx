@@ -30,6 +30,8 @@ import TradingView from './TradingView';
 import DemoTradingPanel from './DemoTradingPanel';
 import { derivePosture } from '@/lib/aiAction';
 import { deriveTradePlan } from '@/lib/tradePlan';
+import { useAiPlanMemory } from '@/lib/useAiPlanMemory';
+import { buildPlanSnapshot, buildPriorPlanContext } from '@/lib/aiPlanMemory';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
@@ -190,6 +192,17 @@ export default function GCPApp() {
   // apply its own 15-point default). Energy metrics still derive from
   // the full local series so we don't degrade slope/curvature/PSS
   // accuracy — only the payload sent to the Engine is small.
+
+  // v11.25: AI plan memory + lifecycle. Hoisted above aiStateInputs
+  // so the engine payload can carry a compact priorPlan context based
+  // on whatever the saved plan currently says (waiting / triggered /
+  // invalidated / expired). Runs evaluation against goldData.price on
+  // every tick and persists transitions back to localStorage.
+  const planMemory      = useAiPlanMemory(symbol, AI_ANALYSIS_TF, goldData.price ?? null);
+  const planMemoryPlan       = planMemory.plan;
+  const planMemoryPlanId     = planMemoryPlan?.id;
+  const planMemoryPlanStatus = planMemoryPlan?.status;
+
   const aiStateInputs = useMemo<GcpStateInputs | null>(() => {
     if (!baseSeries.length) return null;
     const last = baseSeries[baseSeries.length - 1];
@@ -258,6 +271,14 @@ export default function GCPApp() {
       // v11.23.1: GCP feed quality — stale / age / gap stats. Engine
       // can use this to lower confidence; UI surfaces it in Settings.
       gcpQuality,
+      // v11.25: prior-plan context (compact). Reads the latest saved
+      // plan for this (symbol, AI tf) and tells the Engine where the
+      // last cycle ended up — waiting / triggered / invalidated /
+      // expired — so the next analysis can avoid repeating itself.
+      // Built fresh on every change to current price / saved plan.
+      priorPlan: planMemoryPlan
+        ? buildPriorPlanContext(planMemoryPlan, goldData.price ?? null)
+        : undefined,
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
@@ -265,6 +286,8 @@ export default function GCPApp() {
     symbol,
     timeframe,
     goldData.changePct,
+    planMemoryPlanId,
+    planMemoryPlanStatus,
     goldData.price,
     displayPatterns.length,
     gcpQuality,
@@ -288,6 +311,52 @@ export default function GCPApp() {
   // v11.22.1: anchor the trade plan to the most recent candle's OHLC
   // and surface the current live price for distance-from-analysis.
   const planAnalysisCandle = planCandles.length ? planCandles[planCandles.length - 1] : null;
+
+  // Latest pattern + trade plan, kept at top level so both the
+  // dashboard card and the plan-memory snapshot logic see the same
+  // derivation.
+  const latestPattern = displayPatterns[displayPatterns.length - 1] ?? null;
+  const tradePlan = useMemo(() => {
+    if (!stableState || !planStructure) return null;
+    return deriveTradePlan({
+      state:          stableState,
+      structure:      planStructure,
+      latestPattern,
+      symbol,
+      analysisCandle: planAnalysisCandle,
+      analysisTf:     AI_ANALYSIS_TF,
+      currentPrice:   goldData.price,
+    });
+  }, [stableState, planStructure, latestPattern, symbol, planAnalysisCandle, goldData.price]);
+
+  // Snapshot save on AI success. Watching aiState.lastSuccessAt as a
+  // primitive dep means this fires once per successful classification
+  // (and not on every render). Skips when a triggered plan is still
+  // active so the management view doesn't reset every time the user
+  // re-runs analysis on top of an in-flight setup.
+  useEffect(() => {
+    if (!aiState.lastSuccessAt) return;
+    if (!stableState || !tradePlan) return;
+    const prior = planMemory.plan;
+    if (prior && prior.status === 'triggered') {
+      // Triggered + still active: keep the saved plan; the new
+      // analysis just feeds priorPlan context to the engine on the
+      // NEXT run.
+      return;
+    }
+    const snap = buildPlanSnapshot({
+      symbol,
+      timeframe:    AI_ANALYSIS_TF,
+      state:        stableState,
+      plan:         tradePlan,
+      currentPrice: goldData.price,
+    });
+    planMemory.saveSnapshot(snap);
+    // Intentionally narrow deps — only react to a new success
+    // timestamp. Re-running on every tradePlan or stableState delta
+    // would clobber the saved snapshot mid-cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiState.lastSuccessAt]);
 
   useEffect(() => {
     if (!live) return;
@@ -478,19 +547,9 @@ export default function GCPApp() {
             // pattern, and trade plan are computed here so the demo
             // panel can snapshot the full context the moment the user
             // clicks BUY/SELL. Pure local — no broker, no orders.
-            const latestPattern = displayPatterns[displayPatterns.length - 1] ?? null;
-            const posture       = derivePosture(stableState, latestPattern);
-            const tradePlan     = stableState && planStructure
-              ? deriveTradePlan({
-                  state:          stableState,
-                  structure:      planStructure,
-                  latestPattern,
-                  symbol,
-                  analysisCandle: planAnalysisCandle,
-                  analysisTf:     AI_ANALYSIS_TF,
-                  currentPrice:   goldData.price,
-                })
-              : null;
+            // v11.25: latestPattern + tradePlan now hoisted to the
+            // outer scope (shared with plan memory).
+            const posture  = derivePosture(stableState, latestPattern);
             const lastBase = baseSeries[baseSeries.length - 1] ?? null;
             return (
               <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>

@@ -26,6 +26,9 @@ import {
 } from '@/lib/aiState';
 import { derivePosture, actionToneColor } from '@/lib/aiAction';
 import { deriveTradePlan, formatPriceAnchor } from '@/lib/tradePlan';
+import { useAiPlanMemory } from '@/lib/useAiPlanMemory';
+import { describePlanStatus, triggeredPlanOverride } from '@/lib/aiPlanMemory';
+import { AI_ANALYSIS_TF as PLAN_MEMORY_TF } from '@/lib/aiTimeframe';
 import { AI_ANALYSIS_TF, AI_FORWARD_HORIZON } from '@/lib/aiTimeframe';
 import AiStateExplainer from './AiStateExplainer';
 import Heartbeat from './Heartbeat';
@@ -140,6 +143,19 @@ function Card({
     const id = setInterval(() => setTick(t => t + 1), 5_000);
     return () => clearInterval(id);
   }, []);
+
+  // v11.25: plan memory + lifecycle. Reads the saved snapshot (if any)
+  // for this symbol and the AI analysis timeframe so the card can
+  // surface PLAN STATUS and switch the trade plan block into a
+  // "Manage active …" view once price has triggered through the level.
+  // The hook auto-evaluates against currentPrice and persists status
+  // transitions back; we only consume the result here.
+  const planMemory = useAiPlanMemory(symbol, PLAN_MEMORY_TF, currentPrice ?? null);
+  const savedPlan  = planMemory.plan;
+  const planStatusDisplay = savedPlan
+    ? describePlanStatus(savedPlan, currentPrice ?? null)
+    : null;
+  const triggeredOverride = savedPlan ? triggeredPlanOverride(savedPlan) : null;
 
   const flashStyle: React.CSSProperties = flash ? {
     outline: '1px solid var(--cyan)',
@@ -417,45 +433,91 @@ function Card({
               </div>
             )}
 
-            {plan && (
-              <div style={{
-                padding: '6px 10px',
-                background: `${planAccent}0d`,
-                borderLeft: `2px solid ${planAccent}55`,
-                borderRadius: 3,
-                fontSize: 11,
-                lineHeight: 1.45,
-                display: 'flex', flexDirection: 'column', gap: 2,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            {plan && (() => {
+              // v11.25: when the saved plan has triggered, override the
+              // TRADE PLAN block headline / triggers / invalidation
+              // copy with management-text rather than letting the
+              // freshly derived plan repeat the same breakout-watch
+              // story. The lifecycle status row below reflects the
+              // running PnL of the active trigger.
+              const headline    = triggeredOverride?.headline    ?? plan.headline;
+              const triggers    = triggeredOverride?.triggers    ?? plan.triggers;
+              const invalidText = triggeredOverride?.invalidation ?? plan.invalidation;
+              const accent      = triggeredOverride
+                ? actionToneColor('favor')
+                : planAccent;
+              const isManaged   = !!triggeredOverride;
+              return (
+                <div style={{
+                  padding: '6px 10px',
+                  background: `${accent}0d`,
+                  borderLeft: `2px solid ${accent}55`,
+                  borderRadius: 3,
+                  fontSize: 11,
+                  lineHeight: 1.45,
+                  display: 'flex', flexDirection: 'column', gap: 2,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                    <span style={{
+                      fontSize: 8, letterSpacing: '0.18em',
+                      color: accent, fontWeight: 600,
+                      flexShrink: 0, minWidth: 56,
+                    }}>TRADE PLAN</span>
+                    <span style={{ color: accent, fontWeight: 600, letterSpacing: '0.1px' }}>
+                      {headline}
+                    </span>
+                  </div>
+                  {isManaged || plan.entryType !== 'No entry' ? (
+                    <>
+                      {triggers.map((line, i) => (
+                        <div key={i} style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
+                          <span style={{ color: '#7F98A3' }}>{i === 0 ? 'Action: ' : ''}</span>
+                          {line}
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
+                        <span style={{ color: '#7F98A3' }}>Invalidation: </span>{invalidText}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 66 }}>
+                      <span style={{ color: '#7F98A3' }}>Reason: </span>{plan.reason ?? '—'}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* v11.25: plan lifecycle status. Sits under TRADE PLAN so
+                the user always sees what the saved plan is doing —
+                waiting / triggered / invalidated / expired. */}
+            {planStatusDisplay && (() => {
+              const toneColor =
+                planStatusDisplay.tone === 'good'    ? 'var(--green)' :
+                planStatusDisplay.tone === 'bad'     ? 'var(--red)'   :
+                planStatusDisplay.tone === 'wait'    ? 'var(--cyan)'  :
+                                                       '#7F98A3';
+              return (
+                <div style={{
+                  padding: '5px 10px',
+                  background: `${toneColor}0d`,
+                  borderLeft: `2px solid ${toneColor}66`,
+                  borderRadius: 3,
+                  fontSize: 10,
+                  lineHeight: 1.45,
+                  display: 'flex', alignItems: 'baseline', gap: 10,
+                }}>
                   <span style={{
                     fontSize: 8, letterSpacing: '0.18em',
-                    color: planAccent, fontWeight: 600,
+                    color: toneColor, fontWeight: 600,
                     flexShrink: 0, minWidth: 56,
-                  }}>TRADE PLAN</span>
-                  <span style={{ color: planAccent, fontWeight: 600, letterSpacing: '0.1px' }}>
-                    {plan.headline}
+                  }}>PLAN STATUS</span>
+                  <span style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+                    {planStatusDisplay.text}
                   </span>
                 </div>
-                {plan.entryType !== 'No entry' ? (
-                  <>
-                    {plan.triggers.map((line, i) => (
-                      <div key={i} style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
-                        <span style={{ color: '#7F98A3' }}>{i === 0 ? 'Trigger: ' : ''}</span>
-                        {line}
-                      </div>
-                    ))}
-                    <div style={{ fontSize: 10, color: 'var(--fg-1)', marginLeft: 66 }}>
-                      <span style={{ color: '#7F98A3' }}>Invalidation: </span>{plan.invalidation}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 10, color: 'var(--fg-2)', marginLeft: 66 }}>
-                    <span style={{ color: '#7F98A3' }}>Reason: </span>{plan.reason ?? '—'}
-                  </div>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             <PostureRow label="TRIGGER" value={posture.trigger}     accent={actionAccent} />
             <PostureRow label="SIZE"    value={posture.size}        accent={sizeAccent} />

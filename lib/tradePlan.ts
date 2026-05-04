@@ -24,6 +24,23 @@ import { derivePosture, type SizeGuidance, type ActionTone } from '@/lib/aiActio
 export type TradeDirection = 'Buy' | 'Sell' | 'Both' | 'None';
 export type TradeEntryType = 'Pullback' | 'Breakout' | 'Fade' | 'No entry';
 
+// v11.25: numeric trigger / invalidation levels. Strings in `triggers`
+// remain the user-facing copy; these structured fields let the AI plan
+// memory (lib/aiPlanMemory.ts) detect when price actually crosses a
+// level — "Sell only after clean break below 4573.77" needs 4573.77 as
+// a number for lifecycle tracking, not just embedded in prose.
+export interface TriggerLevels {
+  buyAbove?:   number;
+  sellBelow?:  number;
+  resistance?: number;
+  support?:    number;
+}
+
+export interface InvalidationLevels {
+  above?: number;
+  below?: number;
+}
+
 export interface TradePlan {
   direction:    TradeDirection;
   entryType:    TradeEntryType;
@@ -39,6 +56,13 @@ export interface TradePlan {
   analysisTf?:      string;
   currentPrice?:    number | null;
   distance?:        number | null;     // currentPrice - analysisPrice
+  // v11.25 numeric levels for plan-memory lifecycle tracking.
+  triggerLevels?:      TriggerLevels;
+  invalidationLevels?: InvalidationLevels;
+}
+
+function safeLevel(n: number | null | undefined): number | undefined {
+  return (n != null && Number.isFinite(n) && n > 0) ? n : undefined;
 }
 
 function priceLabel(symbol: MarketSymbol, n: number | null | undefined): string | null {
@@ -142,6 +166,14 @@ export function deriveTradePlan(args: DerivePlanArgs): TradePlan | null {
       size:         'Small',
       tone:         'wait',
       ...anchor,
+      triggerLevels: {
+        resistance: safeLevel(structure.rangeHigh),
+        support:    safeLevel(structure.rangeLow),
+      },
+      invalidationLevels: {
+        above: safeLevel(structure.rangeHigh),
+        below: safeLevel(structure.rangeLow),
+      },
     };
   }
 
@@ -177,6 +209,11 @@ export function deriveTradePlan(args: DerivePlanArgs): TradePlan | null {
       size,
       tone,
       ...anchor,
+      triggerLevels: {
+        buyAbove:  safeLevel(structure.rangeHigh),
+        sellBelow: safeLevel(structure.rangeLow),
+      },
+      invalidationLevels: {},
     };
   }
 
@@ -199,6 +236,12 @@ export function deriveTradePlan(args: DerivePlanArgs): TradePlan | null {
         size,
         tone,
         ...anchor,
+        triggerLevels: {
+          support: safeLevel(structure.recentSwingLow),
+        },
+        invalidationLevels: {
+          below: safeLevel(structure.recentSwingLow),
+        },
       };
     }
     return {
@@ -216,6 +259,12 @@ export function deriveTradePlan(args: DerivePlanArgs): TradePlan | null {
       size,
       tone,
       ...anchor,
+      triggerLevels: {
+        resistance: safeLevel(structure.recentSwingHigh),
+      },
+      invalidationLevels: {
+        above: safeLevel(structure.recentSwingHigh),
+      },
     };
   }
 
