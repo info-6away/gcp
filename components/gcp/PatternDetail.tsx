@@ -1,9 +1,71 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
+import type { DataPoint, Pattern, PatternKind, MarketSymbol, Timeframe } from '@/types/gcp';
+import { PATTERN_CODE } from '@/lib/patterns-meta';
 import PatternPriceChart from './PatternPriceChart';
-import { usePriceCorrelation, type PatternStats } from '@/lib/usePriceCorrelation';
+
+// v11.25.4: lifecycle role taxonomy for the Pattern Library cards.
+// Categorisation matches the v11.24.6 hierarchy + visibility tiers:
+//   Flow      — build-up / continuation lifecycle
+//   Event     — single-shot occurrences
+//   Support   — context layer (one visible per window)
+//   Exhaustion— end-of-cycle / fade
+//   Shock     — abrupt high-magnitude events
+type LifecycleRole = 'Flow' | 'Event' | 'Support' | 'Exhaustion' | 'Shock';
+
+const LIFECYCLE_ROLE: Record<string, LifecycleRole> = {
+  'Compression Coil':         'Flow',
+  'Compression Release':      'Flow',
+  'Synchronization Plateau':  'Flow',
+  'Alignment Ladder':         'Flow',
+  'Ignition Rise':            'Flow',
+  'Staircase Alignment':      'Flow',
+  'Plateau Decay':            'Flow',
+  'Coherence Volcano':        'Event',
+  'Pulse Train':              'Support',
+  'Discharge Break':          'Exhaustion',
+  'Double Spike Exhaustion':  'Exhaustion',
+  'Echo Spike':               'Exhaustion',
+  'Failed Alignment':         'Exhaustion',
+  'Dead Drift':               'Exhaustion',
+  'Ignition Drift':           'Exhaustion',
+  'Shock Jump':               'Shock',
+  'Discharge Wave':           'Shock',
+};
+
+function roleColor(r: LifecycleRole): string {
+  switch (r) {
+    case 'Flow':       return 'var(--cyan)';
+    case 'Event':      return '#d4a028';
+    case 'Support':    return '#7F98A3';
+    case 'Exhaustion': return '#ef4444';
+    case 'Shock':      return '#9333ea';
+  }
+}
+
+// v11.25.4: status badge per card.
+//   active        — count > 0 in the currently-loaded window
+//   dormant       — count === 0 in the currently-loaded window
+//   experimental  — detector exists but is intentionally rare and is
+//                   still being validated (PD added in v11.24.2 falls
+//                   here until enough live samples accumulate)
+type LibraryStatus = 'active' | 'dormant' | 'experimental';
+const EXPERIMENTAL_KINDS: ReadonlySet<string> = new Set([
+  'Plateau Decay',
+]);
+function libraryStatus(kind: string, count: number): LibraryStatus {
+  if (count > 0) return 'active';
+  if (EXPERIMENTAL_KINDS.has(kind)) return 'experimental';
+  return 'dormant';
+}
+function statusColor(s: LibraryStatus): string {
+  switch (s) {
+    case 'active':       return '#22c55e';
+    case 'experimental': return '#d4a028';
+    case 'dormant':      return '#7F98A3';
+  }
+}
 
 const LIB_META: Record<string, {
   glyph: string; color: string; summary: string; market: string;
@@ -215,50 +277,76 @@ function MiniChart({
 }
 
 function LibraryCard({
-  kind, matches, series, onSelect, priceStat,
+  kind, matches, series, onSelect,
 }: {
   kind: string;
   matches: Pattern[];
   series: DataPoint[];
   onSelect: () => void;
-  priceStat?: PatternStats;
 }) {
   const meta      = LIB_META[kind] ?? LIB_META['Compression Coil'];
   const n         = matches.length;
   const avgPSS    = n ? matches.reduce((s, m) => s + m.strength, 0) / n : 0;
   const lastMatch = n ? matches.reduce((a, b) => b.start > a.start ? b : a) : null;
   const lastT     = lastMatch ? series[lastMatch.start]?.t : null;
-  const avgDur    = n ? Math.round(matches.reduce((s, m) => s + (m.end - m.start), 0) / n) : 0;
+  const code      = PATTERN_CODE[kind as PatternKind] ?? '—';
+  const role      = LIFECYCLE_ROLE[kind] ?? 'Support';
+  const status    = libraryStatus(kind, n);
+  const isActive  = status === 'active';
 
-  const isEmpty = n === 0;
   return (
     <div
       className="lib-card"
-      onClick={isEmpty ? undefined : onSelect}
+      onClick={isActive ? onSelect : undefined}
       style={{
         background: 'var(--bg-2)',
         border: '1px solid var(--line-1)',
         borderRadius: 'var(--r-md)',
         padding: '14px 16px',
-        cursor: isEmpty ? 'default' : 'pointer',
+        cursor: isActive ? 'pointer' : 'default',
         transition: 'border-color 0.15s',
-        opacity: isEmpty ? 0.35 : 1,
-        pointerEvents: isEmpty ? 'none' : 'auto',
+        opacity: isActive ? 1 : 0.65,
       }}
-      onMouseEnter={e => { if (!isEmpty) e.currentTarget.style.borderColor = 'var(--line-3)'; }}
-      onMouseLeave={e => { if (!isEmpty) e.currentTarget.style.borderColor = 'var(--line-1)'; }}
+      onMouseEnter={e => { if (isActive) e.currentTarget.style.borderColor = 'var(--line-3)'; }}
+      onMouseLeave={e => { if (isActive) e.currentTarget.style.borderColor = 'var(--line-1)'; }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-        <div>
-          <div style={{ color: meta.color, fontWeight: 600, fontSize: 13, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em', marginBottom: 2 }}>
-            {kind}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
+            <span style={{ color: meta.color, fontWeight: 600, fontSize: 13, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em' }}>
+              {kind}
+            </span>
+            <span style={{ color: 'var(--fg-4)', fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}>
+              {code}
+            </span>
           </div>
-          <div style={{ color: 'var(--fg-3)', fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em' }}>
-            {meta.glyph}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <span style={{
+              padding: '1px 6px',
+              fontSize: 8, letterSpacing: '0.12em', fontWeight: 600,
+              border: `1px solid ${roleColor(role)}55`,
+              color: roleColor(role),
+              background: `${roleColor(role)}14`,
+              borderRadius: 2,
+              fontFamily: 'var(--font-mono)',
+            }}>
+              {role.toUpperCase()}
+            </span>
+            <span style={{
+              padding: '1px 6px',
+              fontSize: 8, letterSpacing: '0.12em', fontWeight: 600,
+              border: `1px solid ${statusColor(status)}55`,
+              color: statusColor(status),
+              background: `${statusColor(status)}14`,
+              borderRadius: 2,
+              fontFamily: 'var(--font-mono)',
+            }}>
+              {status.toUpperCase()}
+            </span>
           </div>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--font-mono)', color: pssColor(avgPSS), fontVariantNumeric: 'tabular-nums' }}>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--font-mono)', color: isActive ? pssColor(avgPSS) : 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>
             {n}
           </div>
           <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.08em' }}>DETECTIONS</div>
@@ -277,44 +365,206 @@ function LibraryCard({
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>AVG BARS</div>
-          <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
-            {n ? avgDur : '—'}
-          </div>
-        </div>
-        <div>
           <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>LAST SEEN</div>
           <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fg-1)' }}>
             {lastT ? fmtTime(lastT) : '—'}
           </div>
         </div>
-        {priceStat && (
-          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <div style={{ fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.1em' }}>AVG PRICE MOVE</div>
-            <div style={{
-              fontSize: 13, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
-              color: priceStat.avgPriceChange > 0.1 ? '#22c55e'
-                   : priceStat.avgPriceChange < -0.1 ? '#ef4444'
-                   : 'var(--fg-1)',
-            }}>
-              {priceStat.avgPriceChange > 0 ? '+' : ''}{priceStat.avgPriceChange.toFixed(1)}%
-            </div>
-            <div style={{ fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-              <span style={{ color: '#22c55e' }}>{priceStat.bullish}↑</span>
-              {' '}
-              <span style={{ color: '#ef4444' }}>{priceStat.bearish}↓</span>
-              <span style={{ color: 'var(--fg-4)' }}> · n={priceStat.count}</span>
-            </div>
-          </div>
-        )}
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 10, color: meta.color, letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: 4 }}>
-        VIEW {n} OCCURRENCE{n !== 1 ? 'S' : ''}
-        <svg width={8} height={8} viewBox="0 0 8 8">
-          <path d="M2 4 L6 4 M4 2 L6 4 L4 6" stroke="currentColor" fill="none" strokeWidth={1.2} />
-        </svg>
+      {isActive && (
+        <div style={{ marginTop: 10, fontSize: 10, color: meta.color, letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: 4 }}>
+          VIEW EXAMPLES
+          <svg width={8} height={8} viewBox="0 0 8 8">
+            <path d="M2 4 L6 4 M4 2 L6 4 L4 6" stroke="currentColor" fill="none" strokeWidth={1.2} />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// v11.25.4: Lifecycle map block. Visual reference for how the patterns
+// chain together so the library feels like a dictionary with structure
+// rather than a flat grid of cards. Each chain renders as code chips
+// connected by arrows.
+function LifecycleMap() {
+  const chains: { title: string; codes: string[] }[] = [
+    {
+      title: 'Compression cycle',
+      codes: ['CC', 'CR', 'AL', 'FA'],
+    },
+    {
+      title: 'Plateau cycle',
+      codes: ['SP', 'PD', 'DB', 'DD'],
+    },
+    {
+      title: 'Shock / exhaustion events',
+      codes: ['SJ', 'CV', 'DSE', 'DW'],
+    },
+  ];
+  return (
+    <div style={{
+      background: 'var(--bg-2)', border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)', padding: '12px 16px',
+      marginBottom: 12,
+    }}>
+      <div className="hairline" style={{ marginBottom: 8 }}>Lifecycle map</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {chains.map(c => (
+          <div key={c.title} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', minWidth: 140 }}>
+              {c.title.toUpperCase()}
+            </span>
+            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              {c.codes.map((code, i) => (
+                <span key={code} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{
+                    padding: '1px 6px',
+                    fontSize: 9, fontFamily: 'var(--font-mono)',
+                    letterSpacing: '0.04em',
+                    color: 'var(--fg-1)',
+                    border: '1px solid var(--line-2)',
+                    background: 'var(--bg-3)',
+                    borderRadius: 2,
+                  }}>{code}</span>
+                  {i < c.codes.length - 1 && (
+                    <span style={{ color: 'var(--fg-4)', fontSize: 10 }}>→</span>
+                  )}
+                </span>
+              ))}
+            </span>
+          </div>
+        ))}
       </div>
+    </div>
+  );
+}
+
+// v11.25.4: Current Pattern Story. Picks the last 3 patterns from the
+// resolved/visible list (chronological) and renders the chain plus a
+// one-sentence narrative built from the most recent pattern's
+// summary. Falls back to a hint when the window has < 3 patterns.
+function CurrentStory({ patterns }: { patterns: Pattern[] }) {
+  const last3 = useMemo(() => {
+    if (!patterns.length) return [] as Pattern[];
+    const sorted = [...patterns].sort((a, b) => a.tStart - b.tStart);
+    return sorted.slice(-3);
+  }, [patterns]);
+  const codes = last3.map(p => PATTERN_CODE[p.kind as PatternKind] ?? p.kind);
+  const last  = last3[last3.length - 1] ?? null;
+  const lastMeta = last ? LIB_META[last.kind] ?? null : null;
+  return (
+    <div style={{
+      background: 'var(--bg-2)', border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)', padding: '12px 16px',
+      marginBottom: 12,
+    }}>
+      <div className="hairline" style={{ marginBottom: 8 }}>Current pattern story</div>
+      {last3.length === 0 ? (
+        <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+          No patterns detected in the current window yet.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            {codes.map((code, i) => (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{
+                  padding: '2px 8px',
+                  fontSize: 11, fontFamily: 'var(--font-mono)',
+                  fontWeight: 600, letterSpacing: '0.04em',
+                  color: 'var(--cyan)',
+                  border: '1px solid rgba(77,217,232,0.45)',
+                  background: 'rgba(77,217,232,0.08)',
+                  borderRadius: 3,
+                }}>{code}</span>
+                {i < codes.length - 1 && (
+                  <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>→</span>
+                )}
+              </span>
+            ))}
+          </div>
+          {lastMeta && (
+            <div style={{
+              marginTop: 8,
+              fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55,
+            }}>
+              {lastMeta.summary}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// v11.25.4: dormant / experimental section. Collapsed by default —
+// patterns with 0 detections in the current window aren't real
+// information and shouldn't take up the same visual weight as active
+// cards. Keeps the dictionary entries one click away.
+function DormantSection({
+  kinds, byKind, series, onSelectKind,
+}: {
+  kinds:        string[];
+  byKind:       Record<string, Pattern[]>;
+  series:       DataPoint[];
+  onSelectKind: (kind: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (kinds.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '6px 8px',
+          background: 'transparent',
+          border: '1px solid var(--line-1)',
+          borderRadius: 'var(--r-sm)',
+          color: 'var(--fg-2)',
+          fontSize: 10, letterSpacing: '0.1em',
+          fontFamily: 'var(--font-mono)',
+          cursor: 'pointer',
+          marginBottom: open ? 10 : 0,
+        }}
+      >
+        <span style={{
+          display: 'inline-block', width: 8,
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          transition: 'transform 0.15s',
+        }}>›</span>
+        <span>DORMANT / EXPERIMENTAL PATTERNS ({kinds.length})</span>
+      </button>
+      {open && (
+        <>
+          <div style={{
+            fontSize: 10, color: 'var(--fg-3)',
+            lineHeight: 1.55, marginBottom: 10,
+            maxWidth: 640,
+          }}>
+            These patterns have not appeared in the selected dataset.
+            They may be rare, too strict, or deprecated.
+          </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+            gap: 12,
+            alignContent: 'start',
+          }}>
+            {kinds.map(k => (
+              <LibraryCard
+                key={k}
+                kind={k}
+                matches={byKind[k] ?? []}
+                series={series}
+                onSelect={() => onSelectKind(k)}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -404,8 +654,6 @@ export default function PatternDetail({
 
   const meta = LIB_META[kind] ?? LIB_META['Compression Coil'];
 
-  const priceStats = usePriceCorrelation(patterns, symbol, timeframe);
-
   const stats = useMemo(() => {
     const n = matchesForKind.length;
     if (!n) return { n: 0, avgDur: 0, avgPSS: 0, lastT: null as number | null };
@@ -421,6 +669,17 @@ export default function PatternDetail({
       if (!byKind[p.kind]) byKind[p.kind] = [];
       byKind[p.kind].push(p);
     }
+    // v11.25.4: split active vs dormant/experimental so 0-detection
+    // patterns no longer make the system feel broken. The dormant
+    // section is collapsed by default — the user can expand it to
+    // browse the dictionary entries.
+    const activeKinds:  string[] = [];
+    const dormantKinds: string[] = [];
+    for (const k of PATTERN_ORDER) {
+      const n = (byKind[k] ?? []).length;
+      if (n > 0) activeKinds.push(k);
+      else       dormantKinds.push(k);
+    }
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -433,33 +692,58 @@ export default function PatternDetail({
           </button>
           <div>
             <div className="hairline">Pattern Library</div>
+            {/* v11.25.4: subtitle reframes the tab as definitions /
+                explainability. Statistical performance lives on the
+                Research tab now. */}
             <div style={{ fontSize: 9, color: 'var(--fg-3)', marginTop: 3, lineHeight: 1.5 }}>
-              <span style={{ color: 'var(--fg-2)' }}>TF</span> sets bar resolution
-              &nbsp;·&nbsp;
-              <span style={{ color: 'var(--fg-2)' }}>VIEW</span> sets time window
-              &nbsp;·&nbsp;
-              patterns re-detect on every change
+              Definitions, lifecycle role, invalidators, and recent examples.
             </div>
           </div>
         </div>
 
-        <div style={{
-          flex: 1, overflow: 'auto', padding: 20,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: 12,
-          alignContent: 'start',
-        }}>
-          {PATTERN_ORDER.map(k => (
-            <LibraryCard
-              key={k}
-              kind={k}
-              matches={byKind[k] ?? []}
-              series={series}
-              priceStat={priceStats.get(k)}
-              onSelect={() => { setKind(k); setSelectedId((byKind[k] ?? [])[0]?.id ?? null); setView('detail'); }}
-            />
-          ))}
+        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+          <LifecycleMap />
+          <CurrentStory patterns={patterns} />
+
+          {activeKinds.length > 0 && (
+            <>
+              <div className="hairline" style={{ marginBottom: 10, marginTop: 4 }}>
+                Active patterns ({activeKinds.length})
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                gap: 12,
+                alignContent: 'start',
+                marginBottom: 16,
+              }}>
+                {activeKinds.map(k => (
+                  <LibraryCard
+                    key={k}
+                    kind={k}
+                    matches={byKind[k] ?? []}
+                    series={series}
+                    onSelect={() => { setKind(k); setSelectedId((byKind[k] ?? [])[0]?.id ?? null); setView('detail'); }}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          <DormantSection
+            kinds={dormantKinds}
+            byKind={byKind}
+            series={series}
+            onSelectKind={(k) => {
+              // Dormant cards are non-actionable for "View examples"
+              // since there are no occurrences; this handler is left
+              // for future use if we ever want to deep-link to the
+              // detail view's empty state.
+              setKind(k);
+              setSelectedId(null);
+              setView('detail');
+            }}
+          />
         </div>
       </div>
     );
