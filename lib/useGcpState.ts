@@ -56,6 +56,7 @@ import {
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
 import { appendAiStateHistory } from '@/lib/aiStateHistory';
+import { anchorAiState } from '@/lib/aiStateAnchor';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -317,7 +318,25 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       const result = await classifyGcpState(payload, { manual: force });
       if (result) {
         if (isDev()) console.log('[AI STATE] response', result);
-        setState(result);
+        // v11.26.1: structural anchor pass. The Engine prompt should
+        // already cross-check against patternStory, but until that
+        // server-side change deploys we enforce the same rules here:
+        // FA hard guard, pressure/compression/post-shock biases,
+        // discharge preference, and confidence ±10–20% based on
+        // agreement. Anchor reads the SAME payload we just sent so
+        // the story / divergence checks are coherent.
+        const anchor = anchorAiState(result, payload);
+        const anchored = anchor.response;
+        if (isDev() && (anchor.overridden || anchor.delta !== 0)) {
+          console.log('[AI ANCHOR]', {
+            overridden: anchor.overridden,
+            delta:      anchor.delta,
+            reasons:    anchor.reasons,
+            from:       `${result.stateCode} (${(result.confidence * 100).toFixed(0)}%)`,
+            to:         `${anchored.stateCode} (${(anchored.confidence * 100).toFixed(0)}%)`,
+          });
+        }
+        setState(anchored);
         setLastSuccessAt(new Date());
         setAiStatus('success');
         if (isDev()) console.log('[AI UI] run success');
@@ -326,17 +345,19 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         // history ledger so the Research → By AI State view can
         // correlate it against subsequent price moves. Only the
         // success path records — failed/error responses are skipped.
+        // v11.26.1: history records the ANCHORED classification so
+        // Research statistics reflect what the user actually saw.
         const lastSeries = cur.series[cur.series.length - 1];
         appendAiStateHistory({
           timestamp:       Date.now(),
           symbol:          cur.symbol,
           timeframe:       cur.timeframe,
-          state:           result.state,
-          stateCode:       result.stateCode,
-          phase:           result.phase,
-          direction:       result.direction,
-          confidence:      result.confidence,
-          marketBias:      result.marketBias,
+          state:           anchored.state,
+          stateCode:       anchored.stateCode,
+          phase:           anchored.phase,
+          direction:       anchored.direction,
+          confidence:      anchored.confidence,
+          marketBias:      anchored.marketBias,
           regime:          cur.regime.code,
           netVariance:     lastSeries ? lastSeries.v : 0,
           patternCode:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode,
