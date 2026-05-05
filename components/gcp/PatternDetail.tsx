@@ -5,7 +5,7 @@ import type { DataPoint, Pattern, PatternKind, MarketSymbol, Timeframe } from '@
 import { PATTERN_CODE } from '@/lib/patterns-meta';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import {
-  derivePatternStory, pickDominantKind,
+  derivePatternStory,
   PATTERN_WHEN_IT_MATTERS, CYCLE_TO_CHAIN,
   type PatternStory,
 } from '@/lib/patternStory';
@@ -519,13 +519,68 @@ function LifecycleMap({ activeChain }: { activeChain: string | null }) {
   );
 }
 
-// v11.25.6: Current Pattern Story. Now driven by derivePatternStory()
-// — the deterministic interpreter in lib/patternStory.ts maps the
-// last 3-5 visible patterns into a title + interpretation + posture +
-// activeCycle tag. The chip row still shows the code chain so the
-// user can audit which patterns drove the story.
+// v11.25.7: Current Pattern Story v2 — structured 5-row output
+// (STATE / STRUCTURE / RISK / BIAS / POSTURE) with visual hierarchy
+// per spec. The same chip row sits above so the reader can audit
+// which sequence drove the read.
+//
+// Visual hierarchy:
+//   STATE     — largest text (16px, fg-0, weight 700)
+//   STRUCTURE — body copy
+//   RISK      — amber warning tone
+//   BIAS      — chip (green / red / grey)
+//   POSTURE   — emphasised cyan italic
+function biasChip(bias: 'bullish' | 'bearish' | 'neutral'): {
+  label: string; bg: string; border: string; color: string;
+} {
+  if (bias === 'bullish') return {
+    label: 'BULLISH',
+    bg: 'rgba(34,197,94,0.10)', border: 'rgba(34,197,94,0.55)',
+    color: '#22c55e',
+  };
+  if (bias === 'bearish') return {
+    label: 'BEARISH',
+    bg: 'rgba(239,68,68,0.10)', border: 'rgba(239,68,68,0.55)',
+    color: '#ef4444',
+  };
+  return {
+    label: 'NEUTRAL',
+    bg: 'rgba(127,152,163,0.10)', border: 'rgba(127,152,163,0.45)',
+    color: '#7F98A3',
+  };
+}
+
+function StoryRow({
+  label, children, style,
+}: {
+  label:    string;
+  children: React.ReactNode;
+  style?:   React.CSSProperties;
+}) {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '74px 1fr',
+      gap: 10,
+      padding: '6px 0',
+      borderBottom: '1px solid var(--line-0)',
+      alignItems: 'baseline',
+      ...style,
+    }}>
+      <span style={{
+        fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.18em',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        {label}
+      </span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
 function CurrentStory({ story }: { story: PatternStory }) {
   const empty = story.sequence.length === 0;
+  const bias  = biasChip(story.bias);
   return (
     <div style={{
       background: 'var(--bg-2)', border: '1px solid var(--line-1)',
@@ -539,7 +594,11 @@ function CurrentStory({ story }: { story: PatternStory }) {
         </div>
       ) : (
         <>
-          <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+          {/* Sequence chips above the structured rows. */}
+          <div style={{
+            display: 'inline-flex', gap: 6, alignItems: 'center',
+            flexWrap: 'wrap', marginBottom: 10,
+          }}>
             {story.sequence.map((code, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{
@@ -557,21 +616,52 @@ function CurrentStory({ story }: { story: PatternStory }) {
               </span>
             ))}
           </div>
-          <div style={{
-            fontSize: 13, color: 'var(--fg-0)', fontWeight: 600,
-            letterSpacing: '0.01em', marginBottom: 4,
-          }}>
-            {story.title}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55 }}>
-            {story.interpretation}
-          </div>
-          <div style={{
-            marginTop: 6, fontSize: 10, color: '#7F98A3', lineHeight: 1.5,
-            fontStyle: 'italic',
-          }}>
-            Posture: {story.posture}
-          </div>
+
+          <StoryRow label="STATE">
+            <div style={{
+              fontSize: 16, color: 'var(--fg-0)', fontWeight: 700,
+              letterSpacing: '0.01em', lineHeight: 1.2,
+            }}>
+              {story.state}
+            </div>
+          </StoryRow>
+
+          <StoryRow label="STRUCTURE">
+            <div style={{ fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55 }}>
+              {story.structure}
+            </div>
+          </StoryRow>
+
+          <StoryRow label="RISK">
+            <div style={{
+              fontSize: 11, color: '#d4a028', lineHeight: 1.5,
+            }}>
+              {story.risk}
+            </div>
+          </StoryRow>
+
+          <StoryRow label="BIAS">
+            <span style={{
+              padding: '2px 8px',
+              fontSize: 9, letterSpacing: '0.16em', fontWeight: 700,
+              fontFamily: 'var(--font-mono)',
+              color: bias.color,
+              background: bias.bg,
+              border: `1px solid ${bias.border}`,
+              borderRadius: 3,
+            }}>
+              {bias.label}
+            </span>
+          </StoryRow>
+
+          <StoryRow label="POSTURE" style={{ borderBottom: 'none' }}>
+            <div style={{
+              fontSize: 12, color: 'var(--cyan)', fontWeight: 600,
+              letterSpacing: '0.01em', lineHeight: 1.45,
+            }}>
+              {story.posture}
+            </div>
+          </StoryRow>
         </>
       )}
     </div>
@@ -770,9 +860,11 @@ export default function PatternDetail({
       else       dormantKinds.push(k);
     }
 
-    // v11.25.6: deterministic story over the active patterns.
-    // activeChain ties the activeCycle back to a Lifecycle Map row.
-    // dominantKind picks the active card to emphasise.
+    // v11.25.6 + v11.25.7: deterministic story over the active
+    // patterns. activeChain ties activeCycle back to a Lifecycle Map
+    // row. dominantKind now comes from story.dominantPattern (the
+    // STATE-defining pattern) — fixes the v11.25.6 regression where
+    // CR could be marked DOMINANT while STATE was Failed alignment.
     const story        = derivePatternStory({
       patterns,
       aiState: aiState ?? undefined,
@@ -780,7 +872,7 @@ export default function PatternDetail({
       pss,
     });
     const activeChain  = CYCLE_TO_CHAIN[story.activeCycle];
-    const dominantKind = pickDominantKind(patterns);
+    const dominantKind = story.dominantPattern;
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>

@@ -1,41 +1,62 @@
 // v11.25.6: pattern story engine v1.
+// v11.25.7: pattern story engine v2 — sequence-aware reasoning.
 //
-// Deterministic interpreter that turns the last few resolved patterns
-// into a one-paragraph narrative + a posture suggestion + an
-// activeCycle tag. NOT an AI call — pure rule mapping over the
-// (already-resolved, already-visible) pattern stream.
+// Deterministic interpreter that turns the recent resolved-pattern
+// stream into a structured 5-row read:
+//   STATE      — the dominant phase (Failed alignment / Discharge / …)
+//   STRUCTURE  — sequence-aware narration of how we got here
+//   RISK       — what failure looks like from this point
+//   BIAS       — bullish / bearish / neutral
+//   POSTURE    — concrete action stance
+// Plus activeCycle (for the lifecycle-map highlight) and
+// dominantPattern (the pattern that defines STATE — used to drive the
+// DOMINANT badge in the active grid).
 //
-// Why deterministic: the Patterns tab is now the *explainability*
-// surface. The story must be reproducible and inspectable; an LLM
-// would add latency, cost, and surface area to debug. The trade is
-// that the story has a small fixed vocabulary; new branches need a
-// code change. That's fine — the rules below cover every documented
-// lifecycle.
+// NOT an AI call. Pure rule mapping over the (already resolved,
+// already visible) pattern stream so the story is reproducible and
+// auditable.
 //
-// Priority order (most specific / highest-impact first):
-//   shock      — SJ / CV / DSE / DW present
-//   plateau    — DB or DD (active discharge) > PD > SP
-//   alignment  — FA latest or present > AL
-//   compression — CR > CC+PT > CC
-//   none       — fallback when nothing dominant fires
+// Priority order (highest-impact first):
+//   shock      — SJ / CV / DSE / DW present in last 5
+//   alignment  — FA present in last 5  (overrides CR / AL)
+//   plateau    — DB or DD in last 5 > PD > SP
+//   alignment  — AL latest with no later FA
+//   compression — CR latest > CC + PT > PT-only > CC
+//
+// "FA in last 5 overrides CR / AL" is the key sequence-aware rule:
+// in `CR → FA → PT → CR → PT` the FA defines what just happened to
+// the user even though it sits 4 patterns back, while CR / PT alone
+// would mis-read the moment.
 
 import type { Pattern, PatternKind } from '@/types/gcp';
 import { PATTERN_CODE } from '@/lib/patterns-meta';
 
 export type PatternCycle = 'compression' | 'plateau' | 'shock' | 'alignment' | 'none';
+export type StoryBias    = 'bullish' | 'bearish' | 'neutral';
 
 export interface PatternStory {
-  /** patternCode chain for the last N patterns (oldest → newest) */
+  /** patternCode chain for the last 5 patterns (oldest → newest) */
   sequence:        string[];
-  title:           string;
-  interpretation:  string;
+  state:           string;
+  structure:       string;
+  risk:            string;
+  bias:            StoryBias;
   posture:         string;
   activeCycle:     PatternCycle;
+  /**
+   * The pattern that defines STATE — used by UI to place the
+   * DOMINANT badge. Per spec:
+   *   FA / DB / DD / SJ / CV / DSE / DW → always dominant when
+   *     they fire STATE.
+   *   CR → only dominant when no FA followed it.
+   *   PT → only dominant when state is Pressure building (i.e.
+   *     it is essentially alone in the sequence).
+   */
+  dominantPattern: PatternKind | null;
 }
 
 export interface DeriveStoryArgs {
   patterns: Pattern[];
-  /** kept for future heuristics; reads from this in v2 */
   aiState?: { stateCode?: string; phase?: string; direction?: string } | null;
   regime?:  string | null;
   pss?:     number | null;
@@ -44,12 +65,190 @@ export interface DeriveStoryArgs {
 const SEQ_DEPTH = 5;
 
 const FALLBACK: PatternStory = {
-  sequence:       [],
-  title:          'No dominant story',
-  interpretation: 'Current patterns are mixed or weak.',
-  posture:        'Use AI State and price structure for context.',
-  activeCycle:    'none',
+  sequence:        [],
+  state:           'No dominant story',
+  structure:       'Current patterns are mixed or weak.',
+  risk:            'No clear edge from the pattern layer alone.',
+  bias:            'neutral',
+  posture:         'Use AI State and price structure for context.',
+  activeCycle:     'none',
+  dominantPattern: null,
 };
+
+// ---------- Helpers ----------
+
+function codeOf(p: Pattern): string {
+  return PATTERN_CODE[p.kind] ?? p.kind;
+}
+
+function biasFromDirection(dir: string | undefined | null): StoryBias {
+  if (dir === 'Up')   return 'bullish';
+  if (dir === 'Down') return 'bearish';
+  return 'neutral';
+}
+
+// Search the sorted-ascending pattern list backwards and return the
+// most recent pattern whose code is in `codes`. Used to pick the
+// pattern that *defines* STATE.
+function recentByCode(sorted: Pattern[], codes: string[]): Pattern | null {
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    if (codes.includes(codeOf(sorted[i]))) return sorted[i];
+  }
+  return null;
+}
+
+// Detect whether `target` ever occurs after `anchor` in the sorted
+// list. Used to enforce "CR is dominant only when no FA followed it".
+function occursAfter(sorted: Pattern[], anchorCode: string, targetCode: string): boolean {
+  let pastAnchor = false;
+  for (const p of sorted) {
+    const c = codeOf(p);
+    if (!pastAnchor) {
+      if (c === anchorCode) pastAnchor = true;
+      continue;
+    }
+    if (c === targetCode) return true;
+  }
+  return false;
+}
+
+// ---------- STRUCTURE narration ----------
+//
+// Sequence-aware text per state. Reads from the last 5 codes, with
+// last 3 as the "current" window. Order matters — most-specific
+// branches come first so the spec example outputs are produced
+// verbatim.
+
+function structureFor(state: string, last5: string[], last3: string[]): string {
+  const has5 = (c: string) => last5.includes(c);
+  const has3 = (c: string) => last3.includes(c);
+  const eq3  = (...codes: string[]) => last3.length === 3 && last3.every((c, i) => c === codes[i]);
+
+  switch (state) {
+    case 'Shock / exhaustion':
+      return 'Abrupt spike followed by instability or reversal';
+
+    case 'Failed alignment':
+      if (eq3('AL', 'FA') || (last3.at(-1) === 'FA' && last3.at(-2) === 'AL')) {
+        return 'Trend attempt collapsed after initial acceptance';
+      }
+      if (has5('CR') && has5('PT') && has5('FA')) {
+        return 'Release attempt failed, followed by weak pulse structure and reattempt forming';
+      }
+      if (has3('PT') && has5('FA')) {
+        return 'Sync attempt failed; pulse pressure rebuilding';
+      }
+      return 'Recent sync attempt failed';
+
+    case 'Discharge phase':
+      if (has5('SP') && has5('PD') && has5('DB')) {
+        return 'Plateau weakened and broke; energy releasing from elevated levels';
+      }
+      if (has3('PD') && has3('DB')) {
+        return 'Plateau decay confirmed; discharge in progress';
+      }
+      if (has3('DB')) return 'Coherence broke down decisively';
+      return 'Energy draining gradually through lower highs';
+
+    case 'Plateau decaying':
+      return 'Coherence plateau weakening without confirmed release';
+
+    case 'Plateau forming':
+      return 'High coherence holding; release direction undefined';
+
+    case 'Alignment forming':
+      if (eq3('CC', 'CR', 'AL')) {
+        return 'Compression released and transitioning into structured trend';
+      }
+      if (has3('CR') && has3('AL')) {
+        return 'Coil released and beginning to organise into trend';
+      }
+      return 'Coherence organising into trend structure';
+
+    case 'Compression released':
+      return 'Coil released; awaiting continuation confirmation versus failed breakout';
+
+    case 'Pressure building': {
+      const ptCount = last3.filter(c => c === 'PT').length;
+      if (ptCount >= 3) return 'Repeated low/mid pulses without alignment acceptance';
+      if (has3('CC') && has3('PT')) {
+        return 'Repeated pulses inside compression; energy building without acceptance';
+      }
+      return 'Indicates unresolved pressure building without alignment acceptance';
+    }
+
+    case 'Compression building':
+      return 'Energy accumulating without release';
+
+    default:
+      return 'Mixed signals — no dominant structure';
+  }
+}
+
+// ---------- RISK + POSTURE per state ----------
+
+const RISK_BY_STATE: Record<string, string> = {
+  'Shock / exhaustion':   'High volatility; unpredictable follow-through',
+  'Failed alignment':     'Continuation quality weak; repeated failure possible',
+  'Discharge phase':      'Late continuation risk; exhaustion likely',
+  'Plateau decaying':     'Discharge break building; conviction should fade',
+  'Plateau forming':      'Direction undecided; either side possible',
+  'Alignment forming':    'If alignment fails, reversal risk increases',
+  'Compression released': 'Failed breakout possible if continuation does not confirm',
+  'Pressure building':    'Breakout possible but direction unclear',
+  'Compression building': 'Direction unresolved; breakout pending',
+};
+
+const POSTURE_BY_STATE: Record<string, string> = {
+  'Shock / exhaustion':   'Reduce size; wait for stabilization',
+  'Failed alignment':     'Avoid chasing; wait for confirmed breakout',
+  'Discharge phase':      'Avoid chasing; manage exposure',
+  'Plateau decaying':     'Reduce conviction; watch for discharge break',
+  'Plateau forming':      'Wait for decay or breakout',
+  'Alignment forming':    'Follow continuation only after confirmation',
+  'Compression released': 'Follow confirmation only',
+  'Pressure building':    'Prepare for breakout; do not pre-empt',
+  'Compression building': 'Wait for clean break; avoid guessing direction',
+};
+
+// ---------- BIAS per state ----------
+//
+// Direction-based for alignment-forming and (modestly) for failed
+// alignment + compression released. Discharge defaults to bearish.
+// Everything else stays neutral until we add price-trend context.
+
+function biasFor(state: string, dir: string | null | undefined): StoryBias {
+  switch (state) {
+    case 'Alignment forming':
+    case 'Compression released':
+      return biasFromDirection(dir);
+    case 'Failed alignment':
+      // Neutral by default; if the prior direction was Down, the
+      // failed alignment leans bearish (failure downward).
+      return dir === 'Down' ? 'bearish' : 'neutral';
+    case 'Discharge phase':
+      return 'bearish';
+    case 'Shock / exhaustion':
+    case 'Plateau decaying':
+    case 'Plateau forming':
+    case 'Pressure building':
+    case 'Compression building':
+    default:
+      return 'neutral';
+  }
+}
+
+// ---------- Cycle ↔ chain mapping (re-export for the UI) ----------
+
+export const CYCLE_TO_CHAIN: Record<PatternCycle, string | null> = {
+  compression: 'Compression cycle',
+  alignment:   'Compression cycle',
+  plateau:     'Plateau cycle',
+  shock:       'Shock / exhaustion events',
+  none:        null,
+};
+
+// ---------- Main entry point ----------
 
 export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
   const { patterns } = args;
@@ -59,111 +258,166 @@ export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
 
   const sorted = [...patterns].sort((a, b) => a.tStart - b.tStart);
   const tail   = sorted.slice(-SEQ_DEPTH);
-  const codes  = tail.map(p => PATTERN_CODE[p.kind] ?? p.kind);
-  const latest = tail[tail.length - 1];
-  const set    = new Set(codes);
+  const sequence = tail.map(codeOf);
+  const last5 = sequence;
+  const last3 = sequence.slice(-3);
+  const dir   = args.aiState?.direction ?? null;
 
-  // Shock / exhaustion — overrides all other cycles.
-  if (set.has('SJ') || set.has('CV') || set.has('DSE') || set.has('DW')) {
-    return {
-      sequence:       codes,
-      title:          'Shock / exhaustion',
-      interpretation: 'Abrupt coherence event detected. Volatility and reversal risk elevated.',
-      posture:        'Reduce size; wait for stabilization.',
-      activeCycle:    'shock',
-    };
-  }
+  // Pick the active cycle + state in spec priority order.
 
-  // Plateau cycle. Most-progressed phase wins (discharge active >
-  // decaying > forming) so the title reflects where we are in the chain.
-  if (set.has('DB') || set.has('DD')) {
+  // 1. Shock / exhaustion — overrides everything.
+  const shockPat = recentByCode(sorted, ['SJ', 'CV', 'DSE', 'DW']);
+  if (shockPat && last5.includes(codeOf(shockPat))) {
+    const state = 'Shock / exhaustion';
     return {
-      sequence:       codes,
-      title:          'Discharge active',
-      interpretation: 'Stored coherence is releasing or drifting out. Late continuation risk rises.',
-      posture:        'Manage risk; avoid late chase.',
-      activeCycle:    'plateau',
-    };
-  }
-  if (set.has('PD')) {
-    return {
-      sequence:       codes,
-      title:          'Plateau decaying',
-      interpretation: 'Coherence plateau is weakening without confirmed release.',
-      posture:        'Reduce conviction; watch for discharge break.',
-      activeCycle:    'plateau',
-    };
-  }
-  if (set.has('SP')) {
-    return {
-      sequence:       codes,
-      title:          'Plateau forming',
-      interpretation: 'High coherence is holding, but release direction is not confirmed.',
-      posture:        'Wait for decay or breakout.',
-      activeCycle:    'plateau',
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'shock',
+      dominantPattern: shockPat.kind,
     };
   }
 
-  // Alignment cycle. FA latest beats FA-anywhere because a recent
-  // failure is more material than a historical one.
-  if (latest && latest.kind === 'Failed Alignment') {
+  // 2. Failed alignment — FA anywhere in last 5 takes precedence over
+  //    CR / AL because the failure event is what the user just lived
+  //    through. Spec example A: CR → FA → PT → CR → PT reads as
+  //    "Failed alignment", not "Compression released".
+  const faPat = recentByCode(sorted, ['FA']);
+  if (faPat && last5.includes('FA')) {
+    const state = 'Failed alignment';
     return {
-      sequence:       codes,
-      title:          'Failed alignment',
-      interpretation: 'Sync attempt failed. Continuation quality weakened; reversal/fade risk rising.',
-      posture:        'Avoid chasing.',
-      activeCycle:    'alignment',
-    };
-  }
-  if (set.has('FA')) {
-    return {
-      sequence:       codes,
-      title:          'Failed alignment',
-      interpretation: 'Recent sync attempt failed. Continuation quality weakened.',
-      posture:        'Avoid chasing.',
-      activeCycle:    'alignment',
-    };
-  }
-  if (set.has('AL')) {
-    return {
-      sequence:       codes,
-      title:          'Alignment attempt',
-      interpretation: 'Coherence is trying to organize into trend structure.',
-      posture:        'Watch for price confirmation.',
-      activeCycle:    'alignment',
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'alignment',
+      dominantPattern: faPat.kind,
     };
   }
 
-  // Compression cycle.
-  if (set.has('CR')) {
+  // 3. Plateau / discharge cycle.
+  const dischargePat = recentByCode(sorted, ['DB', 'DD']);
+  if (dischargePat && last5.includes(codeOf(dischargePat))) {
+    const state = 'Discharge phase';
     return {
-      sequence:       codes,
-      title:          'Compression released',
-      interpretation: 'Coil released. Watch for continuation confirmation versus failed breakout.',
-      posture:        'Follow confirmation only.',
-      activeCycle:    'compression',
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'plateau',
+      dominantPattern: dischargePat.kind,
     };
   }
-  if (set.has('CC') && set.has('PT')) {
+  const pdPat = recentByCode(sorted, ['PD']);
+  if (pdPat && last5.includes('PD')) {
+    const state = 'Plateau decaying';
     return {
-      sequence:       codes,
-      title:          'Pressure building',
-      interpretation: 'Repeated pulses inside compression. Energy is building but not yet accepted by alignment.',
-      posture:        'Prepare; wait for trigger.',
-      activeCycle:    'compression',
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'plateau',
+      dominantPattern: pdPat.kind,
     };
   }
-  if (set.has('CC')) {
+  const spPat = recentByCode(sorted, ['SP']);
+  if (spPat && last5.includes('SP')) {
+    const state = 'Plateau forming';
     return {
-      sequence:       codes,
-      title:          'Compression building',
-      interpretation: 'Energy accumulating without release. Breakout risk rising, but direction unresolved.',
-      posture:        'Wait for clean break; avoid guessing direction.',
-      activeCycle:    'compression',
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'plateau',
+      dominantPattern: spPat.kind,
     };
   }
 
-  return { ...FALLBACK, sequence: codes };
+  // 4. Alignment forming — AL latest, no FA after.
+  if (last3.at(-1) === 'AL') {
+    const state = 'Alignment forming';
+    const alPat = recentByCode(sorted, ['AL']);
+    return {
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'alignment',
+      dominantPattern: alPat?.kind ?? null,
+    };
+  }
+
+  // 5. Compression released — CR somewhere in last 5, no AL or FA
+  //    after it (AL after CR was handled by the alignment branch
+  //    above; FA after CR would have been caught at step 2).
+  const crPat = recentByCode(sorted, ['CR']);
+  if (crPat && last5.includes('CR') && !occursAfter(sorted, 'CR', 'AL')) {
+    const state = 'Compression released';
+    return {
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'compression',
+      dominantPattern: crPat.kind,
+    };
+  }
+
+  // 6. Pressure building — CC + PT, or PT-dominated tail.
+  const ptCount3 = last3.filter(c => c === 'PT').length;
+  if ((last3.includes('CC') && last3.includes('PT')) || ptCount3 >= 2) {
+    const state = 'Pressure building';
+    const ptPat = recentByCode(sorted, ['PT']);
+    return {
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'compression',
+      dominantPattern: ptPat?.kind ?? null,
+    };
+  }
+
+  // 7. Compression building — CC alone.
+  if (last5.includes('CC')) {
+    const state = 'Compression building';
+    const ccPat = recentByCode(sorted, ['CC']);
+    return {
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'compression',
+      dominantPattern: ccPat?.kind ?? null,
+    };
+  }
+
+  // 8. Lone PT.
+  if (last5.includes('PT')) {
+    const state = 'Pressure building';
+    const ptPat = recentByCode(sorted, ['PT']);
+    return {
+      sequence, state,
+      structure: structureFor(state, last5, last3),
+      risk:      RISK_BY_STATE[state],
+      bias:      biasFor(state, dir),
+      posture:   POSTURE_BY_STATE[state],
+      activeCycle: 'compression',
+      dominantPattern: ptPat?.kind ?? null,
+    };
+  }
+
+  return { ...FALLBACK, sequence };
 }
 
 // --------------------------- Per-pattern "WHEN IT MATTERS" ---------------------------
@@ -171,13 +425,17 @@ export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
 // One short sentence per kind, displayed under the card meaning. Tells
 // the user the *use case* — when this pattern should pull their
 // attention vs. just being a tag on the chart.
+//
+// v11.25.7 PT update: replaces the old "Repeated low/mid pulses" copy
+// with a clearer "unresolved pressure building" framing that matches
+// the new STATE narration.
 
 export const PATTERN_WHEN_IT_MATTERS: Record<PatternKind, string> = {
   'Compression Coil':         'Before a breakout; direction still unresolved.',
   'Compression Release':      'When stored energy starts moving into alignment.',
   'Alignment Ladder':         'When sync builds step-by-step with price confirmation.',
   'Failed Alignment':         'When a breakout/continuation attempt fails.',
-  'Pulse Train':              'When repeated low/mid pulses show pressure building.',
+  'Pulse Train':              'Indicates unresolved pressure building without alignment acceptance.',
   'Coherence Volcano':        'When a sharp spike mean-reverts quickly.',
   'Shock Jump':               'When a sudden shock spike rapidly retraces.',
   'Plateau Decay':            'When high coherence starts weakening before release.',
@@ -192,35 +450,11 @@ export const PATTERN_WHEN_IT_MATTERS: Record<PatternKind, string> = {
   'Echo Spike':               'When a smaller follow-up spike confirms exhaustion of the first.',
 };
 
-// --------------------------- Cycle ↔ lifecycle-map row mapping ---------------------------
-//
-// LifecycleMap renders three chains; this mapping ties activeCycle to
-// the matching chain title so the renderer can highlight one row.
-// Alignment patterns (AL / FA) live in the compression chain since
-// they sit at the tail of CC → CR → AL → FA.
-export const CYCLE_TO_CHAIN: Record<PatternCycle, string | null> = {
-  compression: 'Compression cycle',
-  alignment:   'Compression cycle',
-  plateau:     'Plateau cycle',
-  shock:       'Shock / exhaustion events',
-  none:        null,
-};
-
-// --------------------------- Dominant pattern picker ---------------------------
-//
-// "Dominant" = the pattern the user's eye should land on in the active
-// grid. Latest primary-visibility wins; fallback is highest strength.
-// Returns null when there's nothing dominant (empty active list).
+// v11.25.6 -> v11.25.7: pickDominantKind kept for back-compat, but
+// callers should prefer story.dominantPattern (the STATE-defining
+// pattern). This helper now just delegates to the story so existing
+// imports keep working.
 export function pickDominantKind(patterns: Pattern[]): PatternKind | null {
   if (!patterns || patterns.length === 0) return null;
-
-  const primary = patterns.filter(p => p.visibility === 'primary');
-  const pool    = primary.length > 0 ? primary : patterns;
-
-  // Sort by recency (newest first); within same tStart, highest strength.
-  const ranked = [...pool].sort((a, b) => {
-    if (b.tStart !== a.tStart) return b.tStart - a.tStart;
-    return (b.strength ?? 0) - (a.strength ?? 0);
-  });
-  return ranked[0]?.kind ?? null;
+  return derivePatternStory({ patterns }).dominantPattern;
 }
