@@ -481,7 +481,15 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   }, [aiStatePoints, aiStateData]);
 
   // ── Geometry ────────────────────────────────────────────────────────────────
-  const PAD = { l: 56, r: 24, t: 24, b: 60 };
+  // v11.25.3: side paddings equalised so the plot area sits visually
+  // centered inside the main research panel (the right summary sidebar
+  // is a separate sibling, so this svg lives in its own measured
+  // container; symmetry is purely about the L/R inner margins). The
+  // y-axis labels need ≈ 22 px to render "+2%" / "-2%" at fontSize 9,
+  // so 48 px on each side keeps a comfortable margin without
+  // off-center drift. Previously L was 56 / R was 24 and the column
+  // bands clearly hugged the right edge.
+  const PAD = { l: 48, r: 48, t: 24, b: 60 };
   const IW  = Math.max(80, W - PAD.l - PAD.r);
   const IH  = Math.max(80, H - PAD.t - PAD.b);
 
@@ -680,6 +688,26 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 style={{ display: 'block' }}
                 onMouseLeave={() => setHovered(null)}
               >
+                {/* v11.25.3: dev-only layout debug. Faint cyan outlines
+                    the plot area; faint grey outlines the container.
+                    Surfaces L/R margin asymmetry at a glance. Hidden in
+                    production via the NODE_ENV gate; remove the gate
+                    locally to inspect when tuning padding. */}
+                {process.env.NODE_ENV !== 'production' && (
+                  <>
+                    <rect
+                      x={0.5} y={0.5}
+                      width={Math.max(0, W - 1)} height={Math.max(0, H - 1)}
+                      fill="none" stroke="#1c2026" strokeWidth={1}
+                      strokeDasharray="2 4"
+                    />
+                    <rect
+                      x={PAD.l} y={PAD.t}
+                      width={IW} height={IH}
+                      fill="none" stroke="rgba(77,217,232,0.18)" strokeWidth={1}
+                    />
+                  </>
+                )}
                 {[-2, -1, 0, 1, 2].map(pct => (
                   <g key={pct}>
                     <line
