@@ -160,6 +160,26 @@ export function anchorAiState(
     overridden = true;
   }
 
+  // ── 3b. Recency-based shock guard (v11.26.2). If the LATEST
+  //        visible pattern is PT / CC / CR (i.e. structure has
+  //        already transitioned past the shock event) AND there's
+  //        no fresh GCP spike (slope not strongly positive), block
+  //        SH / DS. Catches Engine residual-shock answers even when
+  //        the story didn't tag Post-shock recovery (e.g. when the
+  //        shock was farther back than 5 patterns).
+  const latestSeqCode = story.seq[story.seq.length - 1];
+  const isStructureLatest = latestSeqCode === 'PT' || latestSeqCode === 'CC' || latestSeqCode === 'CR';
+  const slope = payload.metrics?.slope ?? 0;
+  const noFreshSpike = slope <= 0.20;   // strong-positive slope = real spike
+  if (isStructureLatest && noFreshSpike
+      && (next.stateCode === 'SH' || next.stateCode === 'DS')) {
+    reasons.push(
+      `Engine ${next.stateCode} → CS (latest ${latestSeqCode}, no fresh GCP spike: slope ${slope.toFixed(3)})`,
+    );
+    next = applyOverride(next, 'CS');
+    overridden = true;
+  }
+
   // ── 4. Discharge phase: DS preferred when Engine returned CS / FA ─
   if (story.state === 'Discharge phase'
       && (next.stateCode === 'CS' || next.stateCode === 'FA')) {

@@ -143,6 +143,8 @@ function postShockStructure(postShock: string[]): string {
   if (postShock.includes('CR'))                              return 'Shock event followed by compression release';
   if (postShock.includes('CC') && postShock.includes('PT'))  return 'Shock event followed by re-compression with pulse pressure';
   if (postShock.includes('CC'))                              return 'Shock event followed by re-compression';
+  // v11.26.2: PT-only post-shock counts as structure rebuilding now.
+  if (postShock.includes('PT'))                              return 'Shock event followed by pulse-train; pressure rebuilding';
   return 'Shock event followed by structural rebuild';
 }
 
@@ -300,20 +302,29 @@ export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
 
   // Pick the active cycle + state in spec priority order.
 
-  // 1. Shock / exhaustion — only when the shock is the latest pattern
-  //    OR no newer CC/CR/AL/FA structure has formed since. A DW that
-  //    happened 4 patterns ago and was followed by CR/PT is no longer
-  //    the user's reality — they're in a recovery attempt now.
+  // 1. Shock / exhaustion — recency-tightened in v11.26.2.
+  //    Shock is an EVENT, not a lingering state. Allowed only when:
+  //      (a) the shock pattern IS the latest visible pattern, OR
+  //      (b) the shock is in the last 3 patterns AND no
+  //          CC / CR / AL / FA / PT has occurred since.
+  //    PT joins CC/CR/AL/FA as a "structure-formed" blocker because a
+  //    pulse train after a shock means coherence is rebuilding —
+  //    classifying that environment as still-shock contradicts what
+  //    the user sees.
   const shockPat = recentByCode(sorted, ['SJ', 'CV', 'DSE', 'DW']);
   if (shockPat && last5.includes(codeOf(shockPat))) {
     const shockIdx     = sorted.lastIndexOf(shockPat);
     const postShockArr = sorted.slice(shockIdx + 1);
     const postCodes    = postShockArr.map(codeOf);
-    const hasNewerStructure = postCodes.some(c =>
-      c === 'CC' || c === 'CR' || c === 'AL' || c === 'FA');
-    const isShockLatest = shockIdx === sorted.length - 1;
+    const isShockLatest    = shockIdx === sorted.length - 1;
+    const shockRecency     = sorted.length - shockIdx;        // 1 = latest, 2 = prev, …
+    const isRecentShock    = shockRecency <= 3;
+    const STRUCTURE_BLOCKERS = ['CC', 'CR', 'AL', 'FA', 'PT'] as const;
+    const hasBlockerAfter  = postCodes.some(c =>
+      (STRUCTURE_BLOCKERS as readonly string[]).includes(c));
 
-    if (isShockLatest || !hasNewerStructure) {
+    // Pure shock — only when latest, or recent + no blocker since.
+    if (isShockLatest || (isRecentShock && !hasBlockerAfter)) {
       const state = 'Shock / exhaustion';
       return {
         sequence, state,
@@ -326,21 +337,19 @@ export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
       };
     }
 
-    // 1b. Post-shock recovery. Newer CC/CR/AL/FA followed the shock —
-    //     however, if FA followed (a failed recovery) the existing
-    //     'Failed alignment' branch handles it cleaner since FA is
-    //     itself a strong narrative anchor. Same for a clean DB/DD
-    //     post-shock (the discharge branches handle those). Only
-    //     intercept when the post-shock pattern is recovery-flavoured
-    //     (CC / CR / AL) — that's the case the user flagged as
-    //     "stale shock label".
+    // Post-shock recovery — recovery-flavoured blocker exists, no FA
+    // afterwards (FA gets its own sharper branch). PT is now treated
+    // as recovery-flavoured because a pulse-train after a shock is
+    // exactly the "structure rebuilding" case this state is meant to
+    // capture.
+    const RECOVERY_FLAVOURED = ['CC', 'CR', 'AL', 'PT'] as const;
     const recoveryFlavoured = postCodes.some(c =>
-      c === 'CC' || c === 'CR' || c === 'AL');
+      (RECOVERY_FLAVOURED as readonly string[]).includes(c));
     if (recoveryFlavoured && !postCodes.includes('FA')) {
       const state = 'Post-shock recovery';
-      // Pick dominant from the post-shock structure pattern (the
-      // active recovery driver), not the historical shock event.
-      const driverPat = recentByCode(postShockArr, ['AL', 'CR', 'CC']);
+      // Dominant pattern = the active recovery driver (latest
+      // CC/CR/AL/PT after shock), not the historical event.
+      const driverPat = recentByCode(postShockArr, ['AL', 'CR', 'CC', 'PT']);
       return {
         sequence, state,
         structure: postShockStructure(postCodes),
