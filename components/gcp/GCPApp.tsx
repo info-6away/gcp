@@ -32,6 +32,7 @@ import { derivePosture } from '@/lib/aiAction';
 import { deriveTradePlan } from '@/lib/tradePlan';
 import { useAiPlanMemory } from '@/lib/useAiPlanMemory';
 import { buildPlanSnapshot, buildPriorPlanContext } from '@/lib/aiPlanMemory';
+import { derivePatternStory } from '@/lib/patternStory';
 import type { CursorInfo, MarketSymbol, Timeframe, ViewWindow, AppPage } from '@/types/gcp';
 import { formatPrice, TIMEFRAME_BARS, VIEW_MINUTES } from '@/types/gcp';
 
@@ -243,6 +244,34 @@ export default function GCPApp() {
       cp < -0.10 ?  'down'    :
                     'sideways';
 
+    // v11.26: build the compact pattern story from the SAME visible /
+    // resolved patterns the user sees in the dashboard pattern card +
+    // Patterns tab. The Engine receives this as a cross-check signal
+    // — it should not contradict the local interpretation unless
+    // price/GCP metrics clearly justify doing so. Cost: 6 small
+    // fields (~50-80 tokens). Skipped when no patterns are present
+    // so the Engine never sees a stale "No dominant story" tag.
+    //
+    // Note: aiState is intentionally omitted here. stableState is
+    // declared below this useMemo (it depends on aiStateInputs); a
+    // forward reference would hit a TDZ. The bias field falls back
+    // to 'neutral' for direction-aware states without that input —
+    // acceptable for the cross-check signal.
+    const story = derivePatternStory({
+      patterns: displayPatterns,
+      regime:   regimeCode,
+    });
+    const compactStory = displayPatterns.length > 0 ? {
+      seq:     story.sequence,
+      state:   story.state,
+      bias:    story.bias,
+      cycle:   story.activeCycle,
+      dom:     story.dominantPattern
+        ? (PATTERN_CODE[story.dominantPattern] ?? undefined)
+        : undefined,
+      posture: story.posture,
+    } : undefined;
+
     return {
       symbol,
       timeframe,
@@ -279,6 +308,11 @@ export default function GCPApp() {
       priorPlan: planMemoryPlan
         ? buildPriorPlanContext(planMemoryPlan, goldData.price ?? null)
         : undefined,
+      // v11.26: compact pattern story (lib/patternStory). Forwarded
+      // as a cross-check signal so the Engine's classification can
+      // align with the same local pattern interpretation the user
+      // sees on the Patterns tab.
+      patternStory: compactStory,
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
@@ -288,8 +322,9 @@ export default function GCPApp() {
     goldData.changePct,
     planMemoryPlanId,
     planMemoryPlanStatus,
-    goldData.price,
     displayPatterns.length,
+    displayPatterns[displayPatterns.length - 1]?.id,
+    goldData.price,
     gcpQuality,
   ]);
 

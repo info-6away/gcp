@@ -95,6 +95,19 @@ export interface GcpStateInputs {
     distanceFromTrigger?: number;
     ageMin:               number;
   };
+
+  // v11.26: compact pattern-story context (see derivePatternStory in
+  // lib/patternStory). Lets the Engine cross-check its AI State
+  // classification against the same local pattern interpretation the
+  // user sees. Field names abbreviated to keep the token cost low.
+  patternStory?: {
+    seq:      string[];
+    state:    string;
+    bias:     'bullish' | 'bearish' | 'neutral';
+    cycle:    'compression' | 'plateau' | 'shock' | 'alignment' | 'none';
+    dom?:     string;
+    posture:  string;
+  };
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -181,5 +194,7 @@ export function buildGcpStatePayload(
     // payload (8 fields max), but lets the Engine recognise that the
     // last cycle already played out.
     priorPlan: inputs.priorPlan,
+    // v11.26: forward the compact pattern story untouched.
+    patternStory: inputs.patternStory,
   };
 }

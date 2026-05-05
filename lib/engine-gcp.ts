@@ -82,6 +82,25 @@ export type GcpStatePayload = {
     distanceFromTrigger?: number;
     ageMin:               number;
   };
+
+  // v11.26: compact pattern-story context. Frontend-derived from the
+  // SAME visible / resolved patterns the user sees, so the AI's
+  // classification can cross-check against the local interpretation.
+  // Field names abbreviated to keep the token cost ~negligible.
+  //   seq      — last 5 patternCodes, oldest → newest
+  //   state    — STATE label (e.g. "Failed alignment", "Post-shock recovery")
+  //   bias     — bullish / bearish / neutral
+  //   cycle    — activeCycle for the lifecycle map row highlight
+  //   dom      — dominantPattern code (the pattern that DEFINES state)
+  //   posture  — one-line action stance
+  patternStory?: {
+    seq:      string[];
+    state:    string;
+    bias:     'bullish' | 'bearish' | 'neutral';
+    cycle:    'compression' | 'plateau' | 'shock' | 'alignment' | 'none';
+    dom?:     string;
+    posture:  string;
+  };
 };
 
 export type GcpStateResponse = {
