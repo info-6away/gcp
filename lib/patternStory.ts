@@ -17,7 +17,11 @@
 // auditable.
 //
 // Priority order (highest-impact first):
-//   shock      — SJ / CV / DSE / DW present in last 5
+//   shock      — SJ / CV / DSE / DW present in last 5,
+//                AND (it's the latest OR no newer CC/CR/AL/FA followed)
+//   post-shock — same shock window, BUT a newer CC/CR/AL/FA arrived
+//                after it → state becomes "Post-shock recovery" with
+//                the structure narrating what came next
 //   alignment  — FA present in last 5  (overrides CR / AL)
 //   plateau    — DB or DD in last 5 > PD > SP
 //   alignment  — AL latest with no later FA
@@ -27,6 +31,13 @@
 // in `CR → FA → PT → CR → PT` the FA defines what just happened to
 // the user even though it sits 4 patterns back, while CR / PT alone
 // would mis-read the moment.
+//
+// v11.25.7-fix: similar adjustment for shock. A DW that happened 4
+// patterns ago and was followed by CR / PT is no longer the user's
+// current reality — they're in a recovery attempt. We carve that out
+// as its own STATE so the narrative tracks the most recent
+// structural pattern rather than freezing on the loudest historical
+// event.
 
 import type { Pattern, PatternKind } from '@/types/gcp';
 import { PATTERN_CODE } from '@/lib/patterns-meta';
@@ -119,6 +130,22 @@ function occursAfter(sorted: Pattern[], anchorCode: string, targetCode: string):
 // branches come first so the spec example outputs are produced
 // verbatim.
 
+// v11.25.7-fix: post-shock structure narration. Reads only the codes
+// AFTER the most recent shock so the sentence reflects what's
+// actually happening now, not the shock itself. `postShock` is the
+// list of codes that occurred strictly after the shock event.
+function postShockStructure(postShock: string[]): string {
+  if (!postShock.length)                                     return 'Shock event followed by mixed structure';
+  if (postShock.includes('FA'))                              return 'Shock event followed by failed alignment attempt';
+  if (postShock.includes('CR') && postShock.includes('AL'))  return 'Shock event followed by compression release and alignment attempt';
+  if (postShock.includes('AL'))                              return 'Shock event followed by alignment attempt';
+  if (postShock.includes('CR') && postShock.includes('PT'))  return 'Shock event followed by compression release; recovery attempt forming';
+  if (postShock.includes('CR'))                              return 'Shock event followed by compression release';
+  if (postShock.includes('CC') && postShock.includes('PT'))  return 'Shock event followed by re-compression with pulse pressure';
+  if (postShock.includes('CC'))                              return 'Shock event followed by re-compression';
+  return 'Shock event followed by structural rebuild';
+}
+
 function structureFor(state: string, last5: string[], last3: string[]): string {
   const has5 = (c: string) => last5.includes(c);
   const has3 = (c: string) => last3.includes(c);
@@ -127,6 +154,12 @@ function structureFor(state: string, last5: string[], last3: string[]): string {
   switch (state) {
     case 'Shock / exhaustion':
       return 'Abrupt spike followed by instability or reversal';
+
+    case 'Post-shock recovery':
+      // Sequence-aware narration is built by postShockStructure() at
+      // the call site (it needs the post-shock slice, not last3/last5)
+      // — fall through to a safe default if reached without that.
+      return 'Shock event followed by structural rebuild';
 
     case 'Failed alignment':
       if (eq3('AL', 'FA') || (last3.at(-1) === 'FA' && last3.at(-2) === 'AL')) {
@@ -189,6 +222,7 @@ function structureFor(state: string, last5: string[], last3: string[]): string {
 
 const RISK_BY_STATE: Record<string, string> = {
   'Shock / exhaustion':   'High volatility; unpredictable follow-through',
+  'Post-shock recovery':  'Recovery may not hold; volatility from prior shock still elevated',
   'Failed alignment':     'Continuation quality weak; repeated failure possible',
   'Discharge phase':      'Late continuation risk; exhaustion likely',
   'Plateau decaying':     'Discharge break building; conviction should fade',
@@ -201,6 +235,7 @@ const RISK_BY_STATE: Record<string, string> = {
 
 const POSTURE_BY_STATE: Record<string, string> = {
   'Shock / exhaustion':   'Reduce size; wait for stabilization',
+  'Post-shock recovery':  'Treat as recovery; size cautiously until structure confirms',
   'Failed alignment':     'Avoid chasing; wait for confirmed breakout',
   'Discharge phase':      'Avoid chasing; manage exposure',
   'Plateau decaying':     'Reduce conviction; watch for discharge break',
@@ -265,19 +300,59 @@ export function derivePatternStory(args: DeriveStoryArgs): PatternStory {
 
   // Pick the active cycle + state in spec priority order.
 
-  // 1. Shock / exhaustion — overrides everything.
+  // 1. Shock / exhaustion — only when the shock is the latest pattern
+  //    OR no newer CC/CR/AL/FA structure has formed since. A DW that
+  //    happened 4 patterns ago and was followed by CR/PT is no longer
+  //    the user's reality — they're in a recovery attempt now.
   const shockPat = recentByCode(sorted, ['SJ', 'CV', 'DSE', 'DW']);
   if (shockPat && last5.includes(codeOf(shockPat))) {
-    const state = 'Shock / exhaustion';
-    return {
-      sequence, state,
-      structure: structureFor(state, last5, last3),
-      risk:      RISK_BY_STATE[state],
-      bias:      biasFor(state, dir),
-      posture:   POSTURE_BY_STATE[state],
-      activeCycle: 'shock',
-      dominantPattern: shockPat.kind,
-    };
+    const shockIdx     = sorted.lastIndexOf(shockPat);
+    const postShockArr = sorted.slice(shockIdx + 1);
+    const postCodes    = postShockArr.map(codeOf);
+    const hasNewerStructure = postCodes.some(c =>
+      c === 'CC' || c === 'CR' || c === 'AL' || c === 'FA');
+    const isShockLatest = shockIdx === sorted.length - 1;
+
+    if (isShockLatest || !hasNewerStructure) {
+      const state = 'Shock / exhaustion';
+      return {
+        sequence, state,
+        structure: structureFor(state, last5, last3),
+        risk:      RISK_BY_STATE[state],
+        bias:      biasFor(state, dir),
+        posture:   POSTURE_BY_STATE[state],
+        activeCycle: 'shock',
+        dominantPattern: shockPat.kind,
+      };
+    }
+
+    // 1b. Post-shock recovery. Newer CC/CR/AL/FA followed the shock —
+    //     however, if FA followed (a failed recovery) the existing
+    //     'Failed alignment' branch handles it cleaner since FA is
+    //     itself a strong narrative anchor. Same for a clean DB/DD
+    //     post-shock (the discharge branches handle those). Only
+    //     intercept when the post-shock pattern is recovery-flavoured
+    //     (CC / CR / AL) — that's the case the user flagged as
+    //     "stale shock label".
+    const recoveryFlavoured = postCodes.some(c =>
+      c === 'CC' || c === 'CR' || c === 'AL');
+    if (recoveryFlavoured && !postCodes.includes('FA')) {
+      const state = 'Post-shock recovery';
+      // Pick dominant from the post-shock structure pattern (the
+      // active recovery driver), not the historical shock event.
+      const driverPat = recentByCode(postShockArr, ['AL', 'CR', 'CC']);
+      return {
+        sequence, state,
+        structure: postShockStructure(postCodes),
+        risk:      RISK_BY_STATE[state],
+        bias:      biasFor(state, dir),
+        posture:   POSTURE_BY_STATE[state],
+        activeCycle: 'compression',
+        dominantPattern: driverPat?.kind ?? shockPat.kind,
+      };
+    }
+    // Otherwise fall through — FA / DB / DD branches below will
+    // produce a sharper read.
   }
 
   // 2. Failed alignment — FA anywhere in last 5 takes precedence over
