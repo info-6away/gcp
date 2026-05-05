@@ -523,6 +523,9 @@ export default function GCPApp() {
               timeframe={timeframe}
               onBack={() => setPage('dashboard')}
               onNavToCursor={(i) => { setCursor(i); setPage('chart'); }}
+              aiState={stableState}
+              regime={baseSeries[baseSeries.length - 1]?.r ?? null}
+              pss={latestPattern?.pss ?? latestPattern?.strength ?? null}
             />
           )}
           {page === 'chart' && (

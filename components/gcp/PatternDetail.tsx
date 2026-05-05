@@ -3,6 +3,12 @@
 import { useState, useMemo } from 'react';
 import type { DataPoint, Pattern, PatternKind, MarketSymbol, Timeframe } from '@/types/gcp';
 import { PATTERN_CODE } from '@/lib/patterns-meta';
+import type { GcpStateResponse } from '@/lib/engine-gcp';
+import {
+  derivePatternStory, pickDominantKind,
+  PATTERN_WHEN_IT_MATTERS, CYCLE_TO_CHAIN,
+  type PatternStory,
+} from '@/lib/patternStory';
 import PatternPriceChart from './PatternPriceChart';
 
 // v11.25.4: lifecycle role taxonomy for the Pattern Library cards.
@@ -277,12 +283,16 @@ function MiniChart({
 }
 
 function LibraryCard({
-  kind, matches, series, onSelect,
+  kind, matches, series, onSelect, dominant = false,
 }: {
   kind: string;
   matches: Pattern[];
   series: DataPoint[];
   onSelect: () => void;
+  // v11.25.6: when true, the card gets a stronger border + DOMINANT
+  // badge so the user's eye lands on the pattern that currently
+  // matters most in the active grid.
+  dominant?: boolean;
 }) {
   const meta      = LIB_META[kind] ?? LIB_META['Compression Coil'];
   const n         = matches.length;
@@ -293,6 +303,18 @@ function LibraryCard({
   const role      = LIFECYCLE_ROLE[kind] ?? 'Support';
   const status    = libraryStatus(kind, n);
   const isActive  = status === 'active';
+  const whenItMatters = PATTERN_WHEN_IT_MATTERS[kind as PatternKind] ?? null;
+
+  // v11.25.6: dominant emphasis. Slightly stronger border + faint
+  // glow keyed off the pattern's own meta colour. Kept restrained per
+  // spec ("do not overdo visual effect").
+  const baseBorder = dominant
+    ? `1px solid ${meta.color}99`
+    : '1px solid var(--line-1)';
+  const baseShadow = dominant
+    ? `0 0 0 1px ${meta.color}33, 0 0 12px ${meta.color}1a`
+    : 'none';
+  const hoverBorder = dominant ? `${meta.color}` : 'var(--line-3)';
 
   return (
     <div
@@ -300,15 +322,18 @@ function LibraryCard({
       onClick={isActive ? onSelect : undefined}
       style={{
         background: 'var(--bg-2)',
-        border: '1px solid var(--line-1)',
+        border: baseBorder,
+        boxShadow: baseShadow,
         borderRadius: 'var(--r-md)',
         padding: '14px 16px',
         cursor: isActive ? 'pointer' : 'default',
         transition: 'border-color 0.15s',
         opacity: isActive ? 1 : 0.65,
       }}
-      onMouseEnter={e => { if (isActive) e.currentTarget.style.borderColor = 'var(--line-3)'; }}
-      onMouseLeave={e => { if (isActive) e.currentTarget.style.borderColor = 'var(--line-1)'; }}
+      onMouseEnter={e => { if (isActive) e.currentTarget.style.borderColor = hoverBorder; }}
+      onMouseLeave={e => {
+        if (isActive) e.currentTarget.style.borderColor = dominant ? `${meta.color}99` : 'var(--line-1)';
+      }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 10 }}>
         <div style={{ minWidth: 0 }}>
@@ -320,7 +345,7 @@ function LibraryCard({
               {code}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
             <span style={{
               padding: '1px 6px',
               fontSize: 8, letterSpacing: '0.12em', fontWeight: 600,
@@ -343,6 +368,19 @@ function LibraryCard({
             }}>
               {status.toUpperCase()}
             </span>
+            {dominant && (
+              <span style={{
+                padding: '1px 6px',
+                fontSize: 8, letterSpacing: '0.16em', fontWeight: 700,
+                border: `1px solid ${meta.color}`,
+                color: meta.color,
+                background: `${meta.color}1f`,
+                borderRadius: 2,
+                fontFamily: 'var(--font-mono)',
+              }}>
+                DOMINANT
+              </span>
+            )}
           </div>
         </div>
         <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -356,6 +394,26 @@ function LibraryCard({
       <div style={{ color: 'var(--fg-2)', fontSize: 11, lineHeight: 1.5, marginBottom: 10 }}>
         {meta.summary}
       </div>
+
+      {whenItMatters && (
+        <div style={{
+          background: 'rgba(127,152,163,0.06)',
+          border: '1px solid rgba(127,152,163,0.18)',
+          borderRadius: 3,
+          padding: '6px 9px',
+          marginBottom: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}>
+          <div style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.14em', fontFamily: 'var(--font-mono)' }}>
+            WHEN IT MATTERS
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5 }}>
+            {whenItMatters}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 16, borderTop: '1px solid var(--line-1)', paddingTop: 10, flexWrap: 'wrap' }}>
         <div>
@@ -384,11 +442,13 @@ function LibraryCard({
   );
 }
 
-// v11.25.4: Lifecycle map block. Visual reference for how the patterns
-// chain together so the library feels like a dictionary with structure
-// rather than a flat grid of cards. Each chain renders as code chips
-// connected by arrows.
-function LifecycleMap() {
+// v11.25.4 + v11.25.6: Lifecycle map block. Visual reference for the
+// three lifecycle chains. The active chain (driven by
+// derivePatternStory().activeCycle) renders at full opacity with a
+// faint cyan accent on the chips; inactive chains dim to ~45% so the
+// user's eye lands on what's currently happening. activeChain={null}
+// reverts to the neutral all-dim baseline.
+function LifecycleMap({ activeChain }: { activeChain: string | null }) {
   const chains: { title: string; codes: string[] }[] = [
     {
       title: 'Compression cycle',
@@ -411,49 +471,61 @@ function LifecycleMap() {
     }}>
       <div className="hairline" style={{ marginBottom: 8 }}>Lifecycle map</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {chains.map(c => (
-          <div key={c.title} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', minWidth: 140 }}>
-              {c.title.toUpperCase()}
-            </span>
-            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-              {c.codes.map((code, i) => (
-                <span key={code} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{
-                    padding: '1px 6px',
-                    fontSize: 9, fontFamily: 'var(--font-mono)',
-                    letterSpacing: '0.04em',
-                    color: 'var(--fg-1)',
-                    border: '1px solid var(--line-2)',
-                    background: 'var(--bg-3)',
-                    borderRadius: 2,
-                  }}>{code}</span>
-                  {i < c.codes.length - 1 && (
-                    <span style={{ color: 'var(--fg-4)', fontSize: 10 }}>→</span>
-                  )}
-                </span>
-              ))}
-            </span>
-          </div>
-        ))}
+        {chains.map(c => {
+          const isActive = activeChain != null && c.title === activeChain;
+          // When something is active, dim non-matching rows. When
+          // activeChain is null (no dominant story), treat all rows
+          // as neutral (no dim) so the map still reads as a dictionary.
+          const opacity = activeChain == null ? 1 : (isActive ? 1 : 0.4);
+          const chipBg     = isActive ? 'rgba(77,217,232,0.10)' : 'var(--bg-3)';
+          const chipBorder = isActive ? 'rgba(77,217,232,0.55)' : 'var(--line-2)';
+          const chipColor  = isActive ? 'var(--cyan)'           : 'var(--fg-1)';
+          const arrowColor = isActive ? 'rgba(77,217,232,0.7)'  : 'var(--fg-4)';
+          const titleColor = isActive ? 'var(--cyan)'           : 'var(--fg-4)';
+          return (
+            <div key={c.title} style={{
+              display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+              opacity, transition: 'opacity 0.2s',
+            }}>
+              <span style={{
+                fontSize: 9, color: titleColor, letterSpacing: '0.08em',
+                minWidth: 140, fontWeight: isActive ? 700 : 500,
+              }}>
+                {c.title.toUpperCase()}
+              </span>
+              <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                {c.codes.map((code, i) => (
+                  <span key={code} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{
+                      padding: '1px 6px',
+                      fontSize: 9, fontFamily: 'var(--font-mono)',
+                      letterSpacing: '0.04em',
+                      color: chipColor,
+                      border: `1px solid ${chipBorder}`,
+                      background: chipBg,
+                      borderRadius: 2,
+                    }}>{code}</span>
+                    {i < c.codes.length - 1 && (
+                      <span style={{ color: arrowColor, fontSize: 10 }}>→</span>
+                    )}
+                  </span>
+                ))}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// v11.25.4: Current Pattern Story. Picks the last 3 patterns from the
-// resolved/visible list (chronological) and renders the chain plus a
-// one-sentence narrative built from the most recent pattern's
-// summary. Falls back to a hint when the window has < 3 patterns.
-function CurrentStory({ patterns }: { patterns: Pattern[] }) {
-  const last3 = useMemo(() => {
-    if (!patterns.length) return [] as Pattern[];
-    const sorted = [...patterns].sort((a, b) => a.tStart - b.tStart);
-    return sorted.slice(-3);
-  }, [patterns]);
-  const codes = last3.map(p => PATTERN_CODE[p.kind as PatternKind] ?? p.kind);
-  const last  = last3[last3.length - 1] ?? null;
-  const lastMeta = last ? LIB_META[last.kind] ?? null : null;
+// v11.25.6: Current Pattern Story. Now driven by derivePatternStory()
+// — the deterministic interpreter in lib/patternStory.ts maps the
+// last 3-5 visible patterns into a title + interpretation + posture +
+// activeCycle tag. The chip row still shows the code chain so the
+// user can audit which patterns drove the story.
+function CurrentStory({ story }: { story: PatternStory }) {
+  const empty = story.sequence.length === 0;
   return (
     <div style={{
       background: 'var(--bg-2)', border: '1px solid var(--line-1)',
@@ -461,14 +533,14 @@ function CurrentStory({ patterns }: { patterns: Pattern[] }) {
       marginBottom: 12,
     }}>
       <div className="hairline" style={{ marginBottom: 8 }}>Current pattern story</div>
-      {last3.length === 0 ? (
+      {empty ? (
         <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
           No patterns detected in the current window yet.
         </div>
       ) : (
         <>
-          <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            {codes.map((code, i) => (
+          <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+            {story.sequence.map((code, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{
                   padding: '2px 8px',
@@ -479,20 +551,27 @@ function CurrentStory({ patterns }: { patterns: Pattern[] }) {
                   background: 'rgba(77,217,232,0.08)',
                   borderRadius: 3,
                 }}>{code}</span>
-                {i < codes.length - 1 && (
+                {i < story.sequence.length - 1 && (
                   <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>→</span>
                 )}
               </span>
             ))}
           </div>
-          {lastMeta && (
-            <div style={{
-              marginTop: 8,
-              fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55,
-            }}>
-              {lastMeta.summary}
-            </div>
-          )}
+          <div style={{
+            fontSize: 13, color: 'var(--fg-0)', fontWeight: 600,
+            letterSpacing: '0.01em', marginBottom: 4,
+          }}>
+            {story.title}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55 }}>
+            {story.interpretation}
+          </div>
+          <div style={{
+            marginTop: 6, fontSize: 10, color: '#7F98A3', lineHeight: 1.5,
+            fontStyle: 'italic',
+          }}>
+            Posture: {story.posture}
+          </div>
         </>
       )}
     </div>
@@ -544,8 +623,9 @@ function DormantSection({
             lineHeight: 1.55, marginBottom: 10,
             maxWidth: 640,
           }}>
-            These patterns have not appeared in the selected dataset.
-            They may be rare, too strict, or deprecated.
+            Dormant patterns exist but have not appeared in this window. They
+            may be rare, stricter after calibration, or only appear in
+            different regimes.
           </div>
           <div style={{
             display: 'grid',
@@ -623,6 +703,12 @@ interface PatternDetailProps {
   timeframe:     Timeframe;
   onBack:        () => void;
   onNavToCursor: (i: number) => void;
+  // v11.25.6: optional context inputs the story engine reads when
+  // present. Falling back to undefined still produces a useful story
+  // from the pattern sequence alone.
+  aiState?:      GcpStateResponse | null;
+  regime?:       string | null;
+  pss?:          number | null;
 }
 
 export default function PatternDetail({
@@ -633,6 +719,9 @@ export default function PatternDetail({
   timeframe,
   onBack,
   onNavToCursor,
+  aiState = null,
+  regime  = null,
+  pss     = null,
 }: PatternDetailProps) {
   const [view, setView]     = useState<'library' | 'detail'>(initialKind ? 'detail' : 'library');
   const [kind, setKind]     = useState<string>(initialKind ?? 'Alignment Ladder');
@@ -681,6 +770,18 @@ export default function PatternDetail({
       else       dormantKinds.push(k);
     }
 
+    // v11.25.6: deterministic story over the active patterns.
+    // activeChain ties the activeCycle back to a Lifecycle Map row.
+    // dominantKind picks the active card to emphasise.
+    const story        = derivePatternStory({
+      patterns,
+      aiState: aiState ?? undefined,
+      regime,
+      pss,
+    });
+    const activeChain  = CYCLE_TO_CHAIN[story.activeCycle];
+    const dominantKind = pickDominantKind(patterns);
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--line-1)', flexShrink: 0 }}>
@@ -702,8 +803,8 @@ export default function PatternDetail({
         </div>
 
         <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-          <LifecycleMap />
-          <CurrentStory patterns={patterns} />
+          <CurrentStory story={story} />
+          <LifecycleMap activeChain={activeChain} />
 
           {activeKinds.length > 0 && (
             <>
@@ -723,6 +824,7 @@ export default function PatternDetail({
                     kind={k}
                     matches={byKind[k] ?? []}
                     series={series}
+                    dominant={k === dominantKind}
                     onSelect={() => { setKind(k); setSelectedId((byKind[k] ?? [])[0]?.id ?? null); setView('detail'); }}
                   />
                 ))}
