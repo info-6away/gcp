@@ -120,10 +120,20 @@ function PanelImpl({
   }, [acct.open]);
 
   const open       = acct.open;
-  const openPnl    = open && currentPrice != null
+  // v11.25.4 BUGFIX: with cross-tab sync, an open position for
+  // XAUUSD could end up in `acct` while the panel symbol is BTC. PnL
+  // math against a foreign-symbol entry price is meaningless ($4570
+  // gold entry vs. $95k BTC current = nonsense $19,800 PnL). Treat a
+  // cross-symbol position as un-actionable and zero it out for
+  // display purposes. The user is told they need to switch symbols
+  // to manage the position.
+  const positionSymbolMismatch = !!open && open.context.symbol !== symbol;
+  const openPnl    = open && currentPrice != null && !positionSymbolMismatch
     ? computePnl(open.side, open.entryPrice, currentPrice, open.size)
     : 0;
-  const equity     = computeEquity(acct, currentPrice);
+  const equity     = positionSymbolMismatch
+    ? acct.balance
+    : computeEquity(acct, currentPrice);
 
   const ctx = useMemo(
     () => buildContext(symbol, timeframe, aiState, posture, latestPattern, tradePlan, regime, netVariance),
@@ -144,6 +154,10 @@ function PanelImpl({
 
   const handleClose = () => {
     if (!open || currentPrice == null) return;
+    // v11.25.4 BUGFIX: refuse to close a position from a different
+    // symbol's panel. The exit price would be foreign-market and
+    // immediately corrupt the trade history's PnL.
+    if (positionSymbolMismatch) return;
     const next = closePosition(acct, currentPrice);
     setAcct(next);
     saveDemoAccount(next);
@@ -224,19 +238,39 @@ function PanelImpl({
               <Row label="Entry"  value={formatPrice(open.entryPrice, open.context.symbol)} />
               <Row
                 label="Current"
-                value={currentPrice != null ? formatPrice(currentPrice, open.context.symbol) : '—'}
+                value={
+                  positionSymbolMismatch
+                    ? '—'
+                    : currentPrice != null ? formatPrice(currentPrice, open.context.symbol) : '—'
+                }
               />
               <Row
                 label="PnL"
-                value={fmtMoney(openPnl, true)}
-                valueColor={openPnl > 0 ? 'var(--green)' : openPnl < 0 ? 'var(--red)' : 'var(--fg-3)'}
+                value={positionSymbolMismatch ? '—' : fmtMoney(openPnl, true)}
+                valueColor={
+                  positionSymbolMismatch ? 'var(--fg-3)'
+                  : openPnl > 0 ? 'var(--green)'
+                  : openPnl < 0 ? 'var(--red)'
+                  : 'var(--fg-3)'
+                }
               />
-              {liveAlignment && (
+              {liveAlignment && !positionSymbolMismatch && (
                 <Row
                   label="Alignment"
                   value={alignmentLabel(liveAlignment)}
                   valueColor={alignmentColor(liveAlignment)}
                 />
+              )}
+              {positionSymbolMismatch && (
+                <div style={{
+                  marginTop: 6, padding: '5px 8px',
+                  background: 'rgba(212, 160, 40, 0.08)',
+                  border: '1px solid rgba(212, 160, 40, 0.3)',
+                  borderRadius: 3,
+                  fontSize: 9, color: '#d4a028', lineHeight: 1.5,
+                }}>
+                  Switch to {open.context.symbol} to manage this position.
+                </div>
               )}
             </>
           ) : (
@@ -286,7 +320,7 @@ function PanelImpl({
             <ActionButton
               label="CLOSE"
               tone="cyan"
-              disabled={!open || currentPrice == null}
+              disabled={!open || currentPrice == null || positionSymbolMismatch}
               onClick={handleClose}
             />
           </div>

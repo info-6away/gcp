@@ -160,6 +160,24 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   useEffect(() => { stateRef.current = state;   }, [state]);
   useEffect(() => { intervalRef.current = intervalSec; }, [intervalSec]);
 
+  // v11.25.4 BUGFIX: clear the saved AI classification on symbol /
+  // timeframe change. Without this, runCall() forwards
+  // `previousState: stateRef.current` to the engine — and that state
+  // was classified for the OLD symbol/tf. Engine receives a BTC
+  // payload with a previousState derived from XAUUSD, which can bias
+  // its read. Reset on every (symbol, timeframe) transition so each
+  // market starts fresh.
+  useEffect(() => {
+    if (!inputs) return;
+    setState(null);
+    // Also clear last-call timestamp + snapshot so the auto-loop (if
+    // enabled) treats this as a fresh first attempt rather than a
+    // gated heartbeat against the prior symbol's pacing.
+    lastCallAtRef.current       = null;
+    lastSentSnapshotRef.current = null;
+    pendingReasonRef.current    = null;
+  }, [inputs?.symbol, inputs?.timeframe]);
+
   // v11.16.6: nextPollAt is anchored to lastCallAt + userInterval, not
   // to the decide loop tick. Recompute on every tick AND whenever the
   // user changes interval, so the Settings countdown reflects the real

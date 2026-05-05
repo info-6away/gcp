@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   loadPlan, savePlan, evaluatePlan,
-  PLAN_MEMORY_LS_KEY,
+  PLAN_MEMORY_LS_KEY, PLAN_TTL_MS,
   type PlanSnapshot,
 } from '@/lib/aiPlanMemory';
 
@@ -56,11 +56,22 @@ export function useAiPlanMemory(
   useEffect(() => {
     if (!plan) return;
     if (currentPrice == null) {
-      // Still apply expiry purely on time elapsed.
-      const next = evaluatePlan(plan, plan.triggerLevels.sellBelow ?? plan.triggerLevels.buyAbove ?? 0);
-      if (next !== plan && next.status === 'expired') {
-        setPlan(next);
-        savePlan(next);
+      // v11.25.4 BUGFIX: never call evaluatePlan() with a synthetic
+      // price when currentPrice is null. The previous shortcut
+      //   evaluatePlan(plan, plan.triggerLevels.sellBelow ?? ... ?? 0)
+      // passed the trigger level itself as the "current price",
+      // which made `currentPrice <= sellBelow` immediately true and
+      // spuriously transitioned the plan to `triggered`. A null price
+      // (network hiccup, initial load before the price feed lands)
+      // should only be allowed to advance the plan toward `expired`,
+      // never toward `triggered` / `invalidated`.
+      if (
+        plan.status === 'waiting'
+        && Date.now() - plan.timestamp > PLAN_TTL_MS
+      ) {
+        const expired: PlanSnapshot = { ...plan, status: 'expired' };
+        setPlan(expired);
+        savePlan(expired);
       }
       return;
     }
