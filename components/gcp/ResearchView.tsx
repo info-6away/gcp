@@ -15,7 +15,7 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
 };
 
-type ResearchMode = 'regime' | 'pattern' | 'aistate';
+type ResearchMode = 'regime' | 'pattern' | 'aistate' | 'transition';
 
 interface RegimePoint {
   kind:   'regime';
@@ -44,7 +44,25 @@ interface AiStatePoint {
   t:          number;
 }
 
-type Hovered = RegimePoint | PatternPoint | AiStatePoint;
+// v11.32: transitions are state-pair events captured from
+// aiStateHistory. fwdPct measures the forward price move from the
+// new-state timestamp; stable=true when the next analysis stayed in
+// the same toCode (used for the Transition Stability metric).
+interface TransitionPoint {
+  kind:           'transition';
+  fromCode:       string;
+  toCode:         string;
+  /** "CS→IS" — used as the column key in TRANSITION_META */
+  transitionKey:  string;
+  fwdPct:         number;
+  t:              number;
+  fromConfidence: number;
+  toConfidence:   number;
+  /** next analysis after this transition stayed in toCode */
+  stable:         boolean;
+}
+
+type Hovered = RegimePoint | PatternPoint | AiStatePoint | TransitionPoint;
 
 const REGIME_META: Record<string, { label: string; color: string; x: number }> = {
   A: { label: 'A · Silence',         color: '#4a72c4', x: 1 },
@@ -83,6 +101,29 @@ const AI_STATE_META: Record<string, { label: string; abbr: string; color: string
 };
 const AI_STATE_COLS = 9;
 const AI_STATE_MIN_COUNT = 10;
+
+// v11.32: priority transitions for the State Transition Matrix.
+// Each entry maps a "FROM→TO" key to its column metadata. Only these
+// transitions occupy a column in the BY TRANSITION view; rarer pairs
+// are tallied as "OTHER" so the x-axis stays readable.
+//   Compression cycle  CS→IS, IS→AT, AT→FA, FA→CS  (cyan / green / red / blue-grey)
+//   Recompression      AT→CS, IS→CS                (blue-grey)
+//   Shock ladder       SH→CS, DS→CS, SH→DS         (orange/red)
+const TRANSITION_META: Record<string, {
+  abbr: string; label: string; color: string; x: number;
+}> = {
+  'CS→IS': { abbr: 'CS→IS', label: 'Compression → Ignition',  color: '#4dd9e8', x: 1 },
+  'IS→AT': { abbr: 'IS→AT', label: 'Ignition → Alignment',    color: '#22c55e', x: 2 },
+  'AT→FA': { abbr: 'AT→FA', label: 'Alignment → Failed',      color: '#ef4444', x: 3 },
+  'FA→CS': { abbr: 'FA→CS', label: 'Failed → Compression',    color: '#7F98A3', x: 4 },
+  'AT→CS': { abbr: 'AT→CS', label: 'Alignment → Recompress',  color: '#7F98A3', x: 5 },
+  'IS→CS': { abbr: 'IS→CS', label: 'Ignition → Recompress',   color: '#7F98A3', x: 6 },
+  'SH→CS': { abbr: 'SH→CS', label: 'Shock → Compression',     color: '#fb923c', x: 7 },
+  'DS→CS': { abbr: 'DS→CS', label: 'Discharge → Compression', color: '#fb923c', x: 8 },
+  'SH→DS': { abbr: 'SH→DS', label: 'Shock → Discharge',       color: '#e24b4a', x: 9 },
+};
+const TRANSITION_COLS = 9;
+const TRANSITION_MIN_COUNT = 3;
 
 function regimeFor(v: number): string {
   if (v < 50)  return 'A';
@@ -490,6 +531,103 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return map;
   }, [aiStatePoints, aiStateData]);
 
+  // ── Transition data (v11.32) ────────────────────────────────────────────────
+  // Walks aiHistory chronologically, identifies stateCode changes, and
+  // computes forward returns from the new-state timestamp. CRITICAL:
+  // aiHistory is the POST-ANCHOR / POST-DECAY ledger (v11.26.1+), so
+  // transitions reflect what the user actually saw — not raw Engine
+  // output. Same symbol-mismatch + candle-availability guards as
+  // aiStateData.
+  const transitionData = useMemo(() => {
+    const points: TransitionPoint[] = [];
+    if (!aiHistory.length || !candles.length) return { points };
+    if (candleSymbol && candleSymbol !== symbol) return { points };
+
+    // Filter to current symbol then sort oldest → newest.
+    const ordered = aiHistory
+      .filter(r => r.symbol === symbol)
+      .sort((a, b) => a.timestamp - b.timestamp);
+    if (ordered.length < 2) return { points };
+
+    const lastIdx = candles.length - 1;
+    for (let i = 1; i < ordered.length; i++) {
+      const prev = ordered[i - 1];
+      const curr = ordered[i];
+      if (prev.stateCode === curr.stateCode) continue;   // not a transition
+
+      // Find first candle at-or-after the new-state timestamp; entry
+      // uses bar OPEN (or close fallback when open is bad).
+      let entryIdx = -1;
+      for (let k = 0; k < candles.length; k++) {
+        if (candles[k].t >= curr.timestamp) { entryIdx = k; break; }
+      }
+      if (entryIdx === -1) continue;
+      const entry = candles[entryIdx];
+      const entryPrice = entry.o > 0 ? entry.o : entry.c;
+      if (entryPrice <= 0) continue;
+      const exitIdx = Math.min(entryIdx + fwdBars, lastIdx);
+      if (exitIdx === entryIdx) continue;
+      const exit = candles[exitIdx];
+      if (!exit || exit.c <= 0) continue;
+
+      const fwdPct = ((exit.c - entryPrice) / entryPrice) * 100;
+      const next   = ordered[i + 1];
+      // Stability: did the next analysis hold the same toCode?
+      const stable = !!next && next.stateCode === curr.stateCode;
+
+      points.push({
+        kind:           'transition',
+        fromCode:       prev.stateCode,
+        toCode:         curr.stateCode,
+        transitionKey:  `${prev.stateCode}→${curr.stateCode}`,
+        fwdPct:         +fwdPct.toFixed(3),
+        t:              curr.timestamp,
+        fromConfidence: prev.confidence,
+        toConfidence:   curr.confidence,
+        stable,
+      });
+    }
+    return { points };
+  }, [aiHistory, candles, candleSymbol, fwdBars, symbol]);
+
+  const transitionPoints = transitionData.points;
+
+  const transitionStats = useMemo(() => {
+    const map: Record<string, {
+      pts:          TransitionPoint[];
+      avg:          number;
+      bull:         number;
+      bear:         number;
+      avgConf:      number;
+      stableCount:  number;
+      stability:    number;   // 0..1 — fraction of next-analysis-held
+      reliability:  number;   // 0..100 — bullish% × |avgMove| × sample weight
+      insufficient: boolean;
+    }> = {};
+    for (const key of Object.keys(TRANSITION_META)) {
+      const pts = transitionPoints.filter(p => p.transitionKey === key);
+      const n   = pts.length;
+      const avg = n ? pts.reduce((s, p) => s + p.fwdPct, 0) / n : 0;
+      const bull = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      const avgConf = n ? pts.reduce((s, p) => s + p.toConfidence, 0) / n : 0;
+      const stableCount = pts.filter(p => p.stable).length;
+      const stability   = n ? stableCount / n : 0;
+      const bullishPct  = n ? bull / n : 0;
+      // Reliability = bullishPct × min(1, |avg|/0.5) × sampleWeight
+      // sampleWeight saturates at 20 occurrences.
+      const sampleWeight = Math.min(1, n / 20);
+      const moveScore    = Math.min(1, Math.abs(avg) / 0.5);
+      const reliability  = +(bullishPct * moveScore * sampleWeight * 100).toFixed(1);
+      map[key] = {
+        pts, avg, bull, bear, avgConf,
+        stableCount, stability, reliability,
+        insufficient: n < TRANSITION_MIN_COUNT,
+      };
+    }
+    return map;
+  }, [transitionPoints]);
+
   // ── Geometry ────────────────────────────────────────────────────────────────
   // v11.25.3: side paddings equalised so the plot area sits visually
   // centered inside the main research panel (the right summary sidebar
@@ -508,13 +646,15 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     PAD.t + (1 - (Math.max(Y_MIN, Math.min(Y_MAX, pct)) - Y_MIN) / (Y_MAX - Y_MIN)) * IH;
 
   const cols =
-    mode === 'regime'  ? 6 :
-    mode === 'pattern' ? PATTERN_COLS :
-                         AI_STATE_COLS;
+    mode === 'regime'     ? 6 :
+    mode === 'pattern'    ? PATTERN_COLS :
+    mode === 'transition' ? TRANSITION_COLS :
+                            AI_STATE_COLS;
   const colMeta =
-    mode === 'regime'  ? REGIME_META :
-    mode === 'pattern' ? PATTERN_META :
-                         AI_STATE_META;
+    mode === 'regime'     ? REGIME_META :
+    mode === 'pattern'    ? PATTERN_META :
+    mode === 'transition' ? TRANSITION_META :
+                            AI_STATE_META;
 
   const xOfRegime = (regime: string) => {
     const meta = REGIME_META[regime];
@@ -531,20 +671,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / AI_STATE_COLS) * IW;
   };
-  const xOfPoint = (pt: RegimePoint | PatternPoint | AiStatePoint) =>
-    pt.kind === 'regime'  ? xOfRegime(pt.regime)
-  : pt.kind === 'pattern' ? xOfPattern(pt.pattern)
-  :                         xOfAiState(pt.stateCode);
+  const xOfTransition = (key: string) => {
+    const meta = TRANSITION_META[key];
+    if (!meta) return PAD.l;
+    return PAD.l + ((meta.x - 0.5) / TRANSITION_COLS) * IW;
+  };
+  type AnyPoint = RegimePoint | PatternPoint | AiStatePoint | TransitionPoint;
+  const xOfPoint = (pt: AnyPoint): number =>
+    pt.kind === 'regime'     ? xOfRegime(pt.regime)
+  : pt.kind === 'pattern'    ? xOfPattern(pt.pattern)
+  : pt.kind === 'transition' ? xOfTransition(pt.transitionKey)
+  :                            xOfAiState(pt.stateCode);
 
   const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / cols) * 0.35;
 
-  const visiblePoints: (RegimePoint | PatternPoint | AiStatePoint)[] =
-    mode === 'regime'  ? regimePoints  :
-    mode === 'pattern' ? patternPoints :
-                         aiStatePoints;
+  const visiblePoints: AnyPoint[] =
+    mode === 'regime'     ? regimePoints     :
+    mode === 'pattern'    ? patternPoints    :
+    mode === 'transition' ? transitionPoints :
+                            aiStatePoints;
   const totalLabel =
-    mode === 'regime'  ? `${regimePoints.length} bars`        :
-    mode === 'pattern' ? `${patternPoints.length} occurrences`:
+    mode === 'regime'     ? `${regimePoints.length} bars`           :
+    mode === 'pattern'    ? `${patternPoints.length} occurrences`   :
+    mode === 'transition' ? `${transitionPoints.length} transitions` :
     aiStateData.pendingTotal > 0
       ? `${aiStateData.totalForSymbol} analyses · ${aiStateData.pendingTotal} pending`
       : `${aiStateData.totalForSymbol} analyses`;
@@ -566,15 +715,16 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-2)' }}>
-          {mode === 'regime'  ? 'GCP Regime → Price'         :
-           mode === 'pattern' ? 'GCP Pattern → Forward Price' :
-                                'AI State → Forward Price'}
+          {mode === 'regime'     ? 'GCP Regime → Price'         :
+           mode === 'pattern'    ? 'GCP Pattern → Forward Price' :
+           mode === 'transition' ? 'State Transition → Forward Price' :
+                                   'AI State → Forward Price'}
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{symbol}</span>
 
         <div style={{ display: 'flex', gap: 1, marginLeft: 12 }}>
-          {(['regime', 'pattern', 'aistate'] as ResearchMode[]).map(m => (
+          {(['aistate', 'transition', 'pattern', 'regime'] as ResearchMode[]).map(m => (
             <button key={m}
               onClick={() => { setMode(m); setHovered(null); }}
               style={{
@@ -587,9 +737,10 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 cursor: 'pointer',
               }}
             >
-              {m === 'regime'  ? 'BY REGIME'  :
-               m === 'pattern' ? 'BY PATTERN' :
-                                 'BY AI STATE'}
+              {m === 'regime'     ? 'BY REGIME'     :
+               m === 'pattern'    ? 'BY PATTERN'    :
+               m === 'transition' ? 'BY TRANSITION' :
+                                    'BY AI STATE'}
             </button>
           ))}
         </div>
@@ -698,6 +849,17 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 X-axis is which GCP pattern fired; the horizontal line per column is the average outcome.{' '}
                 <span style={{ color: '#d4a028' }}>
                   AL trending positive = Alignment Ladder reliably precedes upward moves.
+                </span>
+              </>
+            )}
+            {mode === 'transition' && (
+              <>
+                <span style={{ color: 'var(--cyan)' }}>Guru is a state machine.</span>{' '}
+                This view measures how environments evolve — not just isolated states.
+                Each dot = one state-change event from your post-anchor history;
+                forward price is measured from the new-state timestamp over the next {FWD_LABEL[fwdBars]}.{' '}
+                <span style={{ color: '#d4a028' }}>
+                  CS → IS positive = compression-to-ignition transitions historically precede upward moves.
                 </span>
               </>
             )}
@@ -846,6 +1008,22 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   );
                 })}
 
+                {mode === 'transition' && Object.entries(transitionStats).map(([key, s]) => {
+                  if (s.pts.length < 2) return null;
+                  const cx  = xOfTransition(key);
+                  const y   = yOf(s.avg);
+                  const col = TRANSITION_META[key]?.color ?? '#fff';
+                  return (
+                    <g key={key}>
+                      <line x1={cx - 16} x2={cx + 16} y1={y} y2={y} stroke={col} strokeWidth={2} />
+                      <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
+                        fontFamily="IBM Plex Mono, monospace">
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </text>
+                    </g>
+                  );
+                })}
+
                 {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => (
                   <g key={r}>
                     <text
@@ -911,6 +1089,20 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       fontFamily="IBM Plex Mono, monospace"
                     >
                       {meta.label.split(' ').slice(-1)[0]}
+                    </text>
+                  </g>
+                ))}
+
+                {mode === 'transition' && Object.entries(TRANSITION_META).map(([key, meta]) => (
+                  <g key={key}>
+                    <text
+                      x={xOfTransition(key)}
+                      y={H - PAD.b + 16}
+                      textAnchor="middle"
+                      fontSize={9} fill={meta.color} fontWeight={600}
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.abbr}
                     </text>
                   </g>
                 ))}
@@ -993,6 +1185,23 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       </div>
                     </>
                   )}
+                  {hovered.kind === 'transition' && (
+                    <>
+                      <div style={{ color: TRANSITION_META[hovered.transitionKey]?.color ?? 'var(--fg-1)', marginBottom: 3 }}>
+                        {hovered.fromCode} → {hovered.toCode}
+                      </div>
+                      <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
+                        {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
+                      </div>
+                      <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+                        Conf {(hovered.toConfidence * 100).toFixed(0)}%
+                        {hovered.stable ? ' · held next' : ''}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1006,9 +1215,10 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 fontSize: 8, letterSpacing: '0.12em',
                 color: 'var(--fg-4)', marginBottom: 12,
               }}>
-                {mode === 'regime'  ? 'REGIME SUMMARY'  :
-                 mode === 'pattern' ? 'PATTERN SUMMARY' :
-                                      'AI STATE SUMMARY'}
+                {mode === 'regime'     ? 'REGIME SUMMARY'     :
+                 mode === 'pattern'    ? 'PATTERN SUMMARY'    :
+                 mode === 'transition' ? 'TRANSITION SUMMARY' :
+                                         'AI STATE SUMMARY'}
               </div>
 
               {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => {
@@ -1235,15 +1445,108 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 );
               })}
 
+              {/* v11.32: transition sidebar — one card per priority
+                  transition. Cards show count, bullish %, avg move,
+                  avg confidence, plus a stability bar (fraction of
+                  next-analysis-held) and a reliability score. */}
+              {mode === 'transition' && transitionPoints.length === 0 && (
+                <div style={{
+                  padding: '14px 12px',
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-1)',
+                  borderRadius: 4,
+                  fontSize: 10, color: '#7F98A3', lineHeight: 1.55,
+                }}>
+                  <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
+                    No transitions captured yet.
+                  </div>
+                  Run more Guru analyses on this symbol — transitions
+                  appear once the state changes between successive runs.
+                </div>
+              )}
+
+              {mode === 'transition' && transitionPoints.length > 0 && Object.entries(TRANSITION_META).map(([key, meta]) => {
+                const s = transitionStats[key];
+                if (!s) return null;
+                const n = s.pts.length;
+                if (n === 0) {
+                  return (
+                    <div key={key} style={{
+                      marginBottom: 8, paddingBottom: 8, opacity: 0.45,
+                      borderBottom: '1px solid var(--line-0)',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                        <span style={{ color: 'var(--fg-4)', fontSize: 9 }}>no data</span>
+                      </div>
+                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
+                        {meta.label}
+                      </div>
+                    </div>
+                  );
+                }
+                const bullPct  = (s.bull / n) * 100;
+                const stableW  = Math.round(s.stability * 100);
+                return (
+                  <div key={key} style={{
+                    marginBottom: 10, paddingBottom: 10,
+                    borderBottom: '1px solid var(--line-0)',
+                    opacity: s.insufficient ? 0.65 : 1,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                      <span style={{
+                        fontSize: 11, fontVariantNumeric: 'tabular-nums',
+                        color: s.insufficient ? 'var(--fg-3)'
+                          : s.avg > 0.05 ? '#22c55e' : s.avg < -0.05 ? '#ef4444' : 'var(--fg-3)',
+                      }}>
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                      {meta.label} · {n} transition{n === 1 ? '' : 's'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap' }}>
+                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                      <span>{bullPct.toFixed(0)}% bullish</span>
+                    </div>
+                    {s.insufficient ? (
+                      <div style={{
+                        marginTop: 4,
+                        fontSize: 8, color: '#d4a028',
+                        letterSpacing: '0.04em',
+                      }}>
+                        Insufficient transition data
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', background: '#22c55e', width: `${bullPct}%`, borderRadius: 1 }} />
+                        </div>
+                        <div style={{
+                          display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginTop: 4, flexWrap: 'wrap',
+                        }}>
+                          <span>conf {(s.avgConf * 100).toFixed(0)}%</span>
+                          <span>· stability {stableW}%</span>
+                          <span>· reliability {s.reliability.toFixed(0)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
               <div style={{
                 fontSize: 8, color: 'var(--fg-4)',
                 lineHeight: 1.5, marginTop: 8,
               }}>
                 Avg line = mean price change.
                 Bull/bear bar = % of{' '}
-                {mode === 'regime'  ? 'bars' :
-                 mode === 'pattern' ? 'occurrences' :
-                                      'analyses'} with positive outcome.
+                {mode === 'regime'     ? 'bars' :
+                 mode === 'pattern'    ? 'occurrences' :
+                 mode === 'transition' ? 'transitions' :
+                                         'analyses'} with positive outcome.
               </div>
             </div>
           </div>
