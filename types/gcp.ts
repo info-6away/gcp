@@ -1,4 +1,4 @@
-export type AppPage = 'dashboard' | 'pattern' | 'chart' | 'research' | 'trading' | 'settings';
+export type AppPage = 'dashboard' | 'guru' | 'pattern' | 'chart' | 'research' | 'trading' | 'settings';
 
 export interface GCPEntry {
   t: number;

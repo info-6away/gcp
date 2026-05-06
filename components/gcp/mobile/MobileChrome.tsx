@@ -10,7 +10,7 @@ import AiStateBadge from '../AiStateBadge';
 import Heartbeat from '../Heartbeat';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 
-export type MobilePage = 'dashboard' | 'chart' | 'pattern' | 'research' | 'settings';
+export type MobilePage = 'dashboard' | 'guru' | 'chart' | 'pattern' | 'research' | 'settings';
 
 export function MobileStatus({
   nv, regime, connected, aiState = null, aiEnabled = false, aiStatus = 'idle',
@@ -139,6 +139,12 @@ export function BottomNav({
       <circle cx={11} cy={6} r={1.4} fill="currentColor" />
     </svg>
   );
+  const GuruIcon = () => (
+    <svg width={18} height={18} viewBox="0 0 18 18" fill="none">
+      <circle cx={9} cy={9} r={6} stroke="currentColor" strokeWidth={1.3} />
+      <circle cx={9} cy={9} r={2}    fill="currentColor" />
+    </svg>
+  );
   const ResearchIcon = () => (
     <svg width={18} height={18} viewBox="0 0 18 18" fill="none">
       <circle cx={7} cy={7} r={5} stroke="currentColor" strokeWidth={1.3} />
@@ -182,7 +188,7 @@ export function BottomNav({
       borderTop: `1px solid ${C.cyan}33`,
       flexShrink: 0,
     }}>
-      {side('chart', 'CHART', ChartIcon)}
+      {side('guru', 'GURU', GuruIcon)}
       {side('pattern', 'PATTERNS', PatternIcon)}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, marginTop: -26 }}>
@@ -202,6 +208,7 @@ export function BottomNav({
         }}>FEED</span>
       </div>
 
+      {side('chart', 'CHART', ChartIcon)}
       {side('research', 'RESEARCH', ResearchIcon)}
       {side('settings', 'SETTINGS', SettingsIcon)}
     </div>

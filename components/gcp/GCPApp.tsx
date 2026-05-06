@@ -22,6 +22,7 @@ import { windowMetrics } from '@/lib/energy';
 import { PATTERN_CODE, REGIME_NAME, regimeForValue } from '@/lib/patterns-meta';
 import Chrome from './Chrome';
 import Dashboard from './Dashboard';
+import GuruView from './GuruView';
 import PatternDetail from './PatternDetail';
 import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
@@ -411,6 +412,7 @@ export default function GCPApp() {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'SELECT') return;
       if (e.key === 'd') setPage('dashboard');
+      if (e.key === 'g') setPage('guru');
       if (e.key === 'p') { setSelectedPatternKind(null); setPage('pattern'); }
       if (e.key === 'c') setPage('chart');
       if (e.key === 'r') setPage('research');
@@ -545,6 +547,21 @@ export default function GCPApp() {
               aiRunNow={aiState.runNow}
               aiStatus={aiState.aiStatus}
               aiLastSuccess={aiState.lastSuccessAt}
+              planStructure={planStructure}
+              planAnalysisCandle={planAnalysisCandle}
+              onNav={handleNav}
+            />
+          )}
+          {page === 'guru' && (
+            <GuruView
+              symbol={symbol}
+              symbolPrice={goldData.price}
+              aiState={stableState}
+              aiEnabled={aiState.enabled}
+              aiStatus={aiState.aiStatus}
+              aiRunNow={aiState.runNow}
+              aiLastSuccess={aiState.lastSuccessAt}
+              latestPattern={latestPattern}
               planStructure={planStructure}
               planAnalysisCandle={planAnalysisCandle}
             />

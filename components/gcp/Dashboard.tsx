@@ -1,15 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
+import type { DataPoint, Pattern, MarketSymbol, AppPage } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
-import { symbolEnvLabel } from '@/types/gcp';
+import { symbolEnvLabel, formatPrice } from '@/types/gcp';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
-import AiStateCard from './AiStateCard';
+import {
+  DEFAULT_INTERPRETATION, directionArrow, stateColor,
+} from '@/lib/aiState';
+import { derivePatternStory } from '@/lib/patternStory';
+import { PATTERN_CODE } from '@/lib/patterns-meta';
+import {
+  loadDemoAccount, computePnl, computeEquity, alignmentLabel,
+  alignmentColor, classifyAlignment, DEMO_LS_KEY, STARTING_BALANCE,
+  type DemoAccount,
+} from '@/lib/demoAccount';
 
 const REGIME_META: Record<string, { label: string; color: string; bg: string; range: string }> = {
   A: { label: 'Silence',         color: '#4a72c4', bg: 'rgba(59,90,160,0.15)',  range: '0–50' },
@@ -304,6 +313,388 @@ function NewsRow({ item }: { item: NewsItem }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────
+// v11.27 summary cards. Each renders a compact preview of one tab and
+// exposes an Open <Tab> button so the Dashboard becomes navigation
+// rather than execution.
+// ────────────────────────────────────────────────────────────────────
+
+function CardShell({
+  title, subtitle, children, openLabel, onOpen, flash = false, accent,
+}: {
+  title:      string;
+  subtitle?:  string;
+  children:   React.ReactNode;
+  openLabel?: string;
+  onOpen?:    () => void;
+  flash?:     boolean;
+  accent?:    string;
+}) {
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      padding: '12px 14px',
+      borderLeft: accent ? `2px solid ${accent}` : undefined,
+      outline: flash ? '1px solid var(--cyan)' : '1px solid transparent',
+      transition: 'outline 0.3s ease',
+      display: 'flex', flexDirection: 'column',
+      minHeight: 130,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: 8, marginBottom: 6,
+      }}>
+        <span style={{ fontSize: 9, letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
+          {title}
+        </span>
+        {subtitle && (
+          <span style={{
+            fontSize: 8, letterSpacing: '0.08em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)',
+          }}>
+            {subtitle}
+          </span>
+        )}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+      {openLabel && onOpen && (
+        <button
+          onClick={onOpen}
+          style={{
+            marginTop: 10, alignSelf: 'flex-start',
+            padding: '3px 10px',
+            fontSize: 9, letterSpacing: '0.12em', fontWeight: 600,
+            background: 'transparent',
+            border: '1px solid var(--line-2)',
+            color: 'var(--fg-2)',
+            borderRadius: 2,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          {openLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GuruSummaryCard({
+  aiState, aiEnabled, flash, onOpen,
+}: {
+  aiState:   GcpStateResponse | null;
+  aiEnabled: boolean;
+  flash:     boolean;
+  onOpen?:   () => void;
+}) {
+  if (!aiEnabled) {
+    return (
+      <CardShell title="LATEST GURU ANALYSIS" openLabel="OPEN GURU →" onOpen={onOpen}>
+        <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>Guru disabled</div>
+        <div style={{ fontSize: 10, color: 'var(--fg-4)', marginTop: 4 }}>
+          Enable Guru in Settings to see analysis here.
+        </div>
+      </CardShell>
+    );
+  }
+  if (!aiState) {
+    return (
+      <CardShell title="LATEST GURU ANALYSIS" openLabel="OPEN GURU →" onOpen={onOpen} flash={flash}>
+        <div style={{ fontSize: 13, color: 'var(--fg-2)', fontWeight: 600 }}>
+          Guru not run yet
+        </div>
+        <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 4, lineHeight: 1.5 }}>
+          Open Guru and click "Ask Guru" to capture an analysis.
+        </div>
+      </CardShell>
+    );
+  }
+  const accent = stateColor(aiState);
+  const arrow  = directionArrow(aiState.direction);
+  const conf   = Math.round(aiState.confidence * 100);
+  const oneLiner = (aiState.reasoningShort?.trim() && aiState.reasoningShort.length <= 90)
+    ? aiState.reasoningShort.trim()
+    : (DEFAULT_INTERPRETATION[aiState.stateCode] || '—');
+
+  return (
+    <CardShell
+      title="LATEST GURU ANALYSIS"
+      subtitle={aiState.coherenceType.toUpperCase()}
+      flash={flash}
+      accent={accent}
+      openLabel="OPEN GURU →"
+      onOpen={onOpen}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{
+          fontSize: 22, color: accent, fontWeight: 600, letterSpacing: '-0.01em',
+        }}>
+          {aiState.state.toUpperCase()}
+        </span>
+        <span style={{ fontSize: 18, color: accent, fontWeight: 600 }}>{arrow}</span>
+      </div>
+      <div style={{
+        display: 'flex', gap: 14, marginTop: 6,
+        fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.04em',
+      }}>
+        <span><span style={{ color: 'var(--fg-4)' }}>PHASE </span>
+          <span style={{ color: 'var(--fg-1)' }}>{aiState.phase}</span></span>
+        <span><span style={{ color: 'var(--fg-4)' }}>BIAS </span>
+          <span style={{ color: 'var(--fg-1)' }}>{aiState.direction}</span></span>
+        <span><span style={{ color: 'var(--fg-4)' }}>CONF </span>
+          <span style={{ color: 'var(--fg-1)' }}>{conf}%</span></span>
+      </div>
+      <div style={{
+        marginTop: 8,
+        fontSize: 11, color: '#B8D1DA', lineHeight: 1.5,
+      }}>
+        {oneLiner}
+      </div>
+    </CardShell>
+  );
+}
+
+function PatternStorySummaryCard({
+  patterns, onOpen,
+}: {
+  patterns: Pattern[];
+  onOpen?:  () => void;
+}) {
+  const story = derivePatternStory({ patterns });
+  const empty = story.sequence.length === 0;
+  const dom   = story.dominantPattern
+    ? PATTERN_CODE[story.dominantPattern]
+    : null;
+  return (
+    <CardShell
+      title="LATEST PATTERN STORY"
+      subtitle={story.activeCycle.toUpperCase()}
+      openLabel="OPEN PATTERNS →"
+      onOpen={onOpen}
+    >
+      {empty ? (
+        <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+          No patterns detected in the current window yet.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap' }}>
+            {story.sequence.map((c, i) => (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span style={{
+                  padding: '1px 6px',
+                  fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                  color: 'var(--cyan)',
+                  border: '1px solid rgba(77,217,232,0.45)',
+                  background: 'rgba(77,217,232,0.08)',
+                  borderRadius: 2,
+                }}>{c}</span>
+                {i < story.sequence.length - 1 && (
+                  <span style={{ color: 'var(--fg-3)', fontSize: 10 }}>→</span>
+                )}
+              </span>
+            ))}
+          </div>
+          <div style={{
+            marginTop: 8, fontSize: 13, color: 'var(--fg-0)',
+            fontWeight: 700, letterSpacing: '0.01em',
+          }}>
+            {story.state}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--fg-2)', marginTop: 4, lineHeight: 1.45 }}>
+            {story.posture}
+          </div>
+          {dom && (
+            <div style={{ fontSize: 9, color: 'var(--fg-4)', marginTop: 4, letterSpacing: '0.08em' }}>
+              DOMINANT <span style={{ color: 'var(--fg-2)' }}>{dom}</span>
+            </div>
+          )}
+        </>
+      )}
+    </CardShell>
+  );
+}
+
+function MarketSnapshotCard({
+  symbol, symbolPrice, liveNV, nvDelta, regime, latestPattern, series,
+}: {
+  symbol:        MarketSymbol;
+  symbolPrice:   number | null;
+  liveNV:        number | null;
+  nvDelta:       number | null;
+  regime:        string | null;
+  latestPattern: Pattern | null;
+  series:        DataPoint[];
+}) {
+  const regimeMeta = regime ? REGIME_META[regime] : null;
+  const pss = latestPattern ? Math.round(latestPattern.strength * 100) : null;
+  return (
+    <CardShell title="MARKET / COHERENCE">
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
+        fontSize: 10,
+      }}>
+        <div>
+          <div style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.12em' }}>NV</div>
+          <div style={{
+            fontSize: 17, color: 'var(--cyan)', fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          }}>
+            {liveNV != null ? liveNV.toFixed(1) : '—'}
+          </div>
+          {nvDelta != null && (
+            <div style={{ fontSize: 9, color: 'var(--fg-4)', marginTop: 2 }}>
+              {nvDelta >= 0 ? '+' : ''}{nvDelta.toFixed(1)} vs 24m
+            </div>
+          )}
+          <NVSparkline series={series} />
+        </div>
+        <div>
+          <div style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.12em' }}>{symbol}</div>
+          <div style={{
+            fontSize: 17, color: 'var(--fg-0)', fontFamily: 'var(--font-mono)',
+            fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          }}>
+            {symbolPrice != null ? formatPrice(symbolPrice, symbol) : '—'}
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8,
+            color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.12em',
+          }}>REGIME</div>
+          <div style={{
+            fontSize: 13,
+            color: regimeMeta?.color ?? 'var(--fg-3)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+            marginTop: 2,
+          }}>
+            {regime ?? '—'}
+            {regimeMeta && (
+              <span style={{
+                marginLeft: 6, fontSize: 9, color: 'var(--fg-3)',
+                letterSpacing: '0.04em',
+              }}>{regimeMeta.label}</span>
+            )}
+          </div>
+          {pss != null && latestPattern && (
+            <div style={{
+              fontSize: 9, color: 'var(--fg-4)', marginTop: 6,
+              fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ letterSpacing: '0.1em' }}>PSS </span>
+              <span style={{ color: pss >= 70 ? 'var(--green)' : pss >= 50 ? 'var(--amber)' : 'var(--fg-2)' }}>
+                {pss}
+              </span>
+              <span style={{ color: 'var(--fg-4)' }}> · {latestPattern.kind}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </CardShell>
+  );
+}
+
+function DemoSummaryCard({
+  symbol, symbolPrice, onOpen,
+}: {
+  symbol:      MarketSymbol;
+  symbolPrice: number | null;
+  onOpen?:     () => void;
+}) {
+  const [acct, setAcct] = useState<DemoAccount>(() => loadDemoAccount());
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== DEMO_LS_KEY) return;
+      setAcct(loadDemoAccount());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  // Repaint open PnL once a second when there's an active position so
+  // the dashboard ticks alongside the live price.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!acct.open) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [acct.open]);
+
+  const open = acct.open;
+  const positionSymbolMismatch = !!open && open.context.symbol !== symbol;
+  const openPnl = open && symbolPrice != null && !positionSymbolMismatch
+    ? computePnl(open.side, open.entryPrice, symbolPrice, open.size)
+    : 0;
+  const equity = positionSymbolMismatch ? acct.balance : computeEquity(acct, symbolPrice);
+  const liveAlignment = open ? classifyAlignment(open.side, open.context) : null;
+  const fmtMoney = (n: number, signed = false): string => {
+    const abs = Math.abs(n);
+    const s = `$${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (n < 0)         return `-${s}`;
+    if (signed && n > 0) return `+${s}`;
+    return s;
+  };
+  return (
+    <CardShell
+      title="LATEST DEMO TRADE"
+      subtitle={open ? open.context.symbol : 'FLAT'}
+      openLabel="OPEN TRD →"
+      onOpen={onOpen}
+    >
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 10,
+      }}>
+        <div>
+          <div style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.12em' }}>EQUITY</div>
+          <div style={{
+            fontSize: 14, fontFamily: 'var(--font-mono)',
+            color: equity >= STARTING_BALANCE ? 'var(--green)' : 'var(--red)',
+            fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          }}>
+            {fmtMoney(equity)}
+          </div>
+        </div>
+        <div>
+          <div style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.12em' }}>OPEN PnL</div>
+          <div style={{
+            fontSize: 14, fontFamily: 'var(--font-mono)',
+            color: positionSymbolMismatch ? 'var(--fg-3)'
+                 : openPnl > 0 ? 'var(--green)'
+                 : openPnl < 0 ? 'var(--red)' : 'var(--fg-3)',
+            fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          }}>
+            {open && !positionSymbolMismatch ? fmtMoney(openPnl, true) : '—'}
+          </div>
+        </div>
+      </div>
+      {open ? (
+        <div style={{ marginTop: 8, fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.5 }}>
+          <span style={{
+            color: open.side === 'long' ? 'var(--green)' : 'var(--red)',
+            fontWeight: 600, letterSpacing: '0.08em',
+          }}>
+            {open.side === 'long' ? 'LONG' : 'SHORT'}
+          </span>
+          <span style={{ color: 'var(--fg-4)' }}> · {fmtMoney(open.size)} @ {formatPrice(open.entryPrice, open.context.symbol)}</span>
+          {liveAlignment && !positionSymbolMismatch && (
+            <span style={{ color: alignmentColor(liveAlignment), marginLeft: 6, fontSize: 9 }}>
+              · {alignmentLabel(liveAlignment)}
+            </span>
+          )}
+          {positionSymbolMismatch && (
+            <span style={{ color: '#d4a028', marginLeft: 6, fontSize: 9 }}>
+              · switch to {open.context.symbol} to manage
+            </span>
+          )}
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-3)' }}>
+          No open position · realized PnL {fmtMoney(acct.realizedPnl, true)}
+        </div>
+      )}
+    </CardShell>
+  );
+}
+
 interface DashboardProps {
   gcpData:        GCPDataState;
   series:         DataPoint[];
@@ -318,13 +709,22 @@ interface DashboardProps {
   aiLastSuccess:  Date | null;
   planStructure:  StructureRead;
   planAnalysisCandle: Candle | null;
+  // v11.27: Dashboard is now a summary surface — its cards link out
+  // to Guru / Patterns / TRD via this nav callback.
+  onNav?:         (page: AppPage) => void;
 }
 
 export default function Dashboard({
   gcpData, series, patterns, symbol, symbolPrice, pssFlash = false,
   aiState, aiEnabled, aiRunNow, aiStatus, aiLastSuccess,
-  planStructure, planAnalysisCandle,
+  planStructure, planAnalysisCandle, onNav,
 }: DashboardProps) {
+  // Mark planStructure / planAnalysisCandle / aiRunNow / aiStatus /
+  // aiLastSuccess as referenced — they're plumbed for v11.28+ but the
+  // current summary view doesn't render them directly. Suppresses
+  // TS6133 if the linter ever flips on it.
+  void planStructure; void planAnalysisCandle;
+  void aiRunNow;       void aiStatus;       void aiLastSuccess;
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
 
   const [nextRefresh, setNextRefresh] = useState(180);
@@ -361,50 +761,41 @@ export default function Dashboard({
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Primary focus: AI block (left) + compact stats stack (right) */}
+        {/* v11.27: Dashboard is now a summary surface. Four compact
+            cards across the top — Guru / Pattern Story / Market /
+            Demo. Each links to its full-detail tab. */}
         <div style={{
-          display: 'grid', gridTemplateColumns: '1.4fr 1fr',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: 1,
+          background: 'var(--line-0)',
           borderBottom: '1px solid var(--line-0)',
           flexShrink: 0,
         }}>
-          <AiStateCard
-            state={aiState}
-            enabled={aiEnabled}
+          <GuruSummaryCard
+            aiState={aiState}
+            aiEnabled={aiEnabled}
             flash={pssFlash}
-            latestPattern={activePattern}
-            runNow={aiRunNow}
-            aiStatus={aiStatus}
-            lastSuccessAt={aiLastSuccess}
-            planStructure={planStructure}
-            planAnalysisCandle={planAnalysisCandle}
-            currentPrice={symbolPrice}
-            symbol={symbol}
+            onOpen={() => onNav?.('guru')}
           />
-          <div style={{
-            background: 'var(--bg-1)', borderLeft: '1px solid var(--line-0)',
-            padding: '10px 16px',
-            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-            gap: 6,
-          }}>
-            <StatRow
-              label="NV"
-              valueColor="var(--cyan)"
-              value={liveNV != null ? liveNV.toFixed(1) : '—'}
-              meta={nvDelta != null ? `${nvDelta >= 0 ? '+' : ''}${nvDelta.toFixed(1)} vs 24m` : 'live network coherence'}
-            >
-              <NVSparkline series={live15} />
-            </StatRow>
-            <StatRow
-              label="REGIME"
-              valueColor={regimeMeta?.color ?? 'var(--fg-3)'}
-              value={liveRegime ? `${liveRegime}` : '—'}
-              meta={regimeMeta ? `${regimeMeta.label.toUpperCase()} · ${regimeMeta.range} NV` : 'awaiting first sample'}
-            />
-            {/* v11.18.1: PSS row removed from the stats column. The
-                Pattern card directly below renders the same number,
-                tier, and pattern name — keeping it here was pure
-                duplication. */}
-          </div>
+          <PatternStorySummaryCard
+            patterns={patterns}
+            onOpen={() => onNav?.('pattern')}
+          />
+          <MarketSnapshotCard
+            symbol={symbol}
+            symbolPrice={symbolPrice}
+            liveNV={liveNV}
+            nvDelta={nvDelta}
+            regime={liveRegime}
+            latestPattern={activePattern}
+            series={live15}
+          />
+          <DemoSummaryCard
+            symbol={symbol}
+            symbolPrice={symbolPrice}
+            onOpen={() => onNav?.('trading')}
+          />
         </div>
 
         {/* Helper: short note distinguishing the two layers */}
@@ -414,11 +805,11 @@ export default function Dashboard({
           fontSize: 8, letterSpacing: '0.06em', color: 'var(--fg-4)',
           display: 'flex', flexWrap: 'wrap', gap: 14,
         }}>
-          <span><span style={{ color: 'var(--fg-3)' }}>AI State</span> = Environment (GCP + {symbolEnvLabel(symbol)})</span>
+          <span><span style={{ color: 'var(--fg-3)' }}>Guru</span> = Environment (GCP + {symbolEnvLabel(symbol)})</span>
           <span><span style={{ color: 'var(--fg-3)' }}>Pattern</span> = Event (GCP only)</span>
         </div>
 
-        {/* Pattern (secondary): full-width below AI */}
+        {/* Pattern (secondary): full-width below summaries */}
         <div style={{ flexShrink: 0, borderBottom: '1px solid var(--line-0)' }}>
           <PatternCard patterns={patterns} series={series} flash={pssFlash} />
         </div>

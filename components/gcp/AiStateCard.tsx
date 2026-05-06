@@ -229,9 +229,9 @@ function Card({
               Analyzing…
             </>
           ) : isError ? (
-            'AI analysis failed — retry'
+            'Guru request failed — retry'
           ) : (
-            'AI State not run yet'
+            'Guru not run yet'
           )}
         </div>
         <div style={{ fontSize: 10, color: '#7F98A3', marginTop: 8, lineHeight: 1.5 }}>
@@ -253,7 +253,7 @@ function Card({
             alignSelf: 'flex-start',
           }}
         >
-          {isRunning ? 'RUNNING…' : isError ? 'RETRY AI ANALYSIS' : 'RUN AI ANALYSIS'}
+          {isRunning ? 'ASKING…' : isError ? 'RETRY GURU' : 'ASK GURU'}
         </button>
         <AiStateExplainer
           open={showExplainer}
@@ -537,7 +537,7 @@ function Card({
         gap: 8,
       }}>
         <div style={{ fontSize: 10, color: '#7F98A3' }}>
-          Last AI analysis: <span style={{ color: 'var(--fg-1)' }}>{formatRelative(lastSuccessAt)}</span>
+          Last Guru analysis: <span style={{ color: 'var(--fg-1)' }}>{formatRelative(lastSuccessAt)}</span>
         </div>
         <button
           onClick={() => runNow?.()}
@@ -553,7 +553,7 @@ function Card({
             cursor: (!runNow || !enabled || isRunning) ? 'default' : 'pointer',
           }}
         >
-          {isRunning ? 'RUNNING…' : 'REFRESH AI ANALYSIS'}
+          {isRunning ? 'ASKING…' : 'ASK GURU AGAIN'}
         </button>
       </div>
 

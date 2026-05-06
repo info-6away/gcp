@@ -354,8 +354,12 @@ interface LeftRailProps {
 }
 
 function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
+  // v11.27: Guru tab inserted between Dashboard and Patterns. The
+  // Dashboard is now a summary surface; Guru is the dedicated AI
+  // analysis page (Ask Guru / posture / trade plan / history).
   const items = [
     { id: 'dashboard' as const, label: 'Dashboard', hint: 'D' },
+    { id: 'guru'      as const, label: 'Guru',      hint: 'G' },
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
     { id: 'chart'     as const, label: 'Chart',     hint: 'C' },
     { id: 'research'  as const, label: 'Research',  hint: 'R' },

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { BottomNav, type MobilePage } from './MobileChrome';
 import { DashboardScreen } from './screens/DashboardScreen';
+import { GuruScreen }      from './screens/GuruScreen';
 import { ChartScreen }     from './screens/ChartScreen';
 import { PatternsScreen }  from './screens/PatternsScreen';
 import { ResearchScreen }  from './screens/ResearchScreen';
@@ -98,6 +99,23 @@ export default function MobileApp({
           aiRunNow={aiRunNow}
           aiStatus={aiStatus}
           aiLastSuccess={aiLastSuccess}
+          planStructure={planStructure}
+          planAnalysisCandle={planAnalysisCandle}
+        />
+      );
+      case 'guru': return (
+        <GuruScreen
+          symbol={symbol}
+          price={goldData.price}
+          liveNV={shared.liveNV}
+          liveRegime={shared.liveRegime}
+          connected={shared.connected}
+          aiState={aiState}
+          aiEnabled={aiEnabled}
+          aiStatus={aiStatus}
+          aiRunNow={aiRunNow}
+          aiLastSuccess={aiLastSuccess}
+          latestPattern={displayPatterns[displayPatterns.length - 1] ?? null}
           planStructure={planStructure}
           planAnalysisCandle={planAnalysisCandle}
         />
