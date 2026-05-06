@@ -28,7 +28,7 @@ import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
 import ResearchView from './ResearchView';
 import TradingView from './TradingView';
-import DemoTradingPanel from './DemoTradingPanel';
+import TradePanel from './TradePanel';
 import { derivePosture } from '@/lib/aiAction';
 import { deriveTradePlan } from '@/lib/tradePlan';
 import { useAiPlanMemory } from '@/lib/useAiPlanMemory';
@@ -599,23 +599,25 @@ export default function GCPApp() {
           )}
           {page === 'trading' && (() => {
             // v11.24: paper-trading layer. Live price, AI posture,
-            // pattern, and trade plan are computed here so the demo
-            // panel can snapshot the full context the moment the user
-            // clicks BUY/SELL. Pure local — no broker, no orders.
-            // v11.25: latestPattern + tradePlan now hoisted to the
-            // outer scope (shared with plan memory).
+            // pattern, and trade plan are computed here so the panel
+            // can snapshot the full context the moment the user opens
+            // a trade. Pure local — no broker, no orders.
+            // v11.33: TRD → TRADE rework. Layout is now top: chart,
+            // bottom: 3-column TRADE module (Entry / Active / Guru).
+            // The chart preserves the technical view; the TRADE
+            // module sits below as the execution surface.
             const posture  = derivePosture(stableState, latestPattern);
             const lastBase = baseSeries[baseSeries.length - 1] ?? null;
             return (
-              <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                <div style={{ flex: '1 1 55%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                   <TradingView
                     symbol={symbol}
                     timeframe={timeframe}
                   />
                 </div>
-                <div style={{ width: 320, flexShrink: 0 }}>
-                  <DemoTradingPanel
+                <div style={{ flex: '1 1 45%', minHeight: 0, borderTop: '1px solid var(--line-1)' }}>
+                  <TradePanel
                     symbol={symbol}
                     timeframe={timeframe}
                     currentPrice={goldData.price}

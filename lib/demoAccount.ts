@@ -59,6 +59,12 @@ export interface OpenPosition {
   entryPrice:  number;
   entryTime:   number;        // ms
   context:     TradeContext;
+  // v11.33: optional risk levels. When set, the panel auto-closes the
+  // position when price crosses them (close at the level, not at
+  // current). Long: TP > entry, SL < entry. Short: TP < entry, SL >
+  // entry. Either field may be omitted.
+  takeProfit?: number;
+  stopLoss?:   number;
 }
 
 export interface ClosedTrade {
@@ -150,10 +156,12 @@ function newId(): string {
 }
 
 export interface OpenArgs {
-  side:    Side;
-  size:    number;
-  price:   number;
-  context: TradeContext;
+  side:        Side;
+  size:        number;
+  price:       number;
+  context:     TradeContext;
+  takeProfit?: number;
+  stopLoss?:   number;
 }
 
 // Opens a NEW position. If a position is already open, the caller must
@@ -172,8 +180,30 @@ export function openPosition(acct: DemoAccount, args: OpenArgs): DemoAccount {
       entryPrice: args.price,
       entryTime:  Date.now(),
       context:    args.context,
+      takeProfit: args.takeProfit,
+      stopLoss:   args.stopLoss,
     },
   };
+}
+
+// v11.33: SL/TP auto-close evaluator. Returns the price the position
+// would close at (the SL or TP level, NOT the current price) when the
+// current tick has crossed a configured risk level. null = no
+// auto-close. Caller is responsible for invoking closePosition() with
+// the returned price.
+export function evaluateAutoClose(
+  open:         OpenPosition,
+  currentPrice: number,
+): { price: number; reason: 'sl' | 'tp' } | null {
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return null;
+  if (open.side === 'long') {
+    if (open.stopLoss   != null && currentPrice <= open.stopLoss)   return { price: open.stopLoss,   reason: 'sl' };
+    if (open.takeProfit != null && currentPrice >= open.takeProfit) return { price: open.takeProfit, reason: 'tp' };
+  } else {
+    if (open.stopLoss   != null && currentPrice >= open.stopLoss)   return { price: open.stopLoss,   reason: 'sl' };
+    if (open.takeProfit != null && currentPrice <= open.takeProfit) return { price: open.takeProfit, reason: 'tp' };
+  }
+  return null;
 }
 
 // Closes the current position at exitPrice. PnL is realized into
