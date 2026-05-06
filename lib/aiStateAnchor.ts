@@ -38,6 +38,7 @@
 // kept / overridden / dampened.
 
 import type { GcpStateResponse, GcpStatePayload } from '@/lib/engine-gcp';
+import { deriveShockDecay } from '@/lib/shockDecay';
 
 type StateCode = GcpStateResponse['stateCode'];
 
@@ -149,6 +150,37 @@ export function anchorAiState(
     const target = fallbackForStory(story.state);
     reasons.push(`Engine ${next.stateCode} → ${target} (story "${story.state}")`);
     next = applyOverride(next, target);
+    overridden = true;
+  }
+
+  // ── 2b. Shock decay verdict (v11.26.3). Quantitative read on
+  //         whether the recent shock event is still dominating
+  //         (slope / curvature / regime) or has decayed in favour of
+  //         rebuilt structure. Drives the SH / DS overrides below.
+  const decay = deriveShockDecay({
+    story,
+    metrics:       payload.metrics,
+    currentRegime: payload.current?.regime,
+  });
+  const dev = (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production');
+  if (dev) {
+    if (decay.shockActive) {
+      console.log(`[SHOCK DECAY] active — ${decay.reason}`);
+    } else if (decay.decayed) {
+      console.log(`[SHOCK DECAY] decayed — ${decay.reason}`);
+    }
+  }
+
+  if (next.stateCode === 'SH' && decay.decayed) {
+    const target = decay.recommendedStateCode ?? 'CS';
+    reasons.push(`Engine SH → ${target} (decay): ${decay.reason}`);
+    next = applyOverride(next, target);
+    overridden = true;
+  }
+  if (next.stateCode === 'DS' && decay.recoveryActive
+      && story.state !== 'Discharge phase') {
+    reasons.push(`Engine DS → CS (recovery): ${decay.reason}`);
+    next = applyOverride(next, 'CS');
     overridden = true;
   }
 
