@@ -112,7 +112,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
   const [fwdBars, setFwdBars] = useState(4);
-  const [mode,    setMode]    = useState<ResearchMode>('regime');
+  // v11.31: default tab flipped from 'regime' → 'aistate'. The system
+  // is now state-driven (Guru = primary read), so the AI State view
+  // is the validation surface. Pattern + Regime modes remain
+  // available but are framed as legacy / context.
+  const [mode,    setMode]    = useState<ResearchMode>('aistate');
   const [hovered, setHovered] = useState<Hovered | null>(null);
 
   const svgContainerRef = useRef<HTMLDivElement>(null);
@@ -375,6 +379,12 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   // Loaded once on mount and kept fresh via the same-tab + cross-tab
   // storage event the appendAiStateHistory helper dispatches. No
   // network calls here — just localStorage.
+  //
+  // v11.31 note: this ledger holds the POST-ANCHOR / POST-DECAY
+  // classification (recorded in lib/useGcpState.ts after the v11.26.1
+  // anchor pass). Research statistics here therefore reflect what the
+  // user actually saw on the dashboard, not the raw Engine answer —
+  // which is the canonical reading per the v11.31 spec.
   const [aiHistory, setAiHistory] = useState<AiStateHistoryRecord[]>([]);
   useEffect(() => {
     setAiHistory(loadAiStateHistory());
@@ -629,6 +639,38 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
 
       {!loading && !error && (
         <>
+          {/* v11.31: legacy banner. Pattern + Regime views predate the
+              Guru / state-driven system and may not reflect what the
+              user actually sees on the dashboard. AI State view is the
+              canonical validation surface. */}
+          {(mode === 'pattern' || mode === 'regime') && (
+            <div style={{
+              padding: '8px 16px',
+              borderBottom: '1px solid var(--line-0)',
+              background: 'rgba(212, 160, 40, 0.06)',
+              fontSize: 10, color: '#d4a028', lineHeight: 1.5,
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              flexShrink: 0,
+            }}>
+              <span style={{ fontSize: 11 }}>⚠</span>
+              <span>
+                {mode === 'pattern' ? 'Pattern' : 'Regime'}-based research is legacy and may not reflect current system behavior. Use{' '}
+                <button
+                  onClick={() => { setMode('aistate'); setHovered(null); }}
+                  style={{
+                    background: 'transparent', border: 'none',
+                    color: '#d4a028', textDecoration: 'underline',
+                    fontSize: 'inherit', fontFamily: 'inherit',
+                    cursor: 'pointer', padding: 0,
+                  }}
+                >
+                  By AI State
+                </button>{' '}
+                for the canonical (post-anchor) Guru validation view.
+              </span>
+            </div>
+          )}
+
           <div style={{
             padding: '10px 16px',
             borderBottom: '1px solid var(--line-0)',
