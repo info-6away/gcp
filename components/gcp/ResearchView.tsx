@@ -538,16 +538,24 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   // transitions reflect what the user actually saw — not raw Engine
   // output. Same symbol-mismatch + candle-availability guards as
   // aiStateData.
+  //
+  // v11.33.1 fix: only points whose transitionKey is in
+  // TRANSITION_META are returned. Unrecognized pairs (e.g. CS→AT,
+  // DD→CS, IS→FA) used to stack at the y-axis edge because
+  // xOfTransition fell back to PAD.l for missing keys. We now bucket
+  // them as `otherCount` so the chart only renders the priority
+  // columns and the total-label can show "X priority + Y other".
   const transitionData = useMemo(() => {
     const points: TransitionPoint[] = [];
-    if (!aiHistory.length || !candles.length) return { points };
-    if (candleSymbol && candleSymbol !== symbol) return { points };
+    let otherCount = 0;
+    if (!aiHistory.length || !candles.length) return { points, otherCount };
+    if (candleSymbol && candleSymbol !== symbol) return { points, otherCount };
 
     // Filter to current symbol then sort oldest → newest.
     const ordered = aiHistory
       .filter(r => r.symbol === symbol)
       .sort((a, b) => a.timestamp - b.timestamp);
-    if (ordered.length < 2) return { points };
+    if (ordered.length < 2) return { points, otherCount };
 
     const lastIdx = candles.length - 1;
     for (let i = 1; i < ordered.length; i++) {
@@ -570,6 +578,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       const exit = candles[exitIdx];
       if (!exit || exit.c <= 0) continue;
 
+      const transitionKey = `${prev.stateCode}→${curr.stateCode}`;
+      // v11.33.1: drop non-priority transitions from the scatter
+      // (they have no x-column and were stacking at the left edge).
+      if (!TRANSITION_META[transitionKey]) {
+        otherCount++;
+        continue;
+      }
+
       const fwdPct = ((exit.c - entryPrice) / entryPrice) * 100;
       const next   = ordered[i + 1];
       // Stability: did the next analysis hold the same toCode?
@@ -579,7 +595,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         kind:           'transition',
         fromCode:       prev.stateCode,
         toCode:         curr.stateCode,
-        transitionKey:  `${prev.stateCode}→${curr.stateCode}`,
+        transitionKey,
         fwdPct:         +fwdPct.toFixed(3),
         t:              curr.timestamp,
         fromConfidence: prev.confidence,
@@ -587,7 +603,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         stable,
       });
     }
-    return { points };
+    return { points, otherCount };
   }, [aiHistory, candles, candleSymbol, fwdBars, symbol]);
 
   const transitionPoints = transitionData.points;
@@ -693,7 +709,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   const totalLabel =
     mode === 'regime'     ? `${regimePoints.length} bars`           :
     mode === 'pattern'    ? `${patternPoints.length} occurrences`   :
-    mode === 'transition' ? `${transitionPoints.length} transitions` :
+    mode === 'transition' ? (
+      transitionData.otherCount > 0
+        ? `${transitionPoints.length} priority · ${transitionData.otherCount} other`
+        : `${transitionPoints.length} transitions`
+    ) :
     aiStateData.pendingTotal > 0
       ? `${aiStateData.totalForSymbol} analyses · ${aiStateData.pendingTotal} pending`
       : `${aiStateData.totalForSymbol} analyses`;
@@ -1458,10 +1478,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   fontSize: 10, color: '#7F98A3', lineHeight: 1.55,
                 }}>
                   <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
-                    No transitions captured yet.
+                    {transitionData.otherCount > 0
+                      ? 'No priority transitions yet.'
+                      : 'No transitions captured yet.'}
                   </div>
-                  Run more Guru analyses on this symbol — transitions
-                  appear once the state changes between successive runs.
+                  {transitionData.otherCount > 0
+                    ? `${transitionData.otherCount} other state changes recorded but they don't fall into the priority compression / shock / discharge ladder shown here.`
+                    : 'Run more Guru analyses on this symbol — transitions appear once the state changes between successive runs.'}
                 </div>
               )}
 
