@@ -99,9 +99,15 @@ function GuruHeader({
 }) {
   const now      = useTick(1000);
   const accent   = aiState ? stateColor(aiState) : 'var(--fg-3)';
-  const stateLbl = aiState
-    ? `${aiState.state.toUpperCase()} · ${aiState.phase} · ${(aiState.confidence * 100).toFixed(0)}%`
+  // v11.29.1: split the state line into two clear dimensions.
+  // Headline = "COMPRESSION STATE · Late" so the user reads the
+  // category + phase as one thought; the % moves to its own
+  // "Confidence: 13%" sub-line so it can't be visually confused with
+  // the transition Likelihood.
+  const stateHeadline = aiState
+    ? `${aiState.state.toUpperCase()} · ${aiState.phase}`
     : 'Guru has not analyzed this symbol yet.';
+  const stateConfPct  = aiState ? Math.round(aiState.confidence * 100) : null;
 
   // Status verb maps to the state machine but with friendlier wording
   // for a "thinking out loud" feel.
@@ -169,27 +175,73 @@ function GuruHeader({
             {statusVerb.toUpperCase()}
           </span>
         </div>
+        {/* v11.29.1: STATE = primary (bigger, stronger). The
+            classification + phase live alone on this line so the
+            eye reads "COMPRESSION STATE · LATE" as one thought. */}
         <div style={{
           marginTop: 4,
-          fontSize: aiState ? 14 : 12,
+          fontSize: aiState ? 16 : 12,
           color: aiState ? accent : 'var(--fg-2)',
-          fontWeight: 600,
-          letterSpacing: '0.01em', lineHeight: 1.3,
+          fontWeight: 700,
+          letterSpacing: '0.01em', lineHeight: 1.25,
         }}>
-          {stateLbl}
+          {stateHeadline}
         </div>
-        {/* v11.29: state-transition ladder overlay — sits directly
-            below the current STATE line so the user sees both
-            "what is" and "what's next" without scrolling. Hidden
-            entirely when the engine layer hasn't attached a
-            transition (deriveNextState returns empty for SS / CL /
-            DD or when no clear ladder rule fires). */}
+        {/* Confidence sub-line — its own row so the user can't read
+            the % as transition likelihood. Tooltip clarifies the
+            dimension. */}
+        {stateConfPct != null && (
+          <div
+            title="How certain Guru is about the current state classification"
+            style={{
+              marginTop: 3,
+              fontSize: 10, color: 'var(--fg-3)',
+              letterSpacing: '0.06em',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
+              CONFIDENCE
+            </span>
+            <span style={{
+              color: 'var(--fg-1)', marginLeft: 6,
+              fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+            }}>
+              {stateConfPct}%
+            </span>
+          </div>
+        )}
+        {/* v11.29: state-transition ladder overlay — SECONDARY (lighter).
+            Sits below the state block so the user sees both "what is"
+            and "what's going next" without scrolling. Hidden when the
+            engine layer hasn't attached a transition (deriveNextState
+            returns empty for SS / CL / DD or when no clear rule
+            fires). v11.29.1: also surface a "low state certainty"
+            hint when the user might otherwise weight the transition
+            number too heavily. */}
         {aiState?.nextLikelyState && (
-          <NextStateOverlay
-            nextState={aiState.nextLikelyState as LadderState}
-            confidence={aiState.transitionConfidence ?? 0.5}
-            reason={aiState.transitionReason}
-          />
+          <>
+            <NextStateOverlay
+              nextState={aiState.nextLikelyState as LadderState}
+              confidence={aiState.transitionConfidence ?? 0.5}
+              reason={aiState.transitionReason}
+            />
+            {stateConfPct != null
+              && aiState.confidence < 0.25
+              && (aiState.transitionConfidence ?? 0) > 0.50 && (
+              <div style={{
+                marginTop: 6, fontSize: 10, color: '#d4a028',
+                letterSpacing: '0.04em', lineHeight: 1.4,
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                <span style={{
+                  width: 4, height: 4, borderRadius: '50%',
+                  background: '#d4a028',
+                }} />
+                Low state certainty — structure still forming.
+              </div>
+            )}
+          </>
         )}
         {aiLastSuccess && (
           <div style={{
@@ -242,42 +294,61 @@ function NextStateOverlay({
   const color = ladderColor(nextState);
   const label = ladderLabel(nextState);
   const conf  = Math.round(confidence * 100);
+  // v11.29.1: secondary visual weight (smaller fonts, no bold on
+  // the % cluster) so the transition reads clearly distinct from
+  // the primary STATE block above. "Likelihood" replaces the bare
+  // percentage so users don't conflate it with state confidence.
   return (
-    <div style={{
-      marginTop: 6,
-      display: 'inline-flex', alignItems: 'baseline', gap: 8,
-      padding: '4px 10px',
-      background: `${color}10`,
-      border: `1px solid ${color}55`,
-      borderRadius: 3,
-      fontSize: 11,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em',
-        color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
-        fontWeight: 600,
-      }}>
-        NEXT →
-      </span>
-      <span style={{
-        color, fontWeight: 700, letterSpacing: '0.02em',
-      }}>
-        {label}
-      </span>
-      <span style={{
-        color: 'var(--fg-3)', fontSize: 10, fontFamily: 'var(--font-mono)',
-        fontVariantNumeric: 'tabular-nums',
-      }}>
-        ({conf}%)
-      </span>
-      {reason && (
+    <div
+      title="Likelihood that the system transitions to this next state"
+      style={{
+        marginTop: 8,
+        padding: '5px 10px',
+        background: `${color}0d`,
+        border: `1px solid ${color}40`,
+        borderRadius: 3,
+        display: 'flex', flexDirection: 'column', gap: 2,
+        maxWidth: 'fit-content',
+      }}
+    >
+      <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
         <span style={{
-          color: 'var(--fg-3)', fontSize: 10, marginLeft: 6,
-          fontStyle: 'italic',
+          fontSize: 9, letterSpacing: '0.18em',
+          color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
+          fontWeight: 600,
         }}>
-          {reason}
+          NEXT →
         </span>
-      )}
+        <span style={{
+          color, fontWeight: 600, letterSpacing: '0.02em',
+          fontSize: 12,
+        }}>
+          {label}
+        </span>
+      </div>
+      <div style={{
+        display: 'inline-flex', alignItems: 'baseline', gap: 6,
+        fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+      }}>
+        <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
+          LIKELIHOOD
+        </span>
+        <span style={{
+          color: 'var(--fg-2)',
+          fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+        }}>
+          {conf}%
+        </span>
+        {reason && (
+          <span style={{
+            color: 'var(--fg-3)', marginLeft: 4,
+            fontStyle: 'italic', letterSpacing: 0,
+          }}>
+            · {reason}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
