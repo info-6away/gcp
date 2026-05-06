@@ -88,17 +88,19 @@ function useTick(intervalMs: number = 1000): number {
 // ────────────────────────────────────────────────────────────────────
 
 function GuruHeader({
-  aiState, aiStatus, aiLastSuccess,
+  aiState, aiStatus, aiLastSuccess, aiEnabled, aiRunNow,
 }: {
   aiState:        GcpStateResponse | null;
   aiStatus:       AiStatus;
   aiLastSuccess:  Date | null;
+  aiEnabled:      boolean;
+  aiRunNow:       () => void;
 }) {
   const now      = useTick(1000);
   const accent   = aiState ? stateColor(aiState) : 'var(--fg-3)';
   const stateLbl = aiState
     ? `${aiState.state.toUpperCase()} · ${aiState.phase} · ${(aiState.confidence * 100).toFixed(0)}%`
-    : 'No analysis yet';
+    : 'Guru has not analyzed this symbol yet.';
 
   // Status verb maps to the state machine but with friendlier wording
   // for a "thinking out loud" feel.
@@ -115,6 +117,22 @@ function GuruHeader({
   const lastUpdateLabel = aiLastSuccess
     ? relativeTime(aiLastSuccess.getTime(), now)
     : '—';
+
+  // v11.28.1: primary Ask Guru CTA in the header. Always visible at
+  // top-right so the user can re-trigger analysis without scrolling
+  // into the AiStateCard. Label adapts to the aiStatus machine:
+  //   running → ASKING…
+  //   error   → TRY AGAIN
+  //   success → ASK GURU AGAIN  (aiState present)
+  //   idle    → ASK GURU
+  const isRunning = aiStatus === 'running';
+  const buttonLabel =
+    isRunning              ? 'ASKING…'
+  : aiStatus === 'error'   ? 'TRY AGAIN'
+  : aiState                 ? 'ASK GURU AGAIN'
+  :                            'ASK GURU';
+  const buttonDisabled = !aiEnabled || isRunning;
+  const buttonAccent = aiStatus === 'error' ? 'var(--red)' : 'var(--cyan)';
 
   return (
     <div style={{
@@ -152,23 +170,46 @@ function GuruHeader({
         </div>
         <div style={{
           marginTop: 4,
-          fontSize: 14, color: accent, fontWeight: 600,
-          letterSpacing: '0.01em', lineHeight: 1.2,
+          fontSize: aiState ? 14 : 12,
+          color: aiState ? accent : 'var(--fg-2)',
+          fontWeight: 600,
+          letterSpacing: '0.01em', lineHeight: 1.3,
         }}>
           {stateLbl}
         </div>
+        {aiLastSuccess && (
+          <div style={{
+            marginTop: 4,
+            fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em',
+          }}>
+            Last update <span style={{
+              color: 'var(--fg-2)',
+              fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+            }}>{lastUpdateLabel}</span>
+          </div>
+        )}
       </div>
-      <div style={{ textAlign: 'right' }}>
-        <div style={{
-          fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.14em',
-        }}>LAST UPDATE</div>
-        <div style={{
-          fontSize: 11, color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
-          fontVariantNumeric: 'tabular-nums', marginTop: 2,
-        }}>
-          {lastUpdateLabel}
-        </div>
-      </div>
+      <button
+        onClick={aiRunNow}
+        disabled={buttonDisabled}
+        title={!aiEnabled ? 'Guru is disabled in Settings' : undefined}
+        style={{
+          padding: '8px 14px',
+          fontSize: 11, letterSpacing: '0.14em', fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          background: isRunning ? `${buttonAccent}1f` : 'transparent',
+          border: `1px solid ${buttonDisabled ? 'var(--line-2)' : buttonAccent}`,
+          color: buttonDisabled ? 'var(--fg-3)' : buttonAccent,
+          borderRadius: 4,
+          cursor: buttonDisabled ? 'default' : 'pointer',
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
+          // Pulse the border very subtly when fresh data is in.
+          transition: 'background 0.2s ease, border-color 0.2s ease, color 0.2s ease',
+        }}
+      >
+        {buttonLabel}
+      </button>
     </div>
   );
 }
@@ -644,6 +685,8 @@ export default function GuruView(props: GuruViewProps) {
           aiState={props.aiState}
           aiStatus={props.aiStatus}
           aiLastSuccess={props.aiLastSuccess}
+          aiEnabled={props.aiEnabled}
+          aiRunNow={props.aiRunNow}
         />
 
         {/* Micro-change chip sits between header and the full state
