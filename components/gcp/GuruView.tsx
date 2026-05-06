@@ -40,6 +40,7 @@ import { stateColor } from '@/lib/aiState';
 import { deriveTradePlan, type TradePlan } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { ladderColor, ladderLabel, type LadderState } from '@/lib/stateTransition';
+import { deriveStance, type GuruStance } from '@/lib/guruStance';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
 
@@ -187,30 +188,16 @@ function GuruHeader({
         }}>
           {stateHeadline}
         </div>
-        {/* Confidence sub-line — its own row so the user can't read
-            the % as transition likelihood. Tooltip clarifies the
-            dimension. */}
-        {stateConfPct != null && (
-          <div
-            title="How certain Guru is about the current state classification"
-            style={{
-              marginTop: 3,
-              fontSize: 10, color: 'var(--fg-3)',
-              letterSpacing: '0.06em',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
-            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
-              CONFIDENCE
-            </span>
-            <span style={{
-              color: 'var(--fg-1)', marginLeft: 6,
-              fontVariantNumeric: 'tabular-nums', fontWeight: 600,
-            }}>
-              {stateConfPct}%
-            </span>
-          </div>
-        )}
+
+        {/* v11.30: STANCE block — execution layer, highest visual
+            weight after STATE. Sits BEFORE the transition overlay
+            and CONFIDENCE row so the user can answer
+            "do I trade or not?" in <2s. */}
+        {aiState && (() => {
+          const stance = deriveStance(aiState);
+          return stance ? <StanceBlock stance={stance} /> : null;
+        })()}
+
         {/* v11.29: state-transition ladder overlay — SECONDARY (lighter).
             Sits below the state block so the user sees both "what is"
             and "what's going next" without scrolling. Hidden when the
@@ -243,6 +230,33 @@ function GuruHeader({
             )}
           </>
         )}
+
+        {/* v11.30: CONFIDENCE moved to the bottom of the header
+            column per spec ordering — it's metadata about the STATE
+            row, sized small so it never competes visually with the
+            STANCE block above. Tooltip clarifies the dimension. */}
+        {stateConfPct != null && (
+          <div
+            title="How certain Guru is about the current state classification"
+            style={{
+              marginTop: 8,
+              fontSize: 10, color: 'var(--fg-3)',
+              letterSpacing: '0.06em',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
+              CONFIDENCE
+            </span>
+            <span style={{
+              color: 'var(--fg-1)', marginLeft: 6,
+              fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+            }}>
+              {stateConfPct}%
+            </span>
+          </div>
+        )}
+
         {aiLastSuccess && (
           <div style={{
             marginTop: 4,
@@ -276,6 +290,81 @@ function GuruHeader({
       >
         {buttonLabel}
       </button>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// v11.30: GURU STANCE — execution layer.
+// Sits directly under STATE so the user can answer
+// "do I trade or not?" in under two seconds.
+//   STANCE     — bold white  (action verb)
+//   MODE       — amber       (phase descriptor)
+//   EXECUTION  — cyan        (how to act)
+// ────────────────────────────────────────────────────────────────────
+
+function StanceBlock({ stance }: { stance: GuruStance }) {
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: '8px 10px',
+      background: 'rgba(255,255,255,0.025)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '2px solid var(--fg-0)',
+      borderRadius: 3,
+      display: 'flex', flexDirection: 'column', gap: 3,
+    }}>
+      <StanceRow
+        label="STANCE"
+        value={stance.stance}
+        color="var(--fg-0)"
+        emphasis
+      />
+      <StanceRow
+        label="MODE"
+        value={stance.mode}
+        color="#d4a028"
+      />
+      <StanceRow
+        label="EXECUTION"
+        value={stance.execution}
+        color="var(--cyan)"
+      />
+    </div>
+  );
+}
+
+function StanceRow({
+  label, value, color, emphasis = false,
+}: {
+  label:     string;
+  value:     string;
+  color:     string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '78px 1fr',
+      gap: 10,
+      alignItems: 'baseline',
+    }}>
+      <span style={{
+        fontSize: 8, letterSpacing: '0.18em',
+        color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        {label}
+      </span>
+      <span style={{
+        color,
+        fontSize: emphasis ? 14 : 11,
+        fontWeight: emphasis ? 700 : 500,
+        letterSpacing: emphasis ? '0.01em' : '0.02em',
+        lineHeight: 1.35,
+      }}>
+        {value}
+      </span>
     </div>
   );
 }
