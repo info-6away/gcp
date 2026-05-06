@@ -39,6 +39,7 @@ import {
 import { stateColor } from '@/lib/aiState';
 import { deriveTradePlan, type TradePlan } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
+import { ladderColor, ladderLabel, type LadderState } from '@/lib/stateTransition';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
 
@@ -177,6 +178,19 @@ function GuruHeader({
         }}>
           {stateLbl}
         </div>
+        {/* v11.29: state-transition ladder overlay — sits directly
+            below the current STATE line so the user sees both
+            "what is" and "what's next" without scrolling. Hidden
+            entirely when the engine layer hasn't attached a
+            transition (deriveNextState returns empty for SS / CL /
+            DD or when no clear ladder rule fires). */}
+        {aiState?.nextLikelyState && (
+          <NextStateOverlay
+            nextState={aiState.nextLikelyState as LadderState}
+            confidence={aiState.transitionConfidence ?? 0.5}
+            reason={aiState.transitionReason}
+          />
+        )}
         {aiLastSuccess && (
           <div style={{
             marginTop: 4,
@@ -210,6 +224,60 @@ function GuruHeader({
       >
         {buttonLabel}
       </button>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// v11.29: NEXT → overlay for the state transition ladder.
+// ────────────────────────────────────────────────────────────────────
+
+function NextStateOverlay({
+  nextState, confidence, reason,
+}: {
+  nextState:  LadderState;
+  confidence: number;
+  reason?:    string;
+}) {
+  const color = ladderColor(nextState);
+  const label = ladderLabel(nextState);
+  const conf  = Math.round(confidence * 100);
+  return (
+    <div style={{
+      marginTop: 6,
+      display: 'inline-flex', alignItems: 'baseline', gap: 8,
+      padding: '4px 10px',
+      background: `${color}10`,
+      border: `1px solid ${color}55`,
+      borderRadius: 3,
+      fontSize: 11,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em',
+        color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
+        fontWeight: 600,
+      }}>
+        NEXT →
+      </span>
+      <span style={{
+        color, fontWeight: 700, letterSpacing: '0.02em',
+      }}>
+        {label}
+      </span>
+      <span style={{
+        color: 'var(--fg-3)', fontSize: 10, fontFamily: 'var(--font-mono)',
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        ({conf}%)
+      </span>
+      {reason && (
+        <span style={{
+          color: 'var(--fg-3)', fontSize: 10, marginLeft: 6,
+          fontStyle: 'italic',
+        }}>
+          {reason}
+        </span>
+      )}
     </div>
   );
 }

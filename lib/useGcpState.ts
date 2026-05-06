@@ -57,6 +57,7 @@ import {
 } from '@/lib/aiAnalysisInterval';
 import { appendAiStateHistory } from '@/lib/aiStateHistory';
 import { anchorAiState } from '@/lib/aiStateAnchor';
+import { deriveNextState } from '@/lib/stateTransition';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -336,7 +337,28 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             to:         `${anchored.stateCode} (${(anchored.confidence * 100).toFixed(0)}%)`,
           });
         }
-        setState(anchored);
+        // v11.29: state-transition ladder overlay. Runs AFTER anchor +
+        // shockDecay so the ladder reads from the corrected state.
+        // Never overrides — just attaches nextLikelyState + confidence
+        // + reason for the UI to surface as "NEXT → IS (64%)".
+        const transition = deriveNextState({
+          aiState:      anchored,
+          patternStory: payload.patternStory,
+          metrics:      payload.metrics,
+          goldContext:  payload.goldContext,
+        });
+        const finalResp = transition.nextLikelyState
+          ? { ...anchored, ...transition }
+          : anchored;
+        if (isDev() && transition.nextLikelyState) {
+          console.log('[STATE TRANSITION]', {
+            from:       anchored.stateCode,
+            next:       transition.nextLikelyState,
+            confidence: transition.transitionConfidence,
+            reason:     transition.transitionReason,
+          });
+        }
+        setState(finalResp);
         setLastSuccessAt(new Date());
         setAiStatus('success');
         if (isDev()) console.log('[AI UI] run success');

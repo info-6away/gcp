@@ -134,6 +134,14 @@ export type GcpStateResponse = {
   reasoningShort:     string;
   invalidators:       string[];
   watchNext:          string[];
+
+  // v11.29: state transition ladder overlay. Attached locally by
+  // lib/stateTransition.deriveNextState() AFTER anchor + shockDecay
+  // — never sent by the Engine. Optional so existing call sites that
+  // construct mock responses (tests / fallbacks) keep type-checking.
+  nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA';
+  transitionConfidence?: number;   // 0.25..0.90
+  transitionReason?:     string;
 };
 
 export async function classifyGcpState(
