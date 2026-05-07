@@ -155,7 +155,7 @@ function EntryPanel({
                   : sideAccent;
 
   return (
-    <SectionShell title="ENTRY">
+    <SectionShell title="NEW POSITION">
       {/* LONG / SHORT toggle */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
         {(['long', 'short'] as Side[]).map(s => (
@@ -188,7 +188,7 @@ function EntryPanel({
       </div>
 
       {/* Size selector */}
-      <FieldLabel>Size</FieldLabel>
+      <FieldLabel>Position size</FieldLabel>
       <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
         {QUICK_SIZES.map(n => (
           <button key={n}
@@ -370,7 +370,7 @@ function ActivePositionCard({
 
   if (!open) {
     return (
-      <SectionShell title="ACTIVE POSITION">
+      <SectionShell title="OPEN POSITION">
         <div style={{
           padding: '32px 16px', textAlign: 'center',
           color: 'var(--fg-3)', fontSize: 12,
@@ -413,7 +413,7 @@ function ActivePositionCard({
 
   return (
     <SectionShell
-      title="ACTIVE POSITION"
+      title="OPEN POSITION"
       subtitle={subtitle}
       accent={sideColor}
     >
@@ -431,7 +431,7 @@ function ActivePositionCard({
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <FieldLabel>PnL</FieldLabel>
+          <FieldLabel>UNREALIZED PnL</FieldLabel>
           <div style={{
             fontSize: 22, color: pnlColor, fontWeight: 700,
             fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
@@ -456,7 +456,7 @@ function ActivePositionCard({
             ? '—'
             : currentPrice != null ? formatPrice(currentPrice, open.context.symbol) : '—'
         } />
-        <Cell label="SIZE"     value={fmtMoney(open.size)} />
+        <Cell label="EXPOSURE" value={fmtMoney(open.size)} />
         <Cell label="DURATION" value={fmtDuration(Date.now() - open.entryTime)} />
         {open.stopLoss != null && (
           <Cell label="STOP" value={formatPrice(open.stopLoss, open.context.symbol)} color="var(--red)" />
@@ -560,7 +560,7 @@ function AlignmentChip({ alignment }: { alignment: Alignment }) {
 function HistoryTable({ acct, symbol }: { acct: DemoAccount; symbol: MarketSymbol }) {
   const trades = acct.trades.slice(0, 20);
   return (
-    <SectionShell title={`HISTORY (${acct.trades.length})`}>
+    <SectionShell title={`TRADE HISTORY (${acct.trades.length})`}>
       {trades.length === 0 ? (
         <div style={{ fontSize: 10, color: 'var(--fg-3)', padding: '4px 0' }}>
           No trades yet.
@@ -942,7 +942,7 @@ function TradePanelImpl({
   };
 
   const handleReset = () => {
-    const ok = window.confirm('Reset demo account to $10,000 and clear all paper-trade history?');
+    const ok = window.confirm('Reset account to $10,000 and clear all trade history?');
     if (!ok) return;
     setAcct(resetDemoAccount());
   };
@@ -963,7 +963,7 @@ function TradePanelImpl({
         <div style={{
           fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-3)',
         }}>
-          TRADE · PAPER · {symbol}
+          TRADE · {symbol}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
           <span style={{ fontSize: 9, color: 'var(--fg-4)' }}>
@@ -974,7 +974,7 @@ function TradePanelImpl({
           </span>
           <button
             onClick={handleReset}
-            title="Reset demo account"
+            title="Reset account"
             style={{
               background: 'transparent', border: '1px solid var(--line-2)',
               color: 'var(--fg-3)', fontSize: 8, letterSpacing: '0.12em',

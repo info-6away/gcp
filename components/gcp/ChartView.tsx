@@ -54,6 +54,32 @@ function toTime(ms: number): Time {
   return Math.floor(ms / 1000) as Time;
 }
 
+// v11.34: solid-color lerp used by the state-zone background tint.
+// Both inputs are #rrggbb hex; alpha 0..1 controls how strongly the
+// base mixes toward the tint. Returns a #rrggbb string LW Charts
+// can take as ColorType.Solid (no rgba alpha — the chart pane
+// requires a solid fill).
+function mixSolid(baseHex: string, tintHex: string, alpha: number): string {
+  const parse = (hex: string) => {
+    const h = hex.replace(/^#/, '');
+    const v = h.length === 3
+      ? h.split('').map(c => c + c).join('')
+      : h.padEnd(6, '0').slice(0, 6);
+    return [
+      parseInt(v.slice(0, 2), 16),
+      parseInt(v.slice(2, 4), 16),
+      parseInt(v.slice(4, 6), 16),
+    ];
+  };
+  const [br, bg, bb] = parse(baseHex);
+  const [tr, tg, tb] = parse(tintHex);
+  const r = Math.round(br * (1 - alpha) + tr * alpha);
+  const g = Math.round(bg * (1 - alpha) + tg * alpha);
+  const b = Math.round(bb * (1 - alpha) + tb * alpha);
+  const hh = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${hh(r)}${hh(g)}${hh(b)}`;
+}
+
 // v11.25.2: explicit per-candle color normalizer.
 //
 // LW Charts retains previously-set per-bar color/borderColor/wickColor
@@ -101,6 +127,16 @@ async function fetchCandlesBefore(
 }
 
 import type { SensitivityThresholds } from '@/lib/sensitivity';
+import {
+  buildTimelineContext, getPatternVisualTier, tierVisuals,
+} from '@/lib/patternTier';
+import { derivePatternStory } from '@/lib/patternStory';
+import { stateColor } from '@/lib/aiState';
+import { PATTERN_CODE } from '@/lib/patterns-meta';
+import {
+  AI_HISTORY_LS_KEY, loadAiStateHistory,
+  type AiStateHistoryRecord,
+} from '@/lib/aiStateHistory';
 
 interface ChartViewProps {
   series:    DataPoint[];
@@ -110,6 +146,13 @@ interface ChartViewProps {
   sensitivityThresholds?: SensitivityThresholds;
   livePrice?:     number | null;     // most recent spot tick from useGoldData
   livePriceTime?: Date   | null;     // when that tick landed
+  // v11.34: current Guru state — used for the subtle state-zone
+  // background tint (lerps the chart pane background toward the
+  // state's accent color at 0.04 alpha) and for the narrative
+  // ribbon's CURRENT marker. Optional — when null, the chart
+  // renders with its default pure-bg layout.
+  aiStateCode?:    string | null;
+  aiStateColor?:   string | null;
 }
 
 const CHART_TF_MS: Record<string, number> = {
@@ -120,6 +163,7 @@ const CHART_TF_MS: Record<string, number> = {
 export default function ChartView({
   series, patterns, symbol, timeframe, sensitivityThresholds,
   livePrice, livePriceTime,
+  aiStateCode = null, aiStateColor = null,
 }: ChartViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
@@ -145,6 +189,25 @@ export default function ChartView({
   const [error,         setError]         = useState<string | null>(null);
   const [chartReady,    setChartReady]    = useState(false);
   const [retryNonce,    setRetryNonce]    = useState(0);
+
+  // v11.34 §7: narrative ribbon — last few Guru states for THIS
+  // symbol, oldest → newest. Loaded from aiStateHistory; same-tab
+  // updates flow through the storage event the ledger dispatches.
+  const [stateHistory, setStateHistory] = useState<AiStateHistoryRecord[]>([]);
+  useEffect(() => {
+    setStateHistory(loadAiStateHistory());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === AI_HISTORY_LS_KEY) setStateHistory(loadAiStateHistory());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const ribbonStates = useMemo(() => {
+    return stateHistory
+      .filter(r => r.symbol === symbol)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .slice(-6);
+  }, [stateHistory, symbol]);
 
   const allCandlesRef = useRef<Candle[]>([]);
   const earliestTsRef = useRef<number | null>(null);
@@ -904,6 +967,15 @@ export default function ChartView({
     const MARKER_MAX_OFFSET_MS = 60 * 60_000;   // 60 min
     const skippedForLog: { code?: string; kind: string; tStart: number }[] = [];
 
+    // v11.34: pattern-tier visual hierarchy. Compute story dominance
+    // + shock-decay timeline once per render so each marker can map
+    // to a tier in O(1). LW Charts has no per-marker opacity, so we
+    // append an alpha hex suffix to the base color and scale the
+    // size + label visibility per tier.
+    const story         = derivePatternStory({ patterns: chartPatterns });
+    const dominantKind  = story.dominantPattern;
+    const timelineCtx   = buildTimelineContext(chartPatterns);
+
     const gcpMarkers: SeriesMarker<Time>[] = (chartPatterns
       .filter(p => p.tStart > 0)
       .map(p => {
@@ -915,25 +987,25 @@ export default function ChartView({
           skippedForLog.push({ code: p.patternCode, kind: p.kind, tStart: p.tStart });
           return null;
         }
-        const isSelected  = selectedPattern?.id === p.id;
-        // v11.24.7: secondary patterns render with a dimmer marker
-        // color so the eye reads them as background context rather
-        // than headline events. LW Charts doesn't expose per-marker
-        // opacity, so we emulate it by mixing the category color with
-        // a low-alpha hex suffix.
-        const isSecondary = p.visibility === 'secondary' && !isSelected;
-        const baseColor   = MARKER_COLORS[p.kind] ?? C.text;
-        const dimmedColor = isSecondary ? `${baseColor}73` : baseColor;
+        const isSelected = selectedPattern?.id === p.id;
+        const tier       = getPatternVisualTier({
+          pattern:       p,
+          dominantKind:  dominantKind ?? null,
+          timeline:      timelineCtx,
+        });
+        const v          = tierVisuals(tier);
+        const baseColor  = MARKER_COLORS[p.kind] ?? C.text;
+        const tieredColor = `${baseColor}${v.alphaHex}`;
         return {
           time:     toTime(closest.t),
           position: 'aboveBar' as const,
-          // Selected marker: cyan-tinted color override + bumped size +
-          // arrowDown shape so it stands out from the other circles. Other
-          // markers stay at their category color and circle size 1.
-          color:    isSelected ? C.cyan : dimmedColor,
+          color:    isSelected ? C.cyan : tieredColor,
           shape:    isSelected ? ('arrowDown' as const) : ('circle' as const),
-          text:     p.patternCode ?? p.kind.split(' ').map(w => w[0]).join(''),
-          size:     isSelected ? 2 : isSecondary ? 0.7 : 1,
+          // Tier 3 → dot only (no abbreviation). Tier 1 / 2 carry
+          // their patternCode as before so the chart remains
+          // readable for the headline events.
+          text:     v.showLabel ? (p.patternCode ?? p.kind.split(' ').map(w => w[0]).join('')) : '',
+          size:     isSelected ? 2 : v.size,
         };
       }) as (SeriesMarker<Time> | null)[])
       .filter((m): m is SeriesMarker<Time> => m !== null)
@@ -948,6 +1020,27 @@ export default function ChartView({
     if (markersRef.current) markersRef.current.setMarkers(gcpMarkers);
     else                    markersRef.current = createSeriesMarkers<Time>(gcpLine, gcpMarkers);
   }, [chartPatterns, chartGCPSeries, selectedPattern]);
+
+  // v11.34 §5: subtle state-zone background tint. Lerps the chart
+  // pane background toward the current Guru state's accent color
+  // at 0.04 alpha — designed to be perceptible only as
+  // "the environment feels different", never as a theme switch.
+  useEffect(() => {
+    if (!chartReady || !chartRef.current) return;
+    const tinted = aiStateColor
+      ? mixSolid(C.bg, aiStateColor, 0.04)
+      : C.bg;
+    try {
+      chartRef.current.applyOptions({
+        layout: {
+          background: { type: ColorType.Solid, color: tinted },
+          textColor:  C.text,
+          fontFamily: "'IBM Plex Mono', monospace",
+          fontSize:   11,
+        },
+      });
+    } catch { /* */ }
+  }, [chartReady, aiStateColor]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -1015,6 +1108,60 @@ export default function ChartView({
         )}
 
       </div>
+
+      {/* v11.34 §7: narrative ribbon. Last 4-6 Guru states for the
+          current symbol, oldest → newest. Current chip (rightmost)
+          renders at full opacity with a 1px border in its accent
+          color; older chips fade progressively. Hidden entirely
+          when the ledger has no records for this symbol — no point
+          showing an empty rail. */}
+      {ribbonStates.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 14px',
+          borderBottom: '1px solid var(--line-1)',
+          flexShrink: 0,
+          fontFamily: 'var(--font-mono)',
+        }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontWeight: 600, marginRight: 4,
+          }}>
+            STATE FLOW
+          </span>
+          {ribbonStates.map((r, i) => {
+            const isCurrent = i === ribbonStates.length - 1;
+            // stateColor only reads stateCode + direction off its
+            // arg; pass a minimal shape via unknown so TS doesn't
+            // demand the full GcpStateResponse interface.
+            const accent    = stateColor({
+              stateCode: r.stateCode, direction: r.direction,
+            } as unknown as Parameters<typeof stateColor>[0]);
+            const opacity   = isCurrent
+              ? 1
+              : 0.30 + (i / Math.max(1, ribbonStates.length - 1)) * 0.55;
+            return (
+              <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{
+                  padding: '1px 6px',
+                  fontSize: 9, fontWeight: 600, letterSpacing: '0.06em',
+                  color: accent,
+                  background: isCurrent ? `${accent}1f` : `${accent}0d`,
+                  border: `1px solid ${isCurrent ? accent : 'transparent'}`,
+                  borderRadius: 2,
+                  opacity,
+                  transition: 'opacity 0.3s ease',
+                }}>
+                  {r.stateCode}
+                </span>
+                {!isCurrent && i < ribbonStates.length - 1 && (
+                  <span style={{ color: 'var(--fg-4)', fontSize: 9, opacity }}>→</span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
       <div

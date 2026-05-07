@@ -55,6 +55,11 @@ interface GuruViewProps {
   latestPattern:      Pattern | null;
   planStructure:      StructureRead;
   planAnalysisCandle: Candle | null;
+  // v11.34: regime context. Surfaces under the STATE title as
+  // "Regime B · NV 91" so transitions / ladder reads have the
+  // background metadata they assume.
+  regime?:            string | null;
+  netVariance?:       number | null;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -91,12 +96,15 @@ function useTick(intervalMs: number = 1000): number {
 
 function GuruHeader({
   aiState, aiStatus, aiLastSuccess, aiEnabled, aiRunNow,
+  regime = null, netVariance = null,
 }: {
   aiState:        GcpStateResponse | null;
   aiStatus:       AiStatus;
   aiLastSuccess:  Date | null;
   aiEnabled:      boolean;
   aiRunNow:       () => void;
+  regime?:        string | null;
+  netVariance?:   number | null;
 }) {
   const now      = useTick(1000);
   const accent   = aiState ? stateColor(aiState) : 'var(--fg-3)';
@@ -178,16 +186,63 @@ function GuruHeader({
         </div>
         {/* v11.29.1: STATE = primary (bigger, stronger). The
             classification + phase live alone on this line so the
-            eye reads "COMPRESSION STATE · LATE" as one thought. */}
+            eye reads "COMPRESSION STATE · LATE" as one thought.
+            v11.34: when stateCode === 'IS', wrap the headline in a
+            subtle breathing cyan ring — "ignition is anticipation"
+            so the chip reads as alive, not static. */}
+        <style>{`
+          @keyframes guru-is-breathe {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(77,217,232,0); }
+            50%      { box-shadow: 0 0 14px 0 rgba(77,217,232,0.30); }
+          }
+        `}</style>
         <div style={{
           marginTop: 4,
           fontSize: aiState ? 16 : 12,
           color: aiState ? accent : 'var(--fg-2)',
           fontWeight: 700,
           letterSpacing: '0.01em', lineHeight: 1.25,
+          display: 'inline-block',
+          padding: aiState?.stateCode === 'IS' ? '2px 8px' : 0,
+          borderRadius: aiState?.stateCode === 'IS' ? 3 : 0,
+          border: aiState?.stateCode === 'IS'
+            ? '1px solid rgba(77,217,232,0.45)'
+            : 'none',
+          animation: aiState?.stateCode === 'IS'
+            ? 'guru-is-breathe 4.5s ease-in-out infinite'
+            : undefined,
         }}>
           {stateHeadline}
         </div>
+        {/* v11.34: regime context line. "Regime B · NV 91" sits
+            directly under the STATE so transitions / ladder reads
+            have the background metadata immediately visible. */}
+        {aiState && (regime || netVariance != null) && (
+          <div style={{
+            marginTop: 3,
+            fontSize: 10, color: 'var(--fg-3)',
+            fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+          }}>
+            {regime && (
+              <span>
+                <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em' }}>REGIME </span>
+                <span style={{ color: 'var(--fg-1)' }}>{regime}</span>
+              </span>
+            )}
+            {regime && netVariance != null && (
+              <span style={{ color: 'var(--fg-4)' }}>{' · '}</span>
+            )}
+            {netVariance != null && (
+              <span>
+                <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em' }}>NV </span>
+                <span style={{
+                  color: 'var(--fg-1)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>{netVariance.toFixed(1)}</span>
+              </span>
+            )}
+          </div>
+        )}
 
         {/* v11.30: STANCE block — execution layer, highest visual
             weight after STATE. Sits BEFORE the transition overlay
@@ -231,13 +286,14 @@ function GuruHeader({
           </>
         )}
 
-        {/* v11.30: CONFIDENCE moved to the bottom of the header
-            column per spec ordering — it's metadata about the STATE
-            row, sized small so it never competes visually with the
-            STANCE block above. Tooltip clarifies the dimension. */}
+        {/* v11.34: relabelled CONFIDENCE → STATE CERTAINTY so it
+            stops competing semantically with TRANSITION LIKELIHOOD.
+            Same value (aiState.confidence × 100), clearer name —
+            "how stable / certain the current state is" vs "how
+            likely we transition to the next state". */}
         {stateConfPct != null && (
           <div
-            title="How certain Guru is about the current state classification"
+            title="How stable / certain the current Guru state is"
             style={{
               marginTop: 8,
               fontSize: 10, color: 'var(--fg-3)',
@@ -246,7 +302,7 @@ function GuruHeader({
             }}
           >
             <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
-              CONFIDENCE
+              STATE CERTAINTY
             </span>
             <span style={{
               color: 'var(--fg-1)', marginLeft: 6,
@@ -383,61 +439,54 @@ function NextStateOverlay({
   const color = ladderColor(nextState);
   const label = ladderLabel(nextState);
   const conf  = Math.round(confidence * 100);
-  // v11.29.1: secondary visual weight (smaller fonts, no bold on
-  // the % cluster) so the transition reads clearly distinct from
-  // the primary STATE block above. "Likelihood" replaces the bare
-  // percentage so users don't conflate it with state confidence.
+  // v11.34: chip relabelled and restructured. Header reads
+  // "TRANSITION LIKELIHOOD" so it can never be confused with
+  // STATE CERTAINTY; the value renders as "Ignition · 55%" with
+  // the reason on its own subdued italic line.
   return (
     <div
-      title="Likelihood that the system transitions to this next state"
+      title="How likely the system is to move into this next state"
       style={{
         marginTop: 8,
-        padding: '5px 10px',
+        padding: '6px 10px',
         background: `${color}0d`,
         border: `1px solid ${color}40`,
+        borderLeft: `2px solid ${color}`,
         borderRadius: 3,
-        display: 'flex', flexDirection: 'column', gap: 2,
+        display: 'flex', flexDirection: 'column', gap: 3,
         maxWidth: 'fit-content',
       }}
     >
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em',
+        color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
+        fontWeight: 600,
+      }}>
+        TRANSITION LIKELIHOOD
+      </div>
       <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
         <span style={{
-          fontSize: 9, letterSpacing: '0.18em',
-          color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
-          fontWeight: 600,
-        }}>
-          NEXT →
-        </span>
-        <span style={{
-          color, fontWeight: 600, letterSpacing: '0.02em',
-          fontSize: 12,
+          color, fontWeight: 700, letterSpacing: '0.02em', fontSize: 13,
         }}>
           {label}
         </span>
-      </div>
-      <div style={{
-        display: 'inline-flex', alignItems: 'baseline', gap: 6,
-        fontSize: 9, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.06em',
-      }}>
-        <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
-          LIKELIHOOD
-        </span>
+        <span style={{ color: 'var(--fg-3)', fontSize: 11 }}>·</span>
         <span style={{
-          color: 'var(--fg-2)',
-          fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          color: 'var(--fg-1)', fontSize: 12,
+          fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+          fontWeight: 600,
         }}>
           {conf}%
         </span>
-        {reason && (
-          <span style={{
-            color: 'var(--fg-3)', marginLeft: 4,
-            fontStyle: 'italic', letterSpacing: 0,
-          }}>
-            · {reason}
-          </span>
-        )}
       </div>
+      {reason && (
+        <div style={{
+          color: 'var(--fg-3)', fontSize: 10,
+          fontStyle: 'italic', lineHeight: 1.45,
+        }}>
+          {reason}
+        </div>
+      )}
     </div>
   );
 }
@@ -915,6 +964,8 @@ export default function GuruView(props: GuruViewProps) {
           aiLastSuccess={props.aiLastSuccess}
           aiEnabled={props.aiEnabled}
           aiRunNow={props.aiRunNow}
+          regime={props.regime ?? null}
+          netVariance={props.netVariance ?? null}
         />
 
         {/* Micro-change chip sits between header and the full state

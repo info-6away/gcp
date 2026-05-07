@@ -888,7 +888,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 Each dot = one manual AI analysis, colored by whether price went{' '}
                 <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
                 <span style={{ color: '#ef4444' }}>down ↓</span> in the {FWD_LABEL[fwdBars]} after the
-                AI State was reported. Positive averages mean that state historically preceded upward moves.{' '}
+                AI State was reported. Positive averages mean that state historically preceded upward moves.
+                {' '}
+                <span style={{ color: 'var(--cyan)' }}>
+                  Research validates what Guru actually reported after anchoring and post-processing — not raw Engine outputs.
+                </span>{' '}
                 <span style={{ color: '#d4a028' }}>
                   AT trending positive = Alignment Trend reliably precedes upward moves.
                 </span>

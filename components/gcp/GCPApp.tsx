@@ -12,7 +12,7 @@ import {
   type Sensitivity,
 } from '@/lib/sensitivity';
 import { useGcpState } from '@/lib/useGcpState';
-import { useStableAiState } from '@/lib/aiState';
+import { useStableAiState, stateColor } from '@/lib/aiState';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
 import { buildTimeframeContext, AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { useRecentCandles } from '@/lib/useRecentCandles';
@@ -564,6 +564,8 @@ export default function GCPApp() {
               latestPattern={latestPattern}
               planStructure={planStructure}
               planAnalysisCandle={planAnalysisCandle}
+              regime={baseSeries[baseSeries.length - 1]?.r ?? null}
+              netVariance={baseSeries[baseSeries.length - 1]?.v ?? null}
             />
           )}
           {page === 'pattern' && (
@@ -589,6 +591,8 @@ export default function GCPApp() {
               sensitivityThresholds={sensitivityThresholds}
               livePrice={goldData.price}
               livePriceTime={goldData.lastFetch}
+              aiStateCode={stableState?.stateCode ?? null}
+              aiStateColor={stableState ? stateColor(stableState) : null}
             />
           )}
           {page === 'research' && (
