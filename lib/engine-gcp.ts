@@ -142,6 +142,16 @@ export type GcpStateResponse = {
   nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA';
   transitionConfidence?: number;   // 0.25..0.90
   transitionReason?:     string;
+
+  // v11.36: directional pressure synthesis layer. Attached locally
+  // by lib/directionalPressure.deriveDirectionalPressure() AFTER
+  // anchor + shockDecay + transition. Not sent by the Engine.
+  // Represents environment bias pressure, NOT entry certainty.
+  // longPressure + shortPressure always sum to 100.
+  longPressure?:        number;
+  shortPressure?:       number;
+  pressureBand?:        'weak' | 'moderate' | 'strong';
+  pressureExplanation?: string;
 };
 
 export async function classifyGcpState(

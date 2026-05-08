@@ -58,6 +58,7 @@ import {
 import { appendAiStateHistory } from '@/lib/aiStateHistory';
 import { anchorAiState } from '@/lib/aiStateAnchor';
 import { deriveNextState } from '@/lib/stateTransition';
+import { deriveDirectionalPressure } from '@/lib/directionalPressure';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -347,7 +348,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           metrics:      payload.metrics,
           goldContext:  payload.goldContext,
         });
-        const finalResp = transition.nextLikelyState
+        const withTransition = transition.nextLikelyState
           ? { ...anchored, ...transition }
           : anchored;
         if (isDev() && transition.nextLikelyState) {
@@ -356,6 +357,34 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             next:       transition.nextLikelyState,
             confidence: transition.transitionConfidence,
             reason:     transition.transitionReason,
+          });
+        }
+        // v11.36: directional pressure synthesis. Pure frontend
+        // derivation — runs AFTER anchor + transition so it reads from
+        // the corrected state and forward-looking ladder, not the raw
+        // Engine response. Attaches longPressure / shortPressure /
+        // pressureBand / pressureExplanation onto the response so the
+        // UI can render under the STANCE block.
+        const pressure = deriveDirectionalPressure({
+          aiState:      withTransition,
+          patternStory: payload.patternStory,
+          metrics:      payload.metrics,
+          goldContext:  payload.goldContext,
+          transition,
+        });
+        const finalResp: GcpStateResponse = {
+          ...withTransition,
+          longPressure:        pressure.longPressure,
+          shortPressure:       pressure.shortPressure,
+          pressureBand:        pressure.confidenceBand,
+          pressureExplanation: pressure.explanation,
+        };
+        if (isDev()) {
+          console.log('[DIRECTIONAL PRESSURE]', {
+            long:  pressure.longPressure,
+            short: pressure.shortPressure,
+            band:  pressure.confidenceBand,
+            why:   pressure.explanation,
           });
         }
         setState(finalResp);
@@ -386,6 +415,12 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           patternName:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternName,
           pss:             cur.recentPatterns[cur.recentPatterns.length - 1]?.pss,
           priceAtAnalysis: cur.priceAtAnalysis ?? null,
+          // v11.36: snapshot directional pressure alongside the anchored
+          // classification so future research can correlate environment
+          // bias % with actual price moves.
+          longPressure:    pressure.longPressure,
+          shortPressure:   pressure.shortPressure,
+          pressureBand:    pressure.confidenceBand,
         });
       } else {
         if (isDev()) console.log('[AI STATE] error, keeping last state');

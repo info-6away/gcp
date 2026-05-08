@@ -33,6 +33,12 @@ export interface AiStateHistoryRecord {
   pss?:             number;
 
   priceAtAnalysis:  number | null;
+
+  // v11.36: directional pressure snapshot. Kept optional so older
+  // localStorage entries written before v11.36 still validate.
+  longPressure?:    number;
+  shortPressure?:   number;
+  pressureBand?:    'weak' | 'moderate' | 'strong';
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -80,6 +86,11 @@ export interface AiStateHistoryInput {
   pss?:             number;
 
   priceAtAnalysis:  number | null;
+
+  // v11.36: directional pressure snapshot at the time of classification.
+  longPressure?:    number;
+  shortPressure?:   number;
+  pressureBand?:    'weak' | 'moderate' | 'strong';
 }
 
 // Append a single record. Returns the new history. Dedupes against

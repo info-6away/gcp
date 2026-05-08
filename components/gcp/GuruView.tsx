@@ -253,6 +253,21 @@ function GuruHeader({
           return stance ? <StanceBlock stance={stance} /> : null;
         })()}
 
+        {/* v11.36: DIRECTIONAL PRESSURE block — environment bias %
+            (NOT entry certainty). Sits directly under STANCE so the
+            user reads "what to do" then "which way the environment
+            is leaning" before the forward-looking transition chip.
+            Pure synthesis layer; renders only when the engine layer
+            has attached pressure values. */}
+        {aiState?.longPressure != null && aiState?.shortPressure != null && (
+          <DirectionalPressureBlock
+            longPct={aiState.longPressure}
+            shortPct={aiState.shortPressure}
+            band={aiState.pressureBand ?? 'weak'}
+            explanation={aiState.pressureExplanation ?? ''}
+          />
+        )}
+
         {/* v11.29: state-transition ladder overlay — SECONDARY (lighter).
             Sits below the state block so the user sees both "what is"
             and "what's going next" without scrolling. Hidden when the
@@ -421,6 +436,109 @@ function StanceRow({
       }}>
         {value}
       </span>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// v11.36: DIRECTIONAL PRESSURE — environment bias synthesis.
+//
+// Pure derived block. Reads longPressure / shortPressure / pressureBand
+// / pressureExplanation already attached to aiState by the
+// deriveDirectionalPressure() pass in useGcpState. Renders:
+//   header        — "DIRECTIONAL PRESSURE · weak | moderate | strong"
+//   split bar     — horizontal cyan/green long fill vs muted red short
+//   row           — LONG xx%   SHORT yy%
+//   explanation   — single-line why
+//
+// IMPORTANT: this is environment bias %, NOT entry certainty. The
+// label and the explanation copy both reinforce that.
+// ────────────────────────────────────────────────────────────────────
+
+function DirectionalPressureBlock({
+  longPct, shortPct, band, explanation,
+}: {
+  longPct:     number;
+  shortPct:    number;
+  band:        'weak' | 'moderate' | 'strong';
+  explanation: string;
+}) {
+  const longColor   = '#4dd9e8';        // cyan, matches existing accent
+  const shortColor  = '#c45a5a';        // muted red, not screaming
+  const bandColor   = band === 'strong'   ? 'var(--cyan)'
+                    : band === 'moderate' ? '#d4a028'
+                    :                        'var(--fg-3)';
+  return (
+    <div
+      title="Environment bias pressure — NOT entry certainty"
+      style={{
+        marginTop: 8,
+        padding: '8px 10px',
+        background: 'rgba(255,255,255,0.025)',
+        border: '1px solid var(--line-1)',
+        borderRadius: 3,
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: 8,
+      }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em',
+          color: 'var(--fg-4)', fontFamily: 'var(--font-mono)', fontWeight: 600,
+        }}>
+          DIRECTIONAL PRESSURE
+        </span>
+        <span style={{
+          fontSize: 8, letterSpacing: '0.14em',
+          color: bandColor,
+          fontFamily: 'var(--font-mono)', fontWeight: 700,
+        }}>
+          {band.toUpperCase()}
+        </span>
+      </div>
+
+      {/* Split bar — single rounded track, two flex children. */}
+      <div style={{
+        display: 'flex', height: 8, borderRadius: 2, overflow: 'hidden',
+        border: '1px solid var(--line-2)',
+        background: 'var(--bg-2)',
+      }}>
+        <div style={{
+          width: `${longPct}%`,
+          background: longColor,
+          transition: 'width 0.4s ease',
+        }} />
+        <div style={{
+          width: `${shortPct}%`,
+          background: shortColor,
+          transition: 'width 0.4s ease',
+        }} />
+      </div>
+
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        fontSize: 10, fontFamily: 'var(--font-mono)',
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.04em',
+      }}>
+        <span style={{ color: longColor, fontWeight: 600 }}>
+          LONG <span style={{ color: 'var(--fg-1)' }}>{longPct}%</span>
+        </span>
+        <span style={{ color: shortColor, fontWeight: 600 }}>
+          SHORT <span style={{ color: 'var(--fg-1)' }}>{shortPct}%</span>
+        </span>
+      </div>
+
+      {explanation && (
+        <div style={{
+          fontSize: 10, color: 'var(--fg-3)',
+          fontStyle: 'italic', lineHeight: 1.45,
+        }}>
+          {explanation}
+        </div>
+      )}
     </div>
   );
 }
