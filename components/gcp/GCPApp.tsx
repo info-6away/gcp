@@ -491,6 +491,8 @@ export default function GCPApp() {
         goldData={goldData}
         symbol={symbol}
         setSymbol={setSymbol}
+        timeframe={timeframe}
+        setTimeframe={setTimeframe}
         aiState={stableState}
         aiEnabled={aiState.enabled}
         aiLastSuccess={aiState.lastSuccessAt}
