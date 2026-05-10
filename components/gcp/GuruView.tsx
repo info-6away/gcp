@@ -339,6 +339,53 @@ function GuruHeader({
             }}>{lastUpdateLabel}</span>
           </div>
         )}
+
+        {/* v12.0.0: Engine _meta diagnostic chip + stale badge. Tiny,
+            terminal-flat, sits below "Last update" so power users can
+            see which model/provider produced the current read. Hidden
+            entirely when the Engine didn't return _meta (older Engine
+            versions / pre-fallback responses). */}
+        {aiState && (aiState._meta || aiState.stale) && (
+          <div style={{
+            marginTop: 4,
+            display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em', color: 'var(--fg-4)',
+          }}>
+            {aiState.stale && (
+              <span style={{
+                padding: '1px 6px',
+                background: 'rgba(212,160,40,0.12)',
+                border: '1px solid #d4a02855',
+                color: '#d4a028',
+                borderRadius: 2,
+                fontWeight: 700, letterSpacing: '0.12em',
+              }}>
+                STALE{aiState.staleReason ? ` · ${aiState.staleReason}` : ''}
+              </span>
+            )}
+            {aiState._meta?.model && (
+              <span>
+                <span style={{ letterSpacing: '0.14em' }}>MODEL </span>
+                <span style={{ color: 'var(--fg-2)' }}>{aiState._meta.model}</span>
+              </span>
+            )}
+            {aiState._meta?.provider && (
+              <span>
+                <span style={{ letterSpacing: '0.14em' }}>· PROVIDER </span>
+                <span style={{ color: 'var(--fg-2)' }}>{aiState._meta.provider}</span>
+              </span>
+            )}
+            {aiState._meta?.fallback && (
+              <span style={{ color: '#d4a028' }}>· fallback</span>
+            )}
+            {aiState._meta?.latencyMs != null && (
+              <span>
+                <span style={{ letterSpacing: '0.14em' }}>· {aiState._meta.latencyMs}ms</span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <button
         onClick={aiRunNow}

@@ -13,6 +13,7 @@ import {
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
 import { formatDurationSec, type GcpQuality } from '@/lib/alignGcp';
+import EngineDiagnostics from '../../EngineDiagnostics';
 
 type ConnPhase = 'initial' | 'connected' | 'reconnecting' | 'disabled';
 
@@ -405,6 +406,14 @@ export function SettingsScreen({
             </select>
           </div>
         )}
+
+        {/* v12.0.0: Engine integration diagnostics block — additive,
+            sits between AI Engine and System on the mobile settings
+            screen. Polls /api/engine-status every 60s. */}
+        <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6, marginTop: 16 }}>ENGINE INTEGRATION</div>
+        <div style={{ marginBottom: 16 }}>
+          <EngineDiagnostics />
+        </div>
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>SYSTEM</div>
         <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3 }}>

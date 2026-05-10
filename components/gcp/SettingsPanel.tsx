@@ -22,6 +22,7 @@ import {
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
 import { formatDurationSec, type GcpQuality } from '@/lib/alignGcp';
+import EngineDiagnostics from './EngineDiagnostics';
 
 interface SettingsPanelProps {
   gcpLive:          boolean;
@@ -497,6 +498,13 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               </>
             );
           })()}
+        </Section>
+
+        {/* v12.0.0: Engine integration diagnostics — additive, tucked
+            between the AI Engine section and Preferences. Polls
+            /api/engine-status every 60s; click REFRESH for off-cycle. */}
+        <Section title="Engine Integration">
+          <EngineDiagnostics />
         </Section>
 
         <Section title="Preferences">

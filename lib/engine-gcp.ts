@@ -152,6 +152,31 @@ export type GcpStateResponse = {
   shortPressure?:       number;
   pressureBand?:        'weak' | 'moderate' | 'strong';
   pressureExplanation?: string;
+
+  // v12.0.0: Engine diagnostics surface. `_meta` is the Phase 11A
+  // ClassificationMeta block forwarded by the Engine SDK; `stale` +
+  // `staleReason` are attached by GCP Pro's /api/gcp-state proxy when
+  // the engine call failed and we served the warm LastClassificationCache
+  // entry instead. All three are best-effort — UI must tolerate any
+  // sub-field being missing.
+  _meta?: {
+    model:        string | null;
+    provider:     string | null;
+    routeSource:  'workspace_override' | 'global' | 'default' | 'deployment_canary' | null;
+    fallback:     boolean;
+    latencyMs:    number | null;
+    deploymentId: string | null;
+  };
+  stale?:        boolean;
+  staleReason?:
+    | 'engine_unavailable'
+    | 'budget_exceeded'
+    | 'rate_limited'
+    | 'route_missing'
+    | 'provider_unavailable'
+    | 'config_missing'
+    | 'unknown_error';
+  staleAgeMs?:   number;
 };
 
 export async function classifyGcpState(

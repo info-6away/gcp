@@ -1,27 +1,67 @@
 import { NextResponse } from 'next/server';
+import {
+  EngineBudgetExceededError,
+  EngineProviderUnavailableError,
+  EngineRateLimitedError,
+  EngineRouteMissingError,
+  EngineUnavailableError,
+  type GcpStateRequest,
+  type GcpStateResponse,
+} from '@/lib/engine-sdk';
+import {
+  getEngineClient,
+  isEngineConfigured,
+  lastClassificationCache,
+} from '@/lib/engineClient';
 
-// v11.14a: Server proxy for the 6away Engine /v1/coherence/gcp-state
-// endpoint. Lives server-side so GCP_ENGINE_API_KEY never reaches the
-// browser bundle. Returns either the Engine's raw classification body
-// (success) or a structured `{ ok: false, error: "engine_unavailable" }`
-// envelope (any failure path) so the client can distinguish a real
-// classification from a transient outage without parsing exception types.
+// v12.0.0 — Server proxy for the 6away Engine /v1/coherence/gcp-state
+// endpoint, now driven by the Engine SDK (EngineClient).
 //
-// SW behaviour: this is a POST route. The v11.11+ service worker
-// intercepts only GET requests for /api/*, so this response is never
-// cached -- exactly the spec requirement.
+// Boundary (unchanged): GCP Pro owns ingestion, payload construction,
+// anchor / shockDecay / transition / pressure / stance / history.
+// The Engine only owns classification + routing + memory + status.
+//
+// What this route does now:
+//   1. Read body (and the GCP-Pro-internal `manual` kill-switch flag).
+//   2. Refuse non-manual calls — server-side spend gate, identical to
+//      v11.18.5 behavior. Stale tabs / auto-loops can never reach the
+//      LLM.
+//   3. Strip `manual` before forwarding (SDK never sees it).
+//   4. Call EngineClient.classifyGcpState(payload). The SDK handles
+//      X-API-Key auth, exponential backoff retry on retryable failures,
+//      and typed error classification.
+//   5. On success, snapshot to LastClassificationCache for future
+//      stale fallback, then return the body (with optional `_meta`).
+//   6. On failure, try the cache. If a recent entry exists, return it
+//      with `stale: true` + `staleReason` so the UI can show a degraded
+//      banner without losing the last good read. If nothing is cached,
+//      surface the typed error class to the client.
+//
+// SW behavior: this remains POST-only. The v11.11+ service worker only
+// caches GET /api/* — no caching here.
+//
+// IMPORTANT: This file is a server route; it is the ONLY place in the
+// app that imports lib/engineClient (which reads the API key). Never
+// import either from a client component.
 
-const ENGINE_PATH = '/v1/coherence/gcp-state';
-// Sonnet calls genuinely take 5-20s; 10s was too tight even for the
-// happy path. With one corrective retry on schema fail the Engine
-// route caps at ~40s. Give the proxy 35s + the function ceiling 40s
-// so a slow-but-successful classification still reaches the client.
-const TIMEOUT_MS  = 35_000;
-
-// Without an explicit cap, Vercel kills the function at 10s on Hobby and
-// the user sees an empty response. 40s matches the Engine route ceiling
-// + a small buffer.
+// Vercel function ceiling. Must exceed the SDK timeout (35s) + a small
+// buffer so the SDK's timeout fires before Vercel kills us.
 export const maxDuration = 40;
+
+// Cache key. v12.0 keeps it at task-level granularity; per-(symbol,tf)
+// staleness would mean a cache miss on every symbol switch. Caller's
+// UI already deals with "no data yet" cleanly, so task-level is fine.
+const CACHE_KEY = 'gcp_state';
+
+// Caller-visible reason a response is being served from cache.
+type StaleReason =
+  | 'engine_unavailable'
+  | 'budget_exceeded'
+  | 'rate_limited'
+  | 'route_missing'
+  | 'provider_unavailable'
+  | 'config_missing'
+  | 'unknown_error';
 
 function fail(status: number, error = 'engine_unavailable', extra?: Record<string, unknown>) {
   return NextResponse.json(
@@ -30,14 +70,31 @@ function fail(status: number, error = 'engine_unavailable', extra?: Record<strin
   );
 }
 
-export async function POST(req: Request) {
-  const baseUrl = process.env.GCP_ENGINE_BASE_URL;
-  const apiKey  = process.env.GCP_ENGINE_API_KEY;
+// Try to recover a stale entry. When found, return a 200 with the body
+// + the diagnostics fields the UI expects. When not, return null and
+// the caller surfaces the original failure.
+function staleFallback(reason: StaleReason): NextResponse | null {
+  const cached = lastClassificationCache.get(CACHE_KEY);
+  if (!cached) return null;
+  const ageMs = Date.now() - cached.capturedAt;
+  const body = {
+    ...cached.response,
+    _meta: cached.meta ?? undefined,
+    stale: true as const,
+    staleReason: reason,
+    staleAgeMs: ageMs,
+  };
+  return NextResponse.json(body, {
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
 
-  if (!baseUrl || !apiKey) {
-    // Env not configured. Don't crash; the client treats this the
-    // same as any other failure and keeps the prior AI state in place.
-    return fail(503);
+export async function POST(req: Request) {
+  if (!isEngineConfigured()) {
+    // Fall through to cache if we have one — a misconfigured server is
+    // identical to a network outage from the client's POV.
+    const stale = staleFallback('config_missing');
+    return stale ?? fail(503, 'config_missing');
   }
 
   let body: unknown;
@@ -47,56 +104,64 @@ export async function POST(req: Request) {
     return fail(400, 'bad_request');
   }
 
-  // v11.18.5 server-side kill switch. The auto-loop kept burning
-  // tokens even after the client switched to manual-first because
-  // stale browser tabs / old PWAs / cached JS were still firing
-  // `runCall(false)`. The proxy now refuses any call that doesn't
-  // explicitly mark itself as a deliberate manual run, so the LLM is
-  // never invoked unless the user clicked RUN AI ANALYSIS.
-  //
-  // Strip the flag before forwarding — the Engine doesn't expect it.
-  const isManual = !!(body && typeof body === 'object' && (body as { manual?: unknown }).manual === true);
+  // v11.18.5 carry-over: refuse anything that isn't an explicit user
+  // run. The Engine cost gate lives ABOVE the SDK — we never want a
+  // background auto-loop firing classifications even if the SDK +
+  // Engine would gladly accept them.
+  const isManual = !!(body && typeof body === 'object'
+    && (body as { manual?: unknown }).manual === true);
   if (!isManual) {
-    console.warn('[AI STATE] blocked non-manual request');
+    console.warn('[gcp-state] blocked non-manual request');
     return fail(403, 'manual_required');
   }
-  const forwardBody = (() => {
-    if (!body || typeof body !== 'object') return body;
+  // Strip `manual` before forwarding — the SDK + Engine don't expect
+  // it (and the field is GCP-Pro-internal anyway).
+  const payload = (() => {
+    if (!body || typeof body !== 'object') return body as GcpStateRequest;
     const { manual: _manual, ...rest } = body as Record<string, unknown>;
-    return rest;
+    return rest as GcpStateRequest;
   })();
 
+  const engine = getEngineClient();
   try {
-    const upstream = await fetch(`${baseUrl}${ENGINE_PATH}`, {
-      method:  'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // Engine authenticates via X-API-Key, not Authorization: Bearer.
-        // Sending Bearer made every upstream call 401 silently.
-        'X-API-Key':    apiKey,
-      },
-      body:   JSON.stringify(forwardBody),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-
-    if (!upstream.ok) {
-      let upstreamBody = '';
-      try { upstreamBody = (await upstream.text()).slice(0, 200); } catch {}
-      console.warn('[gcp-state] engine returned', upstream.status, upstreamBody);
-      return fail(502, 'engine_unavailable', {
-        upstreamStatus: upstream.status,
-        upstreamBody,
-      });
-    }
-
-    // Engine success body is the GcpStateResponse shape -- forward as-is.
-    const data = await upstream.json();
-    return NextResponse.json(data, {
+    const result = await engine.classifyGcpState(payload);
+    lastClassificationCache.put(CACHE_KEY, result);
+    return NextResponse.json(result, {
       headers: { 'Cache-Control': 'no-store' },
     });
-  } catch (e) {
-    // Timeout (AbortSignal) lands here too via DOMException name TimeoutError.
-    console.warn('[gcp-state] proxy error', e);
-    return fail(502);
+  } catch (err) {
+    // Map the typed SDK error → stale reason. Each branch tries the
+    // cache first; only fall through to a hard fail when nothing is
+    // cached. Always log for ops triage.
+    let reason: StaleReason = 'unknown_error';
+    let httpStatus = 502;
+    if (err instanceof EngineBudgetExceededError) {
+      reason = 'budget_exceeded';
+      httpStatus = 429;
+    } else if (err instanceof EngineRateLimitedError) {
+      reason = 'rate_limited';
+      httpStatus = 429;
+    } else if (err instanceof EngineRouteMissingError) {
+      reason = 'route_missing';
+      httpStatus = 503;
+    } else if (err instanceof EngineProviderUnavailableError) {
+      reason = 'provider_unavailable';
+      httpStatus = 503;
+    } else if (err instanceof EngineUnavailableError) {
+      reason = 'engine_unavailable';
+      httpStatus = 502;
+    }
+    console.warn('[gcp-state] engine call failed', {
+      class:  err instanceof Error ? err.constructor.name : typeof err,
+      reason,
+      msg:    err instanceof Error ? err.message : String(err),
+    });
+    const stale = staleFallback(reason);
+    if (stale) return stale;
+    return fail(httpStatus, reason);
   }
 }
+
+// Type-only re-exports so consumers in this repo can keep importing
+// the Engine SDK response shape from a stable surface.
+export type { GcpStateResponse };
