@@ -42,7 +42,9 @@ interface Props {
   // Engine call directly via runNow() — there's no automatic loop in
   // the default mode, so the user must press the button to get the
   // first classification.
-  runNow?:        () => void;
+  // v12.0.4: structured options. Pass `{ force: true, source: 'ai_state_card' }`
+  // explicitly from button onClick to bypass the cost gate.
+  runNow?:        (options?: { force?: boolean; source?: string }) => void;
   // v11.23.2: explicit state machine. 'running' is the ONLY value that
   // surfaces "Analyzing…"; every other value resolves to idle / success /
   // error copy so manual mode never shows analyzing by default.
@@ -238,7 +240,16 @@ function Card({
           AI analysis uses LLM tokens. Run manually to control cost.
         </div>
         <button
-          onClick={() => runNow?.()}
+          onClick={() => {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[ASK GURU CLICK]', {
+                aiStatus, force: true, source: 'ai_state_card_idle',
+                hasRunNow: typeof runNow === 'function',
+                reason: 'ok',
+              });
+            }
+            runNow?.({ force: true, source: 'ai_state_card_idle' });
+          }}
           disabled={!runNow || !enabled || isRunning}
           style={{
             marginTop: 14,
@@ -540,7 +551,16 @@ function Card({
           Last Guru analysis: <span style={{ color: 'var(--fg-1)' }}>{formatRelative(lastSuccessAt)}</span>
         </div>
         <button
-          onClick={() => runNow?.()}
+          onClick={() => {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[ASK GURU CLICK]', {
+                aiStatus, force: true, source: 'ai_state_card_again',
+                hasRunNow: typeof runNow === 'function',
+                reason: 'ok',
+              });
+            }
+            runNow?.({ force: true, source: 'ai_state_card_again' });
+          }}
           disabled={!runNow || !enabled || isRunning}
           style={{
             padding: '4px 10px',

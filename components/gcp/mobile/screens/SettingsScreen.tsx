@@ -75,7 +75,7 @@ export function SettingsScreen({
   aiNextPollAt:  Date | null;
   aiIntervalSec: AiAnalysisInterval;
   aiStatus:      AiStatus;
-  aiRunNow:      () => void;
+  aiRunNow:      (options?: { force?: boolean; source?: string }) => void;
   gcpLastUpdate: Date | null;
   gcpNextPollAt: Date | null;
   gcpQuality:    GcpQuality;
@@ -340,8 +340,17 @@ export function SettingsScreen({
         </div>
 
         {/* v11.19 primary action — full-width prominent RUN button */}
+        {/* v12.0.4: pass { force, source } so cost gate accepts the call. */}
         <button
-          onClick={() => aiRunNow()}
+          onClick={() => {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[ASK GURU CLICK]', {
+                aiStatus, force: true, source: 'mobile_settings_button',
+                hasRunNow: typeof aiRunNow === 'function', reason: 'ok',
+              });
+            }
+            aiRunNow({ force: true, source: 'mobile_settings_button' });
+          }}
           disabled={!aiEnabled || isRunning}
           style={{
             width: '100%', padding: '14px 16px', marginBottom: 8,

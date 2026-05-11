@@ -171,11 +171,21 @@ export async function POST(req: Request) {
   // background auto-loop firing classifications even if the SDK +
   // Engine would gladly accept them. Auto-loop runCall(false) is
   // expected to land here; the structured envelope makes it explicit.
-  const isManual = !!(body && typeof body === 'object'
+  // v12.0.4: also read `source` (button name) for traceability — both
+  // manual + source fields are stripped before forwarding to the SDK.
+  const isManual  = !!(body && typeof body === 'object'
     && (body as { manual?: unknown }).manual === true);
+  const reqSource = body && typeof body === 'object'
+    ? String((body as { source?: unknown }).source ?? 'unknown')
+    : 'unknown';
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[gcp-state] incoming', { manual: isManual, source: reqSource });
+  }
+
   if (!isManual) {
     if (process.env.NODE_ENV !== 'production') {
-      console.warn('[gcp-state] blocked non-manual request');
+      console.warn('[gcp-state] blocked non-manual request', { source: reqSource });
     }
     return errorEnvelope(
       403,
@@ -183,11 +193,15 @@ export async function POST(req: Request) {
       'Engine calls require a deliberate user trigger; auto-loop requests are blocked by the server-side cost gate.',
     );
   }
-  // Strip `manual` before forwarding — the SDK + Engine don't expect
-  // it (and the field is GCP-Pro-internal anyway).
+  // Strip `manual` + `source` before forwarding — the SDK + Engine
+  // don't expect either (they're GCP-Pro-internal cost-gate metadata).
   const payload = (() => {
     if (!body || typeof body !== 'object') return body as GcpStateRequest;
-    const { manual: _manual, ...rest } = body as Record<string, unknown>;
+    const {
+      manual: _manual,
+      source: _source,
+      ...rest
+    } = body as Record<string, unknown>;
     return rest as GcpStateRequest;
   })();
 

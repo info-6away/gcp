@@ -62,7 +62,7 @@ interface MobileAppProps {
   aiNextPollAt:    Date | null;
   aiIntervalSec:   AiAnalysisInterval;
   aiStatus:        AiStatus;
-  aiRunNow:        () => void;
+  aiRunNow:        (options?: { force?: boolean; source?: string }) => void;
   planStructure:   StructureRead;
   planAnalysisCandle: Candle | null;
   gcpQuality:      GcpQuality;

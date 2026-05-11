@@ -48,7 +48,7 @@ interface SettingsPanelProps {
   aiNextPollAt:     Date | null;
   aiIntervalSec:    AiAnalysisInterval;
   aiStatus:         AiStatus;
-  aiRunNow:         () => void;
+  aiRunNow:         (options?: { force?: boolean; source?: string }) => void;
   gcpQuality:       GcpQuality;
   onTestAlert:      () => Promise<'sent' | 'blocked' | 'focused'>;
 }
@@ -400,8 +400,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </div>
 
                 {/* Primary action — full-width, prominent. */}
+                {/* v12.0.4: pass { force: true, source: 'settings_button' }
+                    so the cost gate accepts the call. */}
                 <button
-                  onClick={() => props.aiRunNow()}
+                  onClick={() => {
+                    if (process.env.NODE_ENV !== 'production') {
+                      console.log('[ASK GURU CLICK]', {
+                        aiStatus: props.aiStatus, force: true,
+                        source: 'settings_button',
+                        hasRunNow: typeof props.aiRunNow === 'function',
+                        reason: 'ok',
+                      });
+                    }
+                    props.aiRunNow({ force: true, source: 'settings_button' });
+                  }}
                   disabled={!props.aiEnabled || props.aiStatus === 'running'}
                   style={{
                     width: '100%', marginTop: 4, marginBottom: 8,

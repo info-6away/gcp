@@ -704,7 +704,7 @@ interface DashboardProps {
   pssFlash?:      boolean;
   aiState:        GcpStateResponse | null;
   aiEnabled:      boolean;
-  aiRunNow:       () => void;
+  aiRunNow:       (options?: { force?: boolean; source?: string }) => void;
   aiStatus:       AiStatus;
   aiLastSuccess:  Date | null;
   planStructure:  StructureRead;

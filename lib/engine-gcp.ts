@@ -213,7 +213,7 @@ export function isClassifyError(r: ClassifyResult): r is ClassifyErrorEnvelope {
 
 export async function classifyGcpState(
   payload: GcpStatePayload,
-  opts: { manual?: boolean } = {},
+  opts: { manual?: boolean; source?: string } = {},
 ): Promise<ClassifyResult> {
   // v11.18.5: server-side kill switch. The proxy refuses any request
   // that doesn't explicitly mark itself as a manual run, so the LLM
@@ -221,8 +221,11 @@ export async function classifyGcpState(
   // tabs / old PWAs / cached JS still firing the auto-loop will be
   // blocked at the proxy with `manual_required`. Only set the flag
   // when the caller passes manual: true.
+  // v12.0.4: also forward `source` (which button fired the call) so
+  // the proxy's [gcp-state] incoming log can trace 403s back to the
+  // call site. Both fields are stripped before forwarding to the SDK.
   const body: unknown = opts.manual === true
-    ? { ...payload, manual: true }
+    ? { ...payload, manual: true, source: opts.source ?? 'unknown' }
     : payload;
 
   const serialized = JSON.stringify(body);

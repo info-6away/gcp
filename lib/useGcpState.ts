@@ -107,7 +107,11 @@ export interface UseGcpStateResult {
   // "ENGINE OFFLINE — using last known Guru state" from a generic
   // "Guru request failed".
   lastError:     ClassifyErrorEnvelope | null;
-  runNow:        () => void;
+  // v12.0.4: structured runNow signature. Manual button call sites
+  // MUST pass `{ force: true, source: <name> }` to bypass the
+  // server-side cost gate. Default is force=false (auto/background)
+  // which the hook treats as a silent skip — never reaches the proxy.
+  runNow:        (options?: { force?: boolean; source?: string }) => void;
 }
 
 interface Snapshot {
@@ -237,7 +241,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   // but the in-flight guard still prevents overlap. Manual run resets
   // the last-attempt timestamp on completion so the countdown
   // restarts from the user-selected interval.
-  const runCall = useCallback(async (force: boolean) => {
+  const runCall = useCallback(async (force: boolean, source: string = 'unknown') => {
     // v12.0.2: structured early-return traces. Every silent no-op the
     // hook can hit now emits a `[GURU RUN SKIPPED]` with a reason +
     // diagnostics, so a "click did nothing" investigation has a single
@@ -260,10 +264,25 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         symbol:    symbolNow,
         timeframe: timeframeNow,
         force,
+        source,
         aiEnabled: true,
         ...(extra ?? {}),
       });
     };
+
+    // v12.0.4: HARD AUTO-BLOCK. The v11.18.5 server-side cost gate
+    // refuses any request without manual:true; pre-v12.0.4 the
+    // auto-loop happily fired those requests every 25s and ate a 403
+    // per tick (and flipped aiStatus to 'error' inside the client,
+    // making the Guru header show "Guru request failed" on what was
+    // really a background heartbeat). The auto-loop now never reaches
+    // the proxy at all — force=false short-circuits here, before any
+    // network code runs. Does NOT touch aiStatus / lastError; the UI
+    // keeps the last good classification on screen.
+    if (!force) {
+      skip('manual_required', { hint: 'background auto-call blocked; only manual buttons reach the proxy' });
+      return;
+    }
 
     if (inflightRef.current) {
       skip('inflight');
@@ -345,10 +364,14 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       // classification, before the network fires, capturing the
       // pre-call state. Pairs with [GURU PIPELINE] (post-success)
       // and [GURU RUN ERROR] (post-failure).
+      // v12.0.4: includes `source` (which button fired it) so a
+      // 403 / engine_forbidden can be traced back to its origin.
       console.log('[GURU RUN START]', {
         symbol:               cur.symbol,
         timeframe:            cur.timeframe,
         force,
+        manual:               force,
+        source,
         statusBefore:         inflightRef.current ? 'running' : 'idle',
         hasPayloadInputs:     !!cur,
         hasPatternStory:      !!cur.patternStory,
@@ -375,17 +398,41 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       // user-triggered run. The proxy's server-side kill switch refuses
       // any non-manual call with `manual_required` so even stale auto
       // loops can't reach the LLM.
-      const rawResult = await classifyGcpState(payload, { manual: force });
+      const rawResult = await classifyGcpState(payload, { manual: force, source });
 
       // v12.0.3: branch on structured error envelope BEFORE the success
       // path. The proxy now returns `{ ok: false, error: { type, ... } }`
       // for every non-2xx + manual_required path. Surface it to the
       // UI as an error state with the typed envelope attached.
       if (isClassifyError(rawResult)) {
+        // v12.0.4: a manual_required envelope arriving here means
+        // something fired a runCall(false) past the auto-block AND the
+        // request still reached the proxy. With v12.0.4's hard auto-
+        // block this should be unreachable, but if a stale tab or
+        // direct fetch ever produces it, treat it as a silent skip:
+        // no aiStatus flip, no lastError update, just a [GURU RUN
+        // SKIPPED] log. The user never sees "Guru request failed" for
+        // a background heartbeat.
+        if (rawResult.error.type === 'manual_required') {
+          if (isDev()) {
+            console.log('[GURU RUN SKIPPED]', {
+              reason:    'manual_required',
+              symbol:    cur.symbol,
+              timeframe: cur.timeframe,
+              force,
+              source,
+              origin:    'proxy_envelope',
+              hint:      'auto-call reached proxy; check call site for missing { force: true }',
+            });
+          }
+          resolved = true;
+          return;
+        }
         console.warn('[GURU RUN ERROR]', {
           symbol:    cur.symbol,
           timeframe: cur.timeframe,
           force,
+          source,
           reason:    'proxy_error_envelope',
           message:   rawResult.error.message,
           type:      rawResult.error.type,
@@ -625,6 +672,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           symbol:    cur.symbol,
           timeframe: cur.timeframe,
           force,
+          source,
           reason:    'classify_returned_null',
           message:   'Guru request failed — Engine proxy returned null (config missing, bad request, or aborted).',
         });
@@ -637,6 +685,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         symbol:    cur.symbol,
         timeframe: cur.timeframe,
         force,
+        source,
         reason:    'classify_threw',
         message:   'Guru request failed — exception during classification.',
         err:       err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err),
@@ -681,8 +730,11 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       // would show a misleading 25 s countdown when the user picked
       // 600 s. recomputeNextPollAt() reads lastCallAt + userInterval
       // so the displayed wait is always the real one.
+      // v12.0.4: source='auto' so the [GURU RUN SKIPPED] log identifies
+      // the heartbeat tick (which now never reaches the proxy — see
+      // the hard auto-block at the top of runCall).
       recomputeNextPollAt();
-      void runCall(false);
+      void runCall(false, 'auto');
     };
 
     tick();
@@ -690,7 +742,15 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
     return () => { cancelled = true; clearInterval(id); };
   }, [enabled, runCall, recomputeNextPollAt]);
 
-  const runNow = useCallback(() => { void runCall(true); }, [runCall]);
+  // v12.0.4: runNow accepts { force, source }. Bare runNow() defaults
+  // to force=false (= auto, skipped at the proxy boundary). Manual
+  // button call sites MUST pass `{ force: true, source: '<button>' }`
+  // — that's how the proxy's server-side cost gate gets bypassed.
+  const runNow = useCallback((options?: { force?: boolean; source?: string }) => {
+    const force  = options?.force  ?? false;
+    const source = options?.source ?? 'unknown';
+    void runCall(force, source);
+  }, [runCall]);
 
   return {
     state, enabled, lastSuccessAt, lastErrorAt, nextPollAt,

@@ -50,7 +50,9 @@ interface GuruViewProps {
   aiState:            GcpStateResponse | null;
   aiEnabled:          boolean;
   aiStatus:           AiStatus;
-  aiRunNow:           () => void;
+  // v12.0.4: structured options. Manual button call sites must pass
+  // `{ force: true, source: '<name>' }` to bypass the cost gate.
+  aiRunNow:           (options?: { force?: boolean; source?: string }) => void;
   aiLastSuccess:      Date | null;
   // v12.0.3: typed proxy error envelope (null on success). When the
   // last classification failed, the header shows a meaningful copy:
@@ -109,7 +111,7 @@ function GuruHeader({
   aiStatus:       AiStatus;
   aiLastSuccess:  Date | null;
   aiEnabled:      boolean;
-  aiRunNow:       () => void;
+  aiRunNow:       (options?: { force?: boolean; source?: string }) => void;
   aiLastError?:   ClassifyErrorEnvelope | null;
   regime?:        string | null;
   netVariance?:   number | null;
@@ -175,6 +177,10 @@ function GuruHeader({
   // ourselves (border/color/cursor) and use aria-disabled so the
   // click handler always fires; the handler logs + returns when the
   // button should be inert.
+  // v12.0.4: aiRunNow now takes `{ force, source }`. A manual click
+  // MUST pass `{ force: true, source: 'guru_button' }` to bypass the
+  // server-side cost gate. Bare aiRunNow() defaults to force=false
+  // (auto/heartbeat) and is silently skipped at the hook layer.
   const onAskGuruClick = () => {
     if (process.env.NODE_ENV !== 'production') {
       let reason: string;
@@ -187,11 +193,13 @@ function GuruHeader({
         aiEnabled,
         hasRunNow: typeof aiRunNow === 'function',
         disabled:  buttonDisabled,
+        force:     true,
+        source:    'guru_button',
         reason,
       });
     }
     if (buttonDisabled || typeof aiRunNow !== 'function') return;
-    aiRunNow();
+    aiRunNow({ force: true, source: 'guru_button' });
   };
 
   return (

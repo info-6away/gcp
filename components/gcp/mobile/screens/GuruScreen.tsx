@@ -29,7 +29,7 @@ interface GuruScreenProps {
   aiState:            GcpStateResponse | null;
   aiEnabled:          boolean;
   aiStatus:           AiStatus;
-  aiRunNow?:          () => void;
+  aiRunNow?:          (options?: { force?: boolean; source?: string }) => void;
   aiLastSuccess?:     Date | null;
   latestPattern:      Pattern | null;
   planStructure?:     StructureRead;

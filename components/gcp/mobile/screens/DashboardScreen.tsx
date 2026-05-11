@@ -48,7 +48,7 @@ export function DashboardScreen({
   aiState:        GcpStateResponse | null;
   aiEnabled:      boolean;
   aiStatus?:      AiStatus;
-  aiRunNow?:      () => void;
+  aiRunNow?:      (options?: { force?: boolean; source?: string }) => void;
   aiLastSuccess?: Date | null;
   planStructure?: StructureRead;
   planAnalysisCandle?: Candle | null;
@@ -104,7 +104,15 @@ export function DashboardScreen({
                   AI analysis uses LLM tokens. Run manually to control cost.
                 </div>
                 <button
-                  onClick={() => aiRunNow?.()}
+                  onClick={() => {
+                    if (process.env.NODE_ENV !== 'production') {
+                      console.log('[ASK GURU CLICK]', {
+                        aiStatus, force: true, source: 'mobile_dashboard_idle',
+                        hasRunNow: typeof aiRunNow === 'function', reason: 'ok',
+                      });
+                    }
+                    aiRunNow?.({ force: true, source: 'mobile_dashboard_idle' });
+                  }}
                   disabled={!aiRunNow || isRunning}
                   style={{
                     marginTop: 10,
@@ -360,7 +368,15 @@ export function DashboardScreen({
                   }</span>
                 </div>
                 <button
-                  onClick={() => aiRunNow?.()}
+                  onClick={() => {
+                    if (process.env.NODE_ENV !== 'production') {
+                      console.log('[ASK GURU CLICK]', {
+                        aiStatus, force: true, source: 'mobile_dashboard_again',
+                        hasRunNow: typeof aiRunNow === 'function', reason: 'ok',
+                      });
+                    }
+                    aiRunNow?.({ force: true, source: 'mobile_dashboard_again' });
+                  }}
                   disabled={!aiRunNow || isRunning}
                   style={{
                     padding: '4px 8px',
