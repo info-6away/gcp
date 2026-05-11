@@ -120,9 +120,12 @@ function GuruHeader({
 
   // Status verb maps to the state machine but with friendlier wording
   // for a "thinking out loud" feel.
+  // v12.0.2: explicit "Guru request failed" copy when the Engine call
+  // errored — matches the [GURU RUN ERROR] console log so the user
+  // and the developer see the same failure label.
   const statusVerb =
     aiStatus === 'running' ? 'Asking…'
-  : aiStatus === 'error'   ? 'Error — try again'
+  : aiStatus === 'error'   ? 'Guru request failed'
   : aiState                 ? 'Watching'
   :                            'Idle';
   const statusColor =
@@ -149,6 +152,32 @@ function GuruHeader({
   :                            'ASK GURU';
   const buttonDisabled = !aiEnabled || isRunning;
   const buttonAccent = aiStatus === 'error' ? 'var(--red)' : 'var(--cyan)';
+
+  // v12.0.2: click handler with mandatory dev trace. Pre-v12.0.2 the
+  // button used the HTML `disabled` attribute, which swallows clicks
+  // silently — so an aiEnabled=false / isRunning=true click produced
+  // NOTHING in the console. We now drive the visual disabled style
+  // ourselves (border/color/cursor) and use aria-disabled so the
+  // click handler always fires; the handler logs + returns when the
+  // button should be inert.
+  const onAskGuruClick = () => {
+    if (process.env.NODE_ENV !== 'production') {
+      let reason: string;
+      if (typeof aiRunNow !== 'function')   reason = 'missing_runNow';
+      else if (isRunning)                   reason = 'already_running';
+      else if (!aiEnabled)                  reason = 'aiEnabled_false';
+      else                                  reason = 'ok';
+      console.log('[ASK GURU CLICK]', {
+        aiStatus,
+        aiEnabled,
+        hasRunNow: typeof aiRunNow === 'function',
+        disabled:  buttonDisabled,
+        reason,
+      });
+    }
+    if (buttonDisabled || typeof aiRunNow !== 'function') return;
+    aiRunNow();
+  };
 
   return (
     <div style={{
@@ -388,8 +417,11 @@ function GuruHeader({
         )}
       </div>
       <button
-        onClick={aiRunNow}
-        disabled={buttonDisabled}
+        onClick={onAskGuruClick}
+        // v12.0.2: aria-disabled + handler-side gate instead of HTML
+        // `disabled`, so click always reaches the handler and the
+        // [ASK GURU CLICK] trace fires even when the button is inert.
+        aria-disabled={buttonDisabled || undefined}
         title={!aiEnabled ? 'Guru is disabled in Settings' : undefined}
         style={{
           padding: '8px 14px',

@@ -229,19 +229,47 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   // the last-attempt timestamp on completion so the countdown
   // restarts from the user-selected interval.
   const runCall = useCallback(async (force: boolean) => {
+    // v12.0.2: structured early-return traces. Every silent no-op the
+    // hook can hit now emits a `[GURU RUN SKIPPED]` with a reason +
+    // diagnostics, so a "click did nothing" investigation has a single
+    // log to grep for instead of scanning the four older message
+    // shapes. force=true paths log unconditionally; force=false paths
+    // log only when an interesting state change happened (to avoid
+    // spamming the 25 s heartbeat ticks).
+    const symbolNow    = inputsRef.current?.symbol    ?? null;
+    const timeframeNow = inputsRef.current?.timeframe ?? null;
+    const skip = (reason: string, extra?: Record<string, unknown>) => {
+      if (!isDev()) return;
+      if (!force
+          && (reason === 'manual_mode'
+           || reason === 'blocked_by_interval'
+           || reason === 'pending_trigger')) {
+        return;  // background-loop noise, already logged below
+      }
+      console.log('[GURU RUN SKIPPED]', {
+        reason,
+        symbol:    symbolNow,
+        timeframe: timeframeNow,
+        force,
+        aiEnabled: true,
+        ...(extra ?? {}),
+      });
+    };
+
     if (inflightRef.current) {
-      if (isDev() && force) console.log('[AI STATE] manual run ignored — request in flight');
+      skip('inflight');
       return;
     }
 
     const cur = inputsRef.current;
     if (!cur) {
-      if (isDev() && force) console.log('[AI STATE] manual run ignored — no inputs yet');
+      skip('no_inputs');
       return;
     }
 
     const currentSnap = snapshotOf(cur);
 
+    let cooldownRemainingMs = 0;
     if (!force) {
       const userInt = intervalRef.current;
       if (userInt === 'manual') {
@@ -259,6 +287,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         // First attempt — fire immediately so the UI gets data.
         if (isDev()) console.log('[AI STATE] triggered — first call');
       } else if (sinceLast < userIntervalMs) {
+        cooldownRemainingMs = Math.max(0, userIntervalMs - sinceLast);
         // v11.16.6: user-selected interval is authoritative. Triggers
         // do NOT bypass — they're logged as "pending" and execute
         // when the interval expires. Dedupe pending-reason logs so the
@@ -294,11 +323,31 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       previousState: stateRef.current,
     });
     if (!payload) {
-      if (isDev() && force) console.log('[AI STATE] manual run ignored — payload unbuildable (series too short)');
+      skip('payload_unbuildable', {
+        seriesLen:        cur.series?.length ?? 0,
+        recentPatterns:   cur.recentPatterns?.length ?? 0,
+        hasPatternStory:  !!cur.patternStory,
+      });
       return;
     }
 
     if (isDev()) {
+      // v12.0.2: unified run-start trace. One log per attempted
+      // classification, before the network fires, capturing the
+      // pre-call state. Pairs with [GURU PIPELINE] (post-success)
+      // and [GURU RUN ERROR] (post-failure).
+      console.log('[GURU RUN START]', {
+        symbol:               cur.symbol,
+        timeframe:            cur.timeframe,
+        force,
+        statusBefore:         inflightRef.current ? 'running' : 'idle',
+        hasPayloadInputs:     !!cur,
+        hasPatternStory:      !!cur.patternStory,
+        cooldownRemainingMs,
+        seriesLen:            cur.series.length,
+        recentPatternsLen:    cur.recentPatterns.length,
+        reason:               force ? 'manual' : 'auto',
+      });
       console.log('[AI STATE] request payload', payload);
     }
 
@@ -532,14 +581,31 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           });
         }
       } else {
-        if (isDev()) console.log('[AI STATE] error, keeping last state');
+        // v12.0.2: classifyGcpState returned null. The proxy serves
+        // either {ok:false,...} or a stale-cache 200; null means we hit
+        // a hard fail (config_missing without cache, 400, fetch abort).
+        // The user sees aiStatus='error' → header verb "Error — try
+        // again" and the "TRY AGAIN" button label.
+        console.warn('[GURU RUN ERROR]', {
+          symbol:    cur.symbol,
+          timeframe: cur.timeframe,
+          force,
+          reason:    'classify_returned_null',
+          message:   'Guru request failed — Engine proxy returned null (config missing, bad request, or aborted).',
+        });
         setLastErrorAt(new Date());
         setAiStatus('error');
-        if (isDev()) console.log('[AI UI] run error');
         resolved = true;
       }
     } catch (err) {
-      console.error('[AI UI] run error', err);
+      console.warn('[GURU RUN ERROR]', {
+        symbol:    cur.symbol,
+        timeframe: cur.timeframe,
+        force,
+        reason:    'classify_threw',
+        message:   'Guru request failed — exception during classification.',
+        err:       err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err),
+      });
       setLastErrorAt(new Date());
       setAiStatus('error');
       resolved = true;
