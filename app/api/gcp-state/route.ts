@@ -122,6 +122,23 @@ export async function POST(req: Request) {
     return rest as GcpStateRequest;
   })();
 
+  // v12.0.1: dev-only passthrough sanity log. Confirms patternStory /
+  // priorPlan / gcpQuality / timeframeContext / priorState landed on
+  // the request body and survived the manual-strip step. If any of
+  // these surfaces as `false` and we're seeing FA regressions, the
+  // payload builder upstream is the problem — not the SDK.
+  if (process.env.NODE_ENV !== 'production') {
+    const p = (payload ?? {}) as Record<string, unknown>;
+    console.log('[gcp-state] forwarding keys', {
+      keys:             Object.keys(p),
+      hasPatternStory:  !!p.patternStory,
+      hasPriorPlan:     !!p.priorPlan,
+      hasGcpQuality:    !!p.gcpQuality,
+      hasTimeframeCtx:  !!p.timeframeContext,
+      hasPriorState:    !!p.priorState,
+    });
+  }
+
   const engine = getEngineClient();
   try {
     const result = await engine.classifyGcpState(payload);

@@ -320,6 +320,16 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       const result = await classifyGcpState(payload, { manual: force });
       if (result) {
         if (isDev()) console.log('[AI STATE] response', result);
+        // v12.0.1: detect stale-cache responses early. The proxy serves
+        // the warm LastClassificationCache on engine failure paths and
+        // marks the body with stale: true + staleReason. We still want
+        // the anchored result to reach setState (the UI should reflect
+        // the most recent known classification with the STALE badge in
+        // the Guru header) but we MUST NOT append it to aiStateHistory
+        // — otherwise repeated manual runs against a downed engine
+        // would stuff the state-flow ribbon with duplicate FAs / CSs.
+        const isStale = result.stale === true;
+
         // v11.26.1: structural anchor pass. The Engine prompt should
         // already cross-check against patternStory, but until that
         // server-side change deploys we enforce the same rules here:
@@ -327,6 +337,8 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         // discharge preference, and confidence ±10–20% based on
         // agreement. Anchor reads the SAME payload we just sent so
         // the story / divergence checks are coherent.
+        // v12.0.1: anchor runs on stale responses too — the raw cached
+        // body is the Engine's response, so it needs the same guard.
         const anchor = anchorAiState(result, payload);
         const anchored = anchor.response;
         if (isDev() && (anchor.overridden || anchor.delta !== 0)) {
@@ -372,12 +384,18 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           goldContext:  payload.goldContext,
           transition,
         });
+        // v12.0.1: carry the proxy's stale + _meta fields through onto
+        // the final response so the Guru header chip can render them.
         const finalResp: GcpStateResponse = {
           ...withTransition,
           longPressure:        pressure.longPressure,
           shortPressure:       pressure.shortPressure,
           pressureBand:        pressure.confidenceBand,
           pressureExplanation: pressure.explanation,
+          _meta:               result._meta,
+          stale:               result.stale,
+          staleReason:         result.staleReason,
+          staleAgeMs:          result.staleAgeMs,
         };
         if (isDev()) {
           console.log('[DIRECTIONAL PRESSURE]', {
@@ -387,41 +405,132 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             why:   pressure.explanation,
           });
         }
+
+        // v12.0.1: unified pipeline trace. One log entry per classification
+        // showing raw → anchored → final, plus the diagnostics that drove
+        // each transition. The single record makes it possible to spot
+        // FA regressions / payload drops / stale-cache loops in one
+        // scroll instead of stitching together 4 separate logs.
+        if (isDev()) {
+          console.log('[GURU PIPELINE]', {
+            symbol:    cur.symbol,
+            timeframe: cur.timeframe,
+            payloadPatternStory: payload.patternStory ?? null,
+            payloadMetrics: {
+              slope:     payload.metrics?.slope,
+              curvature: payload.metrics?.curvature,
+              ced:       payload.metrics?.ced,
+            },
+            rawEngine: {
+              stateCode:      result.stateCode,
+              state:          result.state,
+              confidence:     result.confidence,
+              reasoningShort: result.reasoningShort,
+            },
+            anchor: {
+              overridden: anchor.overridden,
+              reasons:    anchor.reasons,
+              from:       result.stateCode,
+              to:         anchored.stateCode,
+            },
+            final: {
+              stateCode:  finalResp.stateCode,
+              state:      finalResp.state,
+              confidence: finalResp.confidence,
+            },
+            nextLikelyState: finalResp.nextLikelyState ?? null,
+            directionalPressure: {
+              long:  pressure.longPressure,
+              short: pressure.shortPressure,
+              band:  pressure.confidenceBand,
+            },
+            stale: isStale,
+            meta:  result._meta ?? null,
+          });
+        }
+
+        // v12.0.1: FA GUARD VIOLATION sentinel. The anchor's FA hard
+        // guard must keep FA only when the story or divergence justifies
+        // it. If we ever see a final FA that fails all three checks,
+        // something has bypassed the guard — either the anchor logic
+        // changed, payload.patternStory was dropped in transit, or a
+        // future state-transition / pressure override slipped a raw FA
+        // back into the final. Loud-fail in the console so we catch it
+        // immediately. This should NEVER fire in normal operation.
+        if (finalResp.stateCode === 'FA') {
+          const story = payload.patternStory;
+          const dom   = story?.dom;
+          const div   =
+            (payload.metrics?.slope ??  0) >  0.10 && payload.goldContext?.trend === 'down' ||
+            (payload.metrics?.slope ??  0) < -0.10 && payload.goldContext?.trend === 'up';
+          const justified =
+            story?.state === 'Failed alignment' ||
+            dom          === 'FA' ||
+            div;
+          if (!justified) {
+            console.warn('[FA GUARD VIOLATION] final stateCode is FA but story / dom / divergence do not justify it. This should never happen.', {
+              storyState:  story?.state ?? null,
+              dom:         dom ?? null,
+              slope:       payload.metrics?.slope ?? null,
+              goldTrend:   payload.goldContext?.trend ?? null,
+              rawEngine:   result.stateCode,
+              anchored:    anchored.stateCode,
+              final:       finalResp.stateCode,
+              overridden:  anchor.overridden,
+              reasons:     anchor.reasons,
+              stale:       isStale,
+            });
+          }
+        }
+
         setState(finalResp);
         setLastSuccessAt(new Date());
         setAiStatus('success');
         if (isDev()) console.log('[AI UI] run success');
         resolved = true;
-        // v11.20: append the successful classification to the local
-        // history ledger so the Research → By AI State view can
-        // correlate it against subsequent price moves. Only the
-        // success path records — failed/error responses are skipped.
-        // v11.26.1: history records the ANCHORED classification so
-        // Research statistics reflect what the user actually saw.
-        const lastSeries = cur.series[cur.series.length - 1];
-        appendAiStateHistory({
-          timestamp:       Date.now(),
-          symbol:          cur.symbol,
-          timeframe:       cur.timeframe,
-          state:           anchored.state,
-          stateCode:       anchored.stateCode,
-          phase:           anchored.phase,
-          direction:       anchored.direction,
-          confidence:      anchored.confidence,
-          marketBias:      anchored.marketBias,
-          regime:          cur.regime.code,
-          netVariance:     lastSeries ? lastSeries.v : 0,
-          patternCode:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode,
-          patternName:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternName,
-          pss:             cur.recentPatterns[cur.recentPatterns.length - 1]?.pss,
-          priceAtAnalysis: cur.priceAtAnalysis ?? null,
-          // v11.36: snapshot directional pressure alongside the anchored
-          // classification so future research can correlate environment
-          // bias % with actual price moves.
-          longPressure:    pressure.longPressure,
-          shortPressure:   pressure.shortPressure,
-          pressureBand:    pressure.confidenceBand,
-        });
+
+        // v12.0.1: skip aiStateHistory writes for stale responses. The
+        // cached classification was already recorded when it was fresh;
+        // re-appending it on every fallback would pollute the state
+        // flow ribbon with N copies of the same row, exactly the
+        // "Guru is showing FA forever" symptom we're trying to kill.
+        // Stale still updates setState (so the UI shows the badge) and
+        // still runs the full pipeline trace + FA guard.
+        if (isStale) {
+          if (isDev()) console.log('[AI HISTORY] skipped — stale response');
+        } else {
+          // v11.20: append the successful classification to the local
+          // history ledger so the Research → By AI State view can
+          // correlate it against subsequent price moves. Only the
+          // success path records — failed/error/stale responses are
+          // skipped.
+          // v11.26.1: history records the ANCHORED classification so
+          // Research statistics reflect what the user actually saw.
+          const lastSeries = cur.series[cur.series.length - 1];
+          appendAiStateHistory({
+            timestamp:       Date.now(),
+            symbol:          cur.symbol,
+            timeframe:       cur.timeframe,
+            state:           anchored.state,
+            stateCode:       anchored.stateCode,
+            phase:           anchored.phase,
+            direction:       anchored.direction,
+            confidence:      anchored.confidence,
+            marketBias:      anchored.marketBias,
+            regime:          cur.regime.code,
+            netVariance:     lastSeries ? lastSeries.v : 0,
+            patternCode:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode,
+            patternName:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternName,
+            pss:             cur.recentPatterns[cur.recentPatterns.length - 1]?.pss,
+            priceAtAnalysis: cur.priceAtAnalysis ?? null,
+            // v11.36: snapshot directional pressure alongside the anchored
+            // classification so future research can correlate environment
+            // bias % with actual price moves.
+            longPressure:    pressure.longPressure,
+            shortPressure:   pressure.shortPressure,
+            pressureBand:    pressure.confidenceBand,
+          });
+        }
       } else {
         if (isDev()) console.log('[AI STATE] error, keeping last state');
         setLastErrorAt(new Date());
