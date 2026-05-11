@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { C } from '../colors';
 import { MobileStatus } from '../MobileChrome';
 import { APP_VERSION } from '@/lib/version';
-import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { GcpStateResponse, ClassifyErrorEnvelope } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from '../../Heartbeat';
@@ -60,7 +60,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 
 export function SettingsScreen({
   liveNV, liveRegime, connected, settings, updateSetting, seriesLength,
-  aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
+  aiState, aiEnabled, aiLastSuccess, aiLastError, aiLastErrorEnvelope = null, aiNextPollAt,
   aiIntervalSec, aiStatus, aiRunNow,
   gcpLastUpdate, gcpNextPollAt, gcpQuality,
 }: {
@@ -71,6 +71,7 @@ export function SettingsScreen({
   aiEnabled:     boolean;
   aiLastSuccess: Date | null;
   aiLastError:   Date | null;
+  aiLastErrorEnvelope?: ClassifyErrorEnvelope | null;
   aiNextPollAt:  Date | null;
   aiIntervalSec: AiAnalysisInterval;
   aiStatus:      AiStatus;
@@ -412,7 +413,7 @@ export function SettingsScreen({
             screen. Polls /api/engine-status every 60s. */}
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6, marginTop: 16 }}>ENGINE INTEGRATION</div>
         <div style={{ marginBottom: 16 }}>
-          <EngineDiagnostics />
+          <EngineDiagnostics aiLastError={aiLastErrorEnvelope} />
         </div>
 
         <div style={{ fontSize: 8, letterSpacing: '0.18em', color: C.fg3, marginBottom: 6 }}>SYSTEM</div>

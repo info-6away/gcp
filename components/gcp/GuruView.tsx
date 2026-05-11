@@ -26,7 +26,7 @@
 // planMemory.
 
 import { useEffect, useMemo, useState } from 'react';
-import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { GcpStateResponse, ClassifyErrorEnvelope } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import type { Pattern, MarketSymbol } from '@/types/gcp';
 import { formatPrice } from '@/types/gcp';
@@ -52,6 +52,12 @@ interface GuruViewProps {
   aiStatus:           AiStatus;
   aiRunNow:           () => void;
   aiLastSuccess:      Date | null;
+  // v12.0.3: typed proxy error envelope (null on success). When the
+  // last classification failed, the header shows a meaningful copy:
+  //   - "ENGINE OFFLINE — Using last known Guru state" (we still have
+  //     a prior aiState to render)
+  //   - "Guru request failed" (no prior state to fall back to)
+  aiLastError?:       ClassifyErrorEnvelope | null;
   latestPattern:      Pattern | null;
   planStructure:      StructureRead;
   planAnalysisCandle: Candle | null;
@@ -96,6 +102,7 @@ function useTick(intervalMs: number = 1000): number {
 
 function GuruHeader({
   aiState, aiStatus, aiLastSuccess, aiEnabled, aiRunNow,
+  aiLastError = null,
   regime = null, netVariance = null,
 }: {
   aiState:        GcpStateResponse | null;
@@ -103,6 +110,7 @@ function GuruHeader({
   aiLastSuccess:  Date | null;
   aiEnabled:      boolean;
   aiRunNow:       () => void;
+  aiLastError?:   ClassifyErrorEnvelope | null;
   regime?:        string | null;
   netVariance?:   number | null;
 }) {
@@ -120,12 +128,19 @@ function GuruHeader({
 
   // Status verb maps to the state machine but with friendlier wording
   // for a "thinking out loud" feel.
-  // v12.0.2: explicit "Guru request failed" copy when the Engine call
-  // errored — matches the [GURU RUN ERROR] console log so the user
-  // and the developer see the same failure label.
+  // v12.0.2/3: error copy distinguishes:
+  //   • ENGINE OFFLINE — typed proxy error AND we still have a prior
+  //     classification on screen (aiState present). Communicates that
+  //     the displayed read is held-over, not freshly classified.
+  //   • Guru request failed — typed proxy error and no prior state to
+  //     fall back to, or unknown failure shape.
+  // Pre-v12.0.3 every error showed the same label.
+  const errorVerb = aiState
+    ? 'ENGINE OFFLINE — Using last known Guru state'
+    : 'Guru request failed';
   const statusVerb =
     aiStatus === 'running' ? 'Asking…'
-  : aiStatus === 'error'   ? 'Guru request failed'
+  : aiStatus === 'error'   ? errorVerb
   : aiState                 ? 'Watching'
   :                            'Idle';
   const statusColor =
@@ -366,6 +381,38 @@ function GuruHeader({
               color: 'var(--fg-2)',
               fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
             }}>{lastUpdateLabel}</span>
+          </div>
+        )}
+
+        {/* v12.0.3: structured proxy error chip. When aiLastError is
+            present, show the typed error class + HTTP status so the
+            user can distinguish "engine_forbidden 403" from
+            "engine_unavailable 502" without opening the console.
+            Hidden when the last call succeeded (lastError cleared). */}
+        {aiLastError && (
+          <div style={{
+            marginTop: 4,
+            display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em', color: 'var(--red)',
+          }}>
+            <span style={{
+              padding: '1px 6px',
+              background: 'rgba(196,90,90,0.12)',
+              border: '1px solid #c45a5a55',
+              color: '#c45a5a',
+              borderRadius: 2,
+              fontWeight: 700, letterSpacing: '0.12em',
+            }}>
+              {aiLastError.error.type.toUpperCase()}
+              {aiLastError.error.status != null ? ` · ${aiLastError.error.status}` : ''}
+            </span>
+            <span style={{
+              color: 'var(--fg-3)', letterSpacing: 0,
+              fontStyle: 'italic',
+            }}>
+              {aiLastError.error.message}
+            </span>
           </div>
         )}
 
@@ -1161,6 +1208,7 @@ export default function GuruView(props: GuruViewProps) {
           aiLastSuccess={props.aiLastSuccess}
           aiEnabled={props.aiEnabled}
           aiRunNow={props.aiRunNow}
+          aiLastError={props.aiLastError ?? null}
           regime={props.regime ?? null}
           netVariance={props.netVariance ?? null}
         />

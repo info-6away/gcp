@@ -179,10 +179,42 @@ export type GcpStateResponse = {
   staleAgeMs?:   number;
 };
 
+// v12.0.3 — structured error envelope mirrored from /api/gcp-state.
+// classifyGcpState now returns either a successful response, an error
+// envelope (proxy was reachable but refused or the SDK threw), or null
+// (network-level abort / parse failure with no body to report).
+export interface ClassifyErrorEnvelope {
+  ok: false;
+  error: {
+    type:
+      | 'manual_required'
+      | 'bad_request'
+      | 'engine_unavailable'
+      | 'engine_forbidden'
+      | 'budget_exceeded'
+      | 'rate_limited'
+      | 'route_missing'
+      | 'provider_unavailable'
+      | 'config_missing'
+      | 'unknown_error';
+    message:  string;
+    status:   number | null;
+    provider: string | null;
+    model:    string | null;
+  };
+  httpStatus: number;
+}
+
+export type ClassifyResult = GcpStateResponse | ClassifyErrorEnvelope | null;
+
+export function isClassifyError(r: ClassifyResult): r is ClassifyErrorEnvelope {
+  return !!r && typeof r === 'object' && (r as { ok?: unknown }).ok === false;
+}
+
 export async function classifyGcpState(
   payload: GcpStatePayload,
   opts: { manual?: boolean } = {},
-): Promise<GcpStateResponse | null> {
+): Promise<ClassifyResult> {
   // v11.18.5: server-side kill switch. The proxy refuses any request
   // that doesn't explicitly mark itself as a manual run, so the LLM
   // is never invoked unless the user clicked RUN AI ANALYSIS. Stale
@@ -224,13 +256,28 @@ export async function classifyGcpState(
       // envelope rather than the client aborting first and discarding it.
       signal:  AbortSignal.timeout(40_000),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
+    const data = (await res.json().catch(() => null)) as unknown;
     if (!data || typeof data !== 'object') return null;
-    // v11.14a: the proxy returns { ok: false, error } envelopes on
-    // failure paths. Recognise the envelope shape and treat it as
-    // null even if it arrives with a 2xx status.
-    if ((data as { ok?: boolean }).ok === false) return null;
+    // v12.0.3: structured error envelope. Proxy returns
+    // `{ ok: false, error: { type, message, status, provider, model } }`
+    // on every failure path (manual_required, engine_forbidden,
+    // engine_unavailable, etc.). Pass it through verbatim so the caller
+    // can branch on error.type for UI copy + telemetry.
+    if ((data as { ok?: boolean }).ok === false) {
+      const env = data as Partial<ClassifyErrorEnvelope>;
+      return {
+        ok: false,
+        error: {
+          type:     env.error?.type     ?? 'unknown_error',
+          message:  env.error?.message  ?? 'Engine call failed.',
+          status:   env.error?.status   ?? null,
+          provider: env.error?.provider ?? null,
+          model:    env.error?.model    ?? null,
+        },
+        httpStatus: res.status,
+      };
+    }
+    if (!res.ok) return null;
     return data as GcpStateResponse;
   } catch {
     return null;

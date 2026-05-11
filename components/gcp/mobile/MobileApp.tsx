@@ -13,7 +13,7 @@ import { TradeScreen }     from './screens/TradeScreen';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GoldState } from '@/lib/useGoldData';
-import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { GcpStateResponse, ClassifyErrorEnvelope } from '@/lib/engine-gcp';
 import type { AiAnalysisInterval } from '@/lib/aiAnalysisInterval';
 import type { AiStatus } from '@/lib/useGcpState';
 import type { StructureRead } from '@/lib/priceStructure';
@@ -57,6 +57,8 @@ interface MobileAppProps {
   aiEnabled:       boolean;
   aiLastSuccess:   Date | null;
   aiLastError:     Date | null;
+  // v12.0.3: structured envelope of the last proxy failure.
+  aiLastErrorEnvelope?: ClassifyErrorEnvelope | null;
   aiNextPollAt:    Date | null;
   aiIntervalSec:   AiAnalysisInterval;
   aiStatus:        AiStatus;
@@ -69,7 +71,7 @@ interface MobileAppProps {
 export default function MobileApp({
   gcpData, baseSeries, displayPatterns, goldData, symbol, setSymbol,
   timeframe, setTimeframe,
-  aiState, aiEnabled, aiLastSuccess, aiLastError, aiNextPollAt,
+  aiState, aiEnabled, aiLastSuccess, aiLastError, aiLastErrorEnvelope = null, aiNextPollAt,
   aiIntervalSec, aiStatus, aiRunNow, planStructure, planAnalysisCandle,
   gcpQuality,
 }: MobileAppProps) {
@@ -193,6 +195,7 @@ export default function MobileApp({
           seriesLength={baseSeries.length}
           aiLastSuccess={aiLastSuccess}
           aiLastError={aiLastError}
+          aiLastErrorEnvelope={aiLastErrorEnvelope}
           aiNextPollAt={aiNextPollAt}
           aiIntervalSec={aiIntervalSec}
           aiStatus={aiStatus}

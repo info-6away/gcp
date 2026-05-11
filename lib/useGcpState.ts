@@ -45,7 +45,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  classifyGcpState, type GcpStateResponse,
+  classifyGcpState, isClassifyError,
+  type GcpStateResponse, type ClassifyErrorEnvelope,
 } from '@/lib/engine-gcp';
 import {
   buildGcpStatePayload, type GcpStateInputs,
@@ -101,6 +102,11 @@ export interface UseGcpStateResult {
   // boolean so the UI can render distinct idle / analyzing / success /
   // error views instead of inferring "analyzing" from a null state.
   aiStatus:      AiStatus;
+  // v12.0.3: last structured proxy error. null when last attempt
+  // succeeded; populated otherwise so the UI can distinguish
+  // "ENGINE OFFLINE — using last known Guru state" from a generic
+  // "Guru request failed".
+  lastError:     ClassifyErrorEnvelope | null;
   runNow:        () => void;
 }
 
@@ -150,6 +156,9 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
   // mode never spontaneously flips this to 'running'; only an actual
   // runCall() that survives the gating checks does.
   const [aiStatus, setAiStatus]           = useState<AiStatus>('idle');
+  // v12.0.3: last structured failure envelope. Cleared on every
+  // successful classification, populated on every typed proxy error.
+  const [lastError, setLastError]         = useState<ClassifyErrorEnvelope | null>(null);
 
   const inputsRef            = useRef<GcpStateInputs | null>(inputs);
   const stateRef             = useRef<GcpStateResponse | null>(null);
@@ -366,8 +375,34 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
       // user-triggered run. The proxy's server-side kill switch refuses
       // any non-manual call with `manual_required` so even stale auto
       // loops can't reach the LLM.
-      const result = await classifyGcpState(payload, { manual: force });
+      const rawResult = await classifyGcpState(payload, { manual: force });
+
+      // v12.0.3: branch on structured error envelope BEFORE the success
+      // path. The proxy now returns `{ ok: false, error: { type, ... } }`
+      // for every non-2xx + manual_required path. Surface it to the
+      // UI as an error state with the typed envelope attached.
+      if (isClassifyError(rawResult)) {
+        console.warn('[GURU RUN ERROR]', {
+          symbol:    cur.symbol,
+          timeframe: cur.timeframe,
+          force,
+          reason:    'proxy_error_envelope',
+          message:   rawResult.error.message,
+          type:      rawResult.error.type,
+          status:    rawResult.error.status,
+          httpStatus: rawResult.httpStatus,
+        });
+        setLastError(rawResult);
+        setLastErrorAt(new Date());
+        setAiStatus('error');
+        resolved = true;
+        return;
+      }
+
+      const result = rawResult;
       if (result) {
+        // Successful classification — clear any prior error envelope.
+        setLastError(null);
         if (isDev()) console.log('[AI STATE] response', result);
         // v12.0.1: detect stale-cache responses early. The proxy serves
         // the warm LastClassificationCache on engine failure paths and
@@ -659,6 +694,6 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
 
   return {
     state, enabled, lastSuccessAt, lastErrorAt, nextPollAt,
-    intervalSec, aiStatus, runNow,
+    intervalSec, aiStatus, lastError, runNow,
   };
 }

@@ -20,6 +20,7 @@
 //     the 60s background tick.
 
 import { useEngineDiagnostics } from '@/lib/useEngineDiagnostics';
+import type { ClassifyErrorEnvelope } from '@/lib/engine-gcp';
 
 function formatAge(ms: number | null): string {
   if (ms == null) return '—';
@@ -72,7 +73,16 @@ function Row({ label, value, tone = 'default' }: {
   );
 }
 
-export default function EngineDiagnostics() {
+export default function EngineDiagnostics({
+  aiLastError = null,
+}: {
+  /** v12.0.3: structured proxy error from the most recent
+   *  /api/gcp-state call. When present, the diagnostics panel
+   *  surfaces an ENGINE STATUS row at the top — distinct from the
+   *  /v1/status reachability check, this is the last failed
+   *  classification call. */
+  aiLastError?: ClassifyErrorEnvelope | null;
+} = {}) {
   const { envelope, loading, fetchError, lastFetchedAt, refresh } =
     useEngineDiagnostics({ pollIntervalMs: 60_000, fetchOnMount: true });
 
@@ -164,6 +174,75 @@ export default function EngineDiagnostics() {
           {loading ? 'REFRESHING…' : 'REFRESH'}
         </button>
       </div>
+
+      {/* v12.0.3: ENGINE STATUS row — last /api/gcp-state proxy outcome.
+          Distinct from the /v1/status panel above; this is the last
+          actual classification call's success/failure. Pulled from
+          useGcpState.lastError when the parent passes it in. */}
+      {aiLastError && (
+        <div style={{
+          marginBottom: 8, padding: '8px 10px',
+          background: 'rgba(196,90,90,0.08)',
+          border: '1px solid #c45a5a55',
+          borderLeft: '2px solid #c45a5a',
+          borderRadius: 3,
+        }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            alignItems: 'baseline', marginBottom: 4, gap: 8,
+          }}>
+            <span style={{
+              fontSize: 9, letterSpacing: '0.18em',
+              color: 'var(--fg-4)', fontWeight: 600,
+              textTransform: 'uppercase',
+            }}>
+              Engine status
+            </span>
+            <span style={{
+              fontSize: 11, color: '#c45a5a',
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+            }}>
+              {aiLastError.error.status != null
+                ? `${aiLastError.error.status}`
+                : aiLastError.httpStatus}
+              {' · '}
+              {aiLastError.error.type.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div style={{
+            fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45,
+          }}>
+            {aiLastError.error.message}
+          </div>
+          {/* Operator hints keyed off the typed error class. */}
+          {aiLastError.error.type === 'manual_required' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              Background auto-loop calls are blocked by design. Click RUN AI ANALYSIS to fire a deliberate Engine call.
+            </div>
+          )}
+          {aiLastError.error.type === 'engine_forbidden' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              Auth / config issue — check ENGINE_API_KEY value, header name (X-API-Key), and Engine route auth.
+            </div>
+          )}
+          {aiLastError.error.type === 'config_missing' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              Server-side env missing — set ENGINE_BASE_URL + ENGINE_API_KEY in the Vercel project.
+            </div>
+          )}
+          {aiLastError.error.type === 'budget_exceeded' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              Workspace budget cap reached. Top up or adjust on the Engine admin.
+            </div>
+          )}
+          {aiLastError.error.type === 'route_missing' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              No active routing rule for gcp_state on this workspace. Configure one on the Engine.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Config / capability rows */}
       <Row

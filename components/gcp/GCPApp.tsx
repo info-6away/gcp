@@ -497,6 +497,7 @@ export default function GCPApp() {
         aiEnabled={aiState.enabled}
         aiLastSuccess={aiState.lastSuccessAt}
         aiLastError={aiState.lastErrorAt}
+        aiLastErrorEnvelope={aiState.lastError}
         aiNextPollAt={aiState.nextPollAt}
         aiIntervalSec={aiState.intervalSec}
         aiStatus={aiState.aiStatus}
@@ -563,6 +564,7 @@ export default function GCPApp() {
               aiStatus={aiState.aiStatus}
               aiRunNow={aiState.runNow}
               aiLastSuccess={aiState.lastSuccessAt}
+              aiLastError={aiState.lastError}
               latestPattern={latestPattern}
               planStructure={planStructure}
               planAnalysisCandle={planAnalysisCandle}
@@ -656,6 +658,7 @@ export default function GCPApp() {
               aiState={aiState.state}
               aiLastSuccess={aiState.lastSuccessAt}
               aiLastError={aiState.lastErrorAt}
+              aiLastErrorEnvelope={aiState.lastError}
               aiNextPollAt={aiState.nextPollAt}
               aiIntervalSec={aiState.intervalSec}
               aiStatus={aiState.aiStatus}

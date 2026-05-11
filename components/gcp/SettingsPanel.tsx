@@ -13,7 +13,7 @@ import { PSS_THRESHOLD } from '@/lib/usePSSAlert';
 // user's tuning choice.
 import type { MarketSymbol, Timeframe } from '@/types/gcp';
 import { symbolEnvLabel } from '@/types/gcp';
-import type { GcpStateResponse } from '@/lib/engine-gcp';
+import type { GcpStateResponse, ClassifyErrorEnvelope } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import { useCountdown } from '@/lib/useCountdown';
 import Heartbeat, { type HeartbeatMode } from './Heartbeat';
@@ -41,6 +41,10 @@ interface SettingsPanelProps {
   aiState:          GcpStateResponse | null;
   aiLastSuccess:    Date | null;
   aiLastError:      Date | null;
+  // v12.0.3: structured envelope of the last proxy failure (typed
+  // engine_forbidden / engine_unavailable / etc.). Surfaced inside
+  // the Engine Integration section as an ENGINE STATUS row.
+  aiLastErrorEnvelope?: ClassifyErrorEnvelope | null;
   aiNextPollAt:     Date | null;
   aiIntervalSec:    AiAnalysisInterval;
   aiStatus:         AiStatus;
@@ -504,7 +508,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             between the AI Engine section and Preferences. Polls
             /api/engine-status every 60s; click REFRESH for off-cycle. */}
         <Section title="Engine Integration">
-          <EngineDiagnostics />
+          <EngineDiagnostics aiLastError={props.aiLastErrorEnvelope ?? null} />
         </Section>
 
         <Section title="Preferences">
