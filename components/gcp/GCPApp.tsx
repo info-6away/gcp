@@ -204,6 +204,14 @@ export default function GCPApp() {
   const planMemoryPlanId     = planMemoryPlan?.id;
   const planMemoryPlanStatus = planMemoryPlan?.status;
 
+  // v13.1: hoisted above aiStateInputs so the structural dominance
+  // overlay (run inside useGcpState) can read HH+HL / LH+LL structure
+  // from real candles. The same planStructure / planCandles values
+  // are reused by tradePlan derivation lower in the file — no double
+  // fetch, the useRecentCandles hook deduplicates.
+  const planCandles      = useRecentCandles(symbol, AI_ANALYSIS_TF, 50);
+  const planStructure    = useMemo(() => readPriceStructure(planCandles), [planCandles]);
+
   const aiStateInputs = useMemo<GcpStateInputs | null>(() => {
     if (!baseSeries.length) return null;
     const last = baseSeries[baseSeries.length - 1];
@@ -313,6 +321,13 @@ export default function GCPApp() {
       // align with the same local pattern interpretation the user
       // sees on the Patterns tab.
       patternStory: compactStory,
+      // v13.1: local price-structure read (HH+HL / LH+LL / Range /
+      // Unclear) from real 15m candles. Local-only — the payload
+      // builder strips this before forwarding to the Engine; it's
+      // consumed by deriveStructuralDominance() inside useGcpState
+      // to apply contradiction penalties + sanity guard against
+      // unrealistic directional pressure.
+      priceStructure: planStructure,
     };
   }, [
     baseSeries[baseSeries.length - 1]?.t,
@@ -326,6 +341,7 @@ export default function GCPApp() {
     displayPatterns[displayPatterns.length - 1]?.id,
     goldData.price,
     gcpQuality,
+    planStructure,
   ]);
 
   // v11.14b: connection meta is surfaced into Settings so the user can
@@ -337,12 +353,10 @@ export default function GCPApp() {
   const aiState     = useGcpState(aiStateInputs);
   const stableState = useStableAiState(aiState.state);
 
-  // v11.22: Trade Plan candles. Structure is read on the AI's analysis
-  // timeframe (15 m) so the plan and the AI signal are scaled the same
-  // way. 50 candles ≈ 12 h of context — plenty to spot HH/HL or LH/LL
-  // swings without a heavy fetch.
-  const planCandles       = useRecentCandles(symbol, AI_ANALYSIS_TF, 50);
-  const planStructure     = useMemo(() => readPriceStructure(planCandles), [planCandles]);
+  // v13.1: planCandles / planStructure now hoisted above aiStateInputs
+  // (search for "hoisted above aiStateInputs"). Re-using the same
+  // refs below would shadow them; the trade plan section below reads
+  // the hoisted values directly.
   // v11.22.1: anchor the trade plan to the most recent candle's OHLC
   // and surface the current live price for distance-from-analysis.
   const planAnalysisCandle = planCandles.length ? planCandles[planCandles.length - 1] : null;

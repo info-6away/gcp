@@ -59,6 +59,10 @@ import {
   deriveEnvironmentRisk, deriveHistoricalAnalog, deriveThesisIntegrity,
 } from '@/lib/executionIntelligence';
 import {
+  dominanceColor, dominanceLabel,
+  type StructuralDominance,
+} from '@/lib/structuralDominance';
+import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
@@ -1086,6 +1090,37 @@ function PressureGauge({ aiState }: { aiState: GcpStateResponse | null }) {
           fontStyle: 'italic', marginTop: 2,
         }}>
           {aiState.pressureExplanation}
+        </div>
+      )}
+
+      {/* v13.1: STRUCTURE line — local structural dominance read
+          surfaced as a small muted row. Distinct from pressure: pressure
+          is the coherence-level tendency, structure is the actual price
+          control. When the two disagree the dominance label tells the
+          user "the chart is bearish even though pressure leans long".
+          Hidden when no dominance has been derived yet (first render
+          before any classification). */}
+      {aiState?.structureDominance && (
+        <div style={{
+          marginTop: 4, display: 'flex', alignItems: 'baseline', gap: 8,
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.06em', color: 'var(--fg-4)',
+        }}>
+          <span style={{ letterSpacing: '0.16em' }}>STRUCTURE</span>
+          <span style={{
+            color: dominanceColor(aiState.structureDominance as StructuralDominance),
+            fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            {dominanceLabel(aiState.structureDominance as StructuralDominance)}
+          </span>
+          {typeof aiState.structureScore === 'number' && (
+            <span style={{
+              color: 'var(--fg-4)', fontVariantNumeric: 'tabular-nums',
+              fontSize: 9,
+            }}>
+              · score {aiState.structureScore >= 0 ? '+' : ''}{aiState.structureScore}
+            </span>
+          )}
         </div>
       )}
 

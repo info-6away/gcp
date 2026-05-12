@@ -41,6 +41,10 @@ import { deriveTradePlan, type TradePlan } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { ladderColor, ladderLabel, type LadderState } from '@/lib/stateTransition';
 import { deriveStance, type GuruStance } from '@/lib/guruStance';
+import {
+  dominanceColor, dominanceLabel,
+  type StructuralDominance,
+} from '@/lib/structuralDominance';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
 
@@ -313,6 +317,7 @@ function GuruHeader({
             has attached pressure values. */}
         {aiState?.longPressure != null && aiState?.shortPressure != null && (
           <DirectionalPressureBlock
+            structureDominance={aiState.structureDominance}
             longPct={aiState.longPressure}
             shortPct={aiState.shortPressure}
             band={aiState.pressureBand ?? 'weak'}
@@ -591,11 +596,16 @@ function StanceRow({
 
 function DirectionalPressureBlock({
   longPct, shortPct, band, explanation,
+  // v13.1: optional structural dominance label, rendered as a tiny
+  // muted row under the explanation when present. Subtle on purpose —
+  // the Guru tab is for environment reads, not execution density.
+  structureDominance,
 }: {
   longPct:     number;
   shortPct:    number;
   band:        'weak' | 'moderate' | 'strong';
   explanation: string;
+  structureDominance?: GcpStateResponse['structureDominance'];
 }) {
   const longColor   = '#4dd9e8';        // cyan, matches existing accent
   const shortColor  = '#c45a5a';        // muted red, not screaming
@@ -671,6 +681,25 @@ function DirectionalPressureBlock({
           fontStyle: 'italic', lineHeight: 1.45,
         }}>
           {explanation}
+        </div>
+      )}
+
+      {/* v13.1: STRUCTURE line — local structural dominance read.
+          Subtle, single muted row, never overpowers the gauge. Hidden
+          when no dominance has been derived yet. */}
+      {structureDominance && (
+        <div style={{
+          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 6,
+          fontSize: 9, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.06em', color: 'var(--fg-4)',
+        }}>
+          <span style={{ letterSpacing: '0.16em' }}>STRUCTURE</span>
+          <span style={{
+            color: dominanceColor(structureDominance as StructuralDominance),
+            fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            {dominanceLabel(structureDominance as StructuralDominance)}
+          </span>
         </div>
       )}
     </div>

@@ -192,6 +192,16 @@ export type GcpStateResponse = {
     | 'config_missing'
     | 'unknown_error';
   staleAgeMs?:   number;
+
+  // v13.1: structural dominance correction layer. Attached locally by
+  // deriveStructuralDominance() AFTER plateau + decay overlays.
+  // Distinct from directional pressure (which is the coherence-level
+  // tendency) — this represents actual price-control structure read
+  // from HH+HL / LH+LL / FA chain / slope. The UI shows it as a small
+  // "STRUCTURE" line under the pressure gauge.
+  structureDominance?:    'bullish' | 'bearish' | 'neutral' | 'fragile_bullish' | 'fragile_bearish';
+  structureScore?:        number;        // -100..+100
+  structureReasons?:      string[];
 };
 
 // v12.0.3 — structured error envelope mirrored from /api/gcp-state.

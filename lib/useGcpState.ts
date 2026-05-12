@@ -62,6 +62,8 @@ import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
 import { derivePlateauStateOverlay } from '@/lib/plateauState';
 import { deriveDirectionalDecayOverlay } from '@/lib/directionalDecay';
+import { deriveStructuralDominance } from '@/lib/structuralDominance';
+import { loadAiStateHistory } from '@/lib/aiStateHistory';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -603,18 +605,18 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           previousConfidence: payload.priorState?.confidence ?? null,
           latestPatternCode,
         });
-        const finalResp: GcpStateResponse = decay.response;
+        const respAfterDecay: GcpStateResponse = decay.response;
         const wasDecayCandidate = respAfterPlateau.stateCode === 'CS'
                                || respAfterPlateau.stateCode === 'SS';
         if (isDev() && wasDecayCandidate) {
           console.log('[DIRECTIONAL DECAY]', {
             upgraded: decay.upgraded,
             from:     respAfterPlateau.stateCode,
-            to:       finalResp.stateCode,
+            to:       respAfterDecay.stateCode,
             reasons:  decay.reasons,
             pressure: {
-              long:  finalResp.longPressure,
-              short: finalResp.shortPressure,
+              long:  respAfterDecay.longPressure,
+              short: respAfterDecay.shortPressure,
             },
             slope:     payload.metrics?.slope,
             goldTrend: payload.goldContext?.trend,
@@ -622,6 +624,54 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             regime:    cur.regime.code,
             pattern:   latestPatternCode,
           });
+        }
+
+        // v13.1: structural dominance layer. Local correction pass
+        // that prevents directional pressure from drifting unrealistically
+        // bullish/bearish when the price structure (HH+HL / LH+LL /
+        // FA chain / slope sign) clearly disagrees. Reads the same
+        // post-decay pressure values, returns adjusted values + a
+        // dominance label + the score + the reasons array.
+        const recentHistoryForDominance = loadAiStateHistory()
+          .filter(r => r.symbol === cur.symbol)
+          .sort((a, b) => b.timestamp - a.timestamp)
+          .slice(0, 10);
+        const dominance = deriveStructuralDominance({
+          aiState:        respAfterDecay,
+          priceStructure: cur.priceStructure,
+          metrics:        payload.metrics,
+          goldTrend:      payload.goldContext?.trend ?? 'unknown',
+          recentHistory:  recentHistoryForDominance,
+          latestPatternCode,
+          currentPressure: {
+            long:  respAfterDecay.longPressure  ?? 50,
+            short: respAfterDecay.shortPressure ?? 50,
+          },
+        });
+        const finalResp: GcpStateResponse = {
+          ...respAfterDecay,
+          longPressure:       dominance.adjustedLong,
+          shortPressure:      dominance.adjustedShort,
+          structureDominance: dominance.dominance,
+          structureScore:     dominance.score,
+          structureReasons:   dominance.reasons,
+        };
+        if (isDev()) {
+          const changed = dominance.adjustedLong  !== dominance.preLong
+                       || dominance.adjustedShort !== dominance.preShort;
+          // Only log when something actually changed OR a non-neutral
+          // dominance was detected. Keeps the console clean on quiet
+          // classifications.
+          if (changed || dominance.dominance !== 'neutral') {
+            console.log('[STRUCTURAL DOMINANCE]', {
+              dominance: dominance.dominance,
+              score:     dominance.score,
+              reasons:   dominance.reasons,
+              before:    { long: dominance.preLong, short: dominance.preShort },
+              after:     { long: dominance.adjustedLong, short: dominance.adjustedShort },
+              structure: cur.priceStructure?.structure ?? null,
+            });
+          }
         }
 
         // v12.0.1: unified pipeline trace. One log entry per classification
@@ -669,6 +719,15 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
               upgraded: decay.upgraded,
               reasons:  decay.reasons,
             } : null,
+            // v13.1: structural dominance summary. Always present
+            // since the overlay runs unconditionally; reasons[] can
+            // be empty when there's nothing structural to say.
+            structuralDominance: {
+              dominance: dominance.dominance,
+              score:     dominance.score,
+              before:    { long: dominance.preLong,      short: dominance.preShort },
+              after:     { long: dominance.adjustedLong, short: dominance.adjustedShort },
+            },
             nextLikelyState: finalResp.nextLikelyState ?? null,
             directionalPressure: {
               long:  pressure.longPressure,

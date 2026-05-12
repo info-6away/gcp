@@ -108,6 +108,20 @@ export interface GcpStateInputs {
     dom?:     string;
     posture:  string;
   };
+
+  // v13.1: price structure read (HH+HL / LH+LL / Range / Unclear)
+  // computed from real candles in priceStructure.ts. Local-only —
+  // buildGcpStatePayload IGNORES this field; it never ships to the
+  // Engine. Used by deriveStructuralDominance() after the pressure /
+  // plateau / decay overlays to apply contradiction penalties.
+  priceStructure?: {
+    structure:        'Bullish' | 'Bearish' | 'Range' | 'Unclear';
+    recentSwingHigh:  number | null;
+    recentSwingLow:   number | null;
+    rangeHigh:        number | null;
+    rangeLow:         number | null;
+    confidence:       number;
+  };
 }
 
 export const ENGINE_MIN_SERIES = 10;
@@ -196,5 +210,8 @@ export function buildGcpStatePayload(
     priorPlan: inputs.priorPlan,
     // v11.26: forward the compact pattern story untouched.
     patternStory: inputs.patternStory,
+    // v13.1: priceStructure is intentionally NOT forwarded to the
+    // Engine — it's a local-only signal consumed by
+    // deriveStructuralDominance() inside useGcpState.
   };
 }
