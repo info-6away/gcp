@@ -27,7 +27,6 @@ import PatternDetail from './PatternDetail';
 import SettingsPanel from './SettingsPanel';
 import ChartView from './ChartView';
 import ResearchView from './ResearchView';
-import TradingView from './TradingView';
 import TradePanel from './TradePanel';
 import { derivePosture } from '@/lib/aiAction';
 import { deriveTradePlan } from '@/lib/tradePlan';
@@ -610,33 +609,26 @@ export default function GCPApp() {
             // pattern, and trade plan are computed here so the panel
             // can snapshot the full context the moment the user opens
             // a trade. Pure local — no broker, no orders.
-            // v11.33: TRD → TRADE rework. Layout is now top: chart,
-            // bottom: 3-column TRADE module (Entry / Active / Guru).
-            // The chart preserves the technical view; the TRADE
-            // module sits below as the execution surface.
+            // v13.0: chart removed. TRADE is now pure execution
+            // intelligence — the technical chart already lives on
+            // Chart / Patterns / Research. TradePanel takes the
+            // full height and runs its own intelligence stack.
             const posture  = derivePosture(stableState, latestPattern);
             const lastBase = baseSeries[baseSeries.length - 1] ?? null;
             return (
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-                <div style={{ flex: '1 1 55%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <TradingView
-                    symbol={symbol}
-                    timeframe={timeframe}
-                  />
-                </div>
-                <div style={{ flex: '1 1 45%', minHeight: 0, borderTop: '1px solid var(--line-1)' }}>
-                  <TradePanel
-                    symbol={symbol}
-                    timeframe={timeframe}
-                    currentPrice={goldData.price}
-                    aiState={stableState}
-                    posture={posture}
-                    latestPattern={latestPattern}
-                    tradePlan={tradePlan}
-                    regime={lastBase?.r ?? null}
-                    netVariance={lastBase?.v ?? null}
-                  />
-                </div>
+              <div style={{ height: '100%', overflow: 'hidden' }}>
+                <TradePanel
+                  symbol={symbol}
+                  timeframe={timeframe}
+                  currentPrice={goldData.price}
+                  aiState={stableState}
+                  posture={posture}
+                  latestPattern={latestPattern}
+                  tradePlan={tradePlan}
+                  regime={lastBase?.r ?? null}
+                  netVariance={lastBase?.v ?? null}
+                  goldTrend={aiStateInputs?.goldContext?.trend ?? 'unknown'}
+                />
               </div>
             );
           })()}

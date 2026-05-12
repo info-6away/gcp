@@ -1,25 +1,36 @@
 'use client';
 
 // v11.33: TRADE module — Guru-aware execution layer.
+// v13.0:  TRADE rebuilt as pure execution intelligence. The chart is
+//         gone (charts live on Chart / Patterns / Research). The
+//         module is now an AI execution console:
 //
-// Three-column layout:
-//
-//   LEFT   ── Entry Panel
-//             LONG / SHORT toggle, position size, entry type,
-//             stop-loss / take-profit, OPEN TRADE primary CTA.
-//
-//   CENTER ── Active Position
-//             Live PnL, entry, current, size, duration, GURU
-//             ALIGNMENT chip (full / partial / contradiction).
-//             Trade history table sits below.
-//
-//   RIGHT  ── Guru Context
-//             STATE / STANCE / NEXT / CONFIDENCE — always visible
-//             so the user is executing inside a living environment.
+//   ┌───────────────────────────────────────────────────────────────┐
+//   │ Header  TRADE · SYMBOL · balance · reset                       │
+//   ├───────────────────────────────────────────────────────────────┤
+//   │ ┌─────────────────────┐  ┌──────────────────────────────────┐ │
+//   │ │ THESIS (hero)        │  │ DIRECTIONAL PRESSURE             │ │
+//   │ │   state · phase      │  │   ▓▓▓▓░░░░░░░░░░░░               │ │
+//   │ │   regime · NV        │  │   LONG % / SHORT %               │ │
+//   │ │   interp + gold      │  │   band + drift                   │ │
+//   │ │   invalidators       │  │ STANCE / MODE / EXECUTION        │ │
+//   │ └─────────────────────┘  └──────────────────────────────────┘ │
+//   ├───────────────────────────────────────────────────────────────┤
+//   │ ENVIRONMENT RISK  |  STATE FLOW  |  HISTORICAL ANALOG          │
+//   ├───────────────────────────────────────────────────────────────┤
+//   │ ┌─────────────────────┐  ┌──────────────────────────────────┐ │
+//   │ │ TRADE ACTION         │  │ POSITION MONITOR                  │ │
+//   │ │ (entry panel)        │  │ (active position + thesis status) │ │
+//   │ └─────────────────────┘  └──────────────────────────────────┘ │
+//   ├───────────────────────────────────────────────────────────────┤
+//   │ HISTORY TABLE                                                   │
+//   └───────────────────────────────────────────────────────────────┘
 //
 // Reuses lib/demoAccount.ts for persistence + PnL math, lib/guruStance
 // for the stance block, lib/guruAlignment for the alignment chip,
-// lib/stateTransition for the NEXT overlay. No new Engine calls.
+// lib/stateTransition for the NEXT overlay, and the new
+// lib/executionIntelligence for environment-risk / historical-analog /
+// thesis-integrity derivations. No new Engine calls. No chart.
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { MarketSymbol, Pattern, Timeframe } from '@/types/gcp';
@@ -44,6 +55,13 @@ import {
 import { stateColor, directionArrow, DEFAULT_INTERPRETATION } from '@/lib/aiState';
 import { deriveStance } from '@/lib/guruStance';
 import { ladderColor, ladderLabel, type LadderState } from '@/lib/stateTransition';
+import {
+  deriveEnvironmentRisk, deriveHistoricalAnalog, deriveThesisIntegrity,
+} from '@/lib/executionIntelligence';
+import {
+  AI_HISTORY_LS_KEY, loadAiStateHistory,
+  type AiStateHistoryRecord,
+} from '@/lib/aiStateHistory';
 
 interface Props {
   symbol:        MarketSymbol;
@@ -55,6 +73,11 @@ interface Props {
   tradePlan:     TradePlan | null;
   regime:        string | null;
   netVariance:   number | null;
+  // v13.0: gold trend label used by the THESIS hero for the
+  // "gold confirmation / divergence" line. Optional so existing call
+  // sites that don't have it threaded keep type-checking; falls back
+  // to "unknown" inside the panel.
+  goldTrend?:    'up' | 'down' | 'sideways' | 'unknown';
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -799,6 +822,581 @@ function NextChip({
 // Section shell shared by all three columns
 // ─────────────────────────────────────────────────────────────────
 
+// ═════════════════════════════════════════════════════════════════
+// v13.0: EXECUTION INTELLIGENCE — section components.
+// Replace the technical chart. Density swap: candles → coherence.
+// ═════════════════════════════════════════════════════════════════
+
+// ── 1. THESIS (hero) ─────────────────────────────────────────────
+//
+// Single dominant panel: state · phase · certainty · regime · NV ·
+// interpretation · gold confirmation/divergence · invalidators ·
+// execution warning. Anchors the whole module.
+
+function ThesisHero({
+  aiState, regime, netVariance, goldTrend,
+}: {
+  aiState:     GcpStateResponse | null;
+  regime:      string | null;
+  netVariance: number | null;
+  goldTrend:   'up' | 'down' | 'sideways' | 'unknown';
+}) {
+  const accent  = aiState ? stateColor(aiState) : 'var(--fg-3)';
+  const conf    = aiState ? Math.round(aiState.confidence * 100) : null;
+  const interp  = aiState ? (aiState.reasoningShort?.trim()
+                          || DEFAULT_INTERPRETATION[aiState.stateCode]
+                          || aiState.goldInterpretation
+                          || '—')
+                          : 'Awaiting first Guru classification.';
+
+  // Gold confirmation / divergence line. Mixed with state direction —
+  // when direction is Up and gold is up that's confirmation; up vs
+  // down is divergence; sideways / unknown is neutral.
+  const goldLine = (() => {
+    if (!aiState) return null;
+    const dir = aiState.direction;
+    if (dir === 'Up') {
+      if (goldTrend === 'up')   return { text: 'Gold confirms (trend up)', tone: 'good' as const };
+      if (goldTrend === 'down') return { text: 'Gold diverges (trend down)', tone: 'warn' as const };
+      return { text: `Gold ${goldTrend} — no confirmation`, tone: 'neutral' as const };
+    }
+    if (dir === 'Down') {
+      if (goldTrend === 'down') return { text: 'Gold confirms (trend down)', tone: 'good' as const };
+      if (goldTrend === 'up')   return { text: 'Gold diverges (trend up)', tone: 'warn' as const };
+      return { text: `Gold ${goldTrend} — no confirmation`, tone: 'neutral' as const };
+    }
+    return { text: `Gold ${goldTrend}`, tone: 'neutral' as const };
+  })();
+  const goldColor =
+    goldLine?.tone === 'good' ? 'var(--green)'
+  : goldLine?.tone === 'warn' ? 'var(--red)'
+  :                              'var(--fg-3)';
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${accent}`,
+      borderRadius: 'var(--r-md)',
+      padding: '14px 18px',
+      display: 'flex', flexDirection: 'column', gap: 10,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        GURU EXECUTION THESIS
+      </div>
+
+      {/* state · phase headline */}
+      <div style={{
+        fontSize: 22, color: accent, fontWeight: 700,
+        letterSpacing: '0.01em', lineHeight: 1.15,
+      }}>
+        {aiState
+          ? `${aiState.state.toUpperCase()} · ${aiState.phase}`
+          : 'NO READ YET'}
+      </div>
+
+      {/* meta row: certainty · regime · NV */}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 18,
+        fontSize: 10, color: 'var(--fg-3)',
+        fontFamily: 'var(--font-mono)',
+      }}>
+        {conf != null && (
+          <span>
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>CERTAINTY </span>
+            <span style={{
+              color: 'var(--fg-1)', fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
+            }}>{conf}%</span>
+          </span>
+        )}
+        {regime && (
+          <span>
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>REGIME </span>
+            <span style={{ color: 'var(--fg-1)' }}>{regime}</span>
+          </span>
+        )}
+        {netVariance != null && (
+          <span>
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>NV </span>
+            <span style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+              {netVariance.toFixed(1)}
+            </span>
+          </span>
+        )}
+        {aiState?.direction && (
+          <span>
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>BIAS </span>
+            <span style={{ color: 'var(--fg-1)' }}>
+              {aiState.direction} {directionArrow(aiState.direction)}
+            </span>
+          </span>
+        )}
+      </div>
+
+      {/* interpretation */}
+      <div style={{
+        fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55,
+        marginTop: 2,
+      }}>
+        {interp}
+      </div>
+
+      {/* gold confirmation / divergence */}
+      {goldLine && (
+        <div style={{
+          fontSize: 11, color: goldColor, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', background: goldColor,
+          }} />
+          {goldLine.text}
+        </div>
+      )}
+
+      {/* invalidators */}
+      {aiState && aiState.invalidators?.length > 0 && (
+        <div style={{
+          marginTop: 4, padding: '8px 10px',
+          background: 'rgba(196,90,90,0.06)',
+          border: '1px solid #c45a5a44',
+          borderRadius: 3,
+        }}>
+          <div style={{
+            fontSize: 9, letterSpacing: '0.18em', color: '#c45a5a',
+            fontWeight: 600, marginBottom: 4,
+          }}>
+            INVALIDATORS
+          </div>
+          <ul style={{
+            margin: 0, padding: 0, listStyle: 'none',
+            display: 'flex', flexDirection: 'column', gap: 3,
+          }}>
+            {aiState.invalidators.slice(0, 3).map((inv, i) => (
+              <li key={i} style={{
+                fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5,
+                position: 'relative', paddingLeft: 12,
+              }}>
+                <span style={{
+                  position: 'absolute', left: 0, top: 8,
+                  width: 4, height: 4, borderRadius: '50%',
+                  background: '#c45a5a',
+                }} />
+                {inv}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* execution warning — surfaced when the response carries one
+          (FA, Late/Exhausted state, stale fallback). */}
+      {aiState && (aiState.stale || aiState.stateCode === 'FA'
+                || aiState.phase === 'Exhausted') && (
+        <div style={{
+          marginTop: 2, fontSize: 10, color: '#d4a028',
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+        }}>
+          ⚠ {aiState.stale ? `STALE READ (${aiState.staleReason ?? 'engine offline'})`
+            : aiState.stateCode === 'FA' ? 'FAILED ALIGNMENT — fade/reversal risk'
+            : 'EXHAUSTED PHASE — manage exposure'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 2. DIRECTIONAL PRESSURE (large gauge) ────────────────────────
+
+function PressureGauge({ aiState }: { aiState: GcpStateResponse | null }) {
+  const long  = aiState?.longPressure  ?? 50;
+  const short = aiState?.shortPressure ?? 50;
+  const band  = aiState?.pressureBand  ?? 'weak';
+  const longColor  = '#4dd9e8';
+  const shortColor = '#c45a5a';
+  const bandColor  =
+    band === 'strong'   ? 'var(--cyan)'
+  : band === 'moderate' ? '#d4a028'
+  :                        'var(--fg-3)';
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)',
+      padding: '14px 18px',
+      display: 'flex', flexDirection: 'column', gap: 10,
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        alignItems: 'baseline', gap: 8,
+      }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', fontWeight: 600,
+        }}>
+          DIRECTIONAL PRESSURE
+        </span>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.14em', fontWeight: 700,
+          color: bandColor, fontFamily: 'var(--font-mono)',
+        }}>
+          {band.toUpperCase()}
+        </span>
+      </div>
+
+      {/* Large split bar — taller than the Guru-view variant to read
+          as "gauge" rather than "chip". */}
+      <div style={{
+        display: 'flex', height: 18, borderRadius: 3, overflow: 'hidden',
+        border: '1px solid var(--line-2)', background: 'var(--bg-2)',
+      }}>
+        <div style={{
+          width: `${long}%`, background: longColor,
+          transition: 'width 0.4s ease',
+        }} />
+        <div style={{
+          width: `${short}%`, background: shortColor,
+          transition: 'width 0.4s ease',
+        }} />
+      </div>
+
+      {/* Number row */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        fontSize: 18, fontFamily: 'var(--font-mono)',
+        fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+        letterSpacing: '0.02em',
+      }}>
+        <span style={{ color: longColor }}>
+          LONG <span style={{ color: 'var(--fg-0)' }}>{long}%</span>
+        </span>
+        <span style={{ color: shortColor }}>
+          <span style={{ color: 'var(--fg-0)' }}>{short}%</span> SHORT
+        </span>
+      </div>
+
+      {aiState?.pressureExplanation && (
+        <div style={{
+          fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.5,
+          fontStyle: 'italic', marginTop: 2,
+        }}>
+          {aiState.pressureExplanation}
+        </div>
+      )}
+
+      {/* Stance — Sections 3 from the spec folded into the same panel
+          so STANCE / MODE / EXECUTION sit visually next to the gauge
+          that justifies them. */}
+      {(() => {
+        const stance = aiState ? deriveStance(aiState) : null;
+        if (!stance) return null;
+        return (
+          <div style={{
+            marginTop: 4, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.02)',
+            border: '1px solid var(--line-1)',
+            borderLeft: '2px solid var(--fg-0)',
+            borderRadius: 3,
+            display: 'flex', flexDirection: 'column', gap: 4,
+          }}>
+            {[
+              { l: 'STANCE',    v: stance.stance,    c: 'var(--fg-0)',  big: true },
+              { l: 'MODE',      v: stance.mode,      c: '#d4a028',      big: false },
+              { l: 'EXECUTION', v: stance.execution, c: 'var(--cyan)',  big: false },
+            ].map(row => (
+              <div key={row.l} style={{
+                display: 'grid', gridTemplateColumns: '82px 1fr',
+                gap: 12, alignItems: 'baseline',
+              }}>
+                <span style={{
+                  fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+                  fontWeight: 600, fontFamily: 'var(--font-mono)',
+                }}>
+                  {row.l}
+                </span>
+                <span style={{
+                  color: row.c,
+                  fontSize: row.big ? 13 : 11,
+                  fontWeight: row.big ? 700 : 500,
+                  lineHeight: 1.4,
+                }}>
+                  {row.v}
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ── 4. ENVIRONMENT RISK ──────────────────────────────────────────
+
+function EnvironmentRiskCard({ aiState }: { aiState: GcpStateResponse | null }) {
+  const risk = deriveEnvironmentRisk(aiState);
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `2px solid ${risk.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        ENVIRONMENT RISK
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 700, color: risk.color,
+        letterSpacing: '0.02em',
+      }}>
+        {risk.label.toUpperCase()}
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.5,
+      }}>
+        {risk.hint}
+      </div>
+    </div>
+  );
+}
+
+// ── 8. STATE FLOW ribbon (last 5 anchored states) ────────────────
+
+function StateFlowRibbon({
+  records, currentState,
+}: {
+  records:      AiStateHistoryRecord[];
+  currentState: GcpStateResponse | null;
+}) {
+  const tail = records.slice(0, 5).reverse();
+  const items: { code: string; label: string; isCurrent: boolean }[] =
+    tail.map((r, i) => ({
+      code:      r.stateCode,
+      label:     r.state,
+      isCurrent: i === tail.length - 1,
+    }));
+  if (currentState
+      && (items.length === 0 || items[items.length - 1].code !== currentState.stateCode)) {
+    items.push({ code: currentState.stateCode, label: currentState.state, isCurrent: true });
+  } else if (currentState && items.length > 0) {
+    items[items.length - 1].isCurrent = true;
+  }
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        STATE FLOW
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+          No prior states yet — flow starts after the first analysis.
+        </div>
+      ) : (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+        }}>
+          {items.map((it, i) => {
+            const isLast = i === items.length - 1;
+            const accent = stateColor({
+              stateCode: it.code, direction: 'Neutral',
+            } as GcpStateResponse);
+            const opacity = it.isCurrent ? 1 : (0.45 + (i / items.length) * 0.35);
+            return (
+              <span key={i} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+              }}>
+                <span style={{
+                  display: 'inline-flex', flexDirection: 'column',
+                  alignItems: 'center', padding: '3px 8px',
+                  background: it.isCurrent ? `${accent}1f` : `${accent}0d`,
+                  border: `1px solid ${accent}${it.isCurrent ? '99' : '44'}`,
+                  borderRadius: 3, opacity,
+                }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color: accent,
+                    fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+                  }}>{it.code}</span>
+                </span>
+                {!isLast && <span style={{ color: 'var(--fg-4)', fontSize: 11 }}>→</span>}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 7. HISTORICAL ANALOG ─────────────────────────────────────────
+
+function HistoricalAnalogCard({
+  records, symbol, aiState,
+}: {
+  records: AiStateHistoryRecord[];
+  symbol:  MarketSymbol;
+  aiState: GcpStateResponse | null;
+}) {
+  const analog = useMemo(
+    () => deriveHistoricalAnalog(records, symbol, aiState),
+    [records, symbol, aiState],
+  );
+  const arrow =
+    analog.forwardMovePct == null ? '—'
+  : analog.forwardMovePct >= 0.05 ? '↑'
+  : analog.forwardMovePct <= -0.05 ? '↓'
+  :                                  '→';
+  const arrowColor =
+    analog.forwardMovePct == null ? 'var(--fg-3)'
+  : analog.forwardMovePct >= 0.05 ? 'var(--green)'
+  : analog.forwardMovePct <= -0.05 ? 'var(--red)'
+  :                                  'var(--fg-3)';
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        HISTORICAL ANALOG
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8,
+        fontFamily: 'var(--font-mono)',
+      }}>
+        <span style={{
+          fontSize: 22, fontWeight: 700, color: arrowColor,
+          lineHeight: 1,
+        }}>{arrow}</span>
+        <span style={{
+          fontSize: 16, color: 'var(--fg-1)', fontWeight: 700,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {analog.forwardMovePct != null
+            ? `${analog.forwardMovePct >= 0 ? '+' : ''}${analog.forwardMovePct.toFixed(2)}%`
+            : '—'}
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
+          avg 4h move
+        </span>
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+        {analog.summary}
+      </div>
+    </div>
+  );
+}
+
+// ── 6. POSITION MONITOR — thesis integrity for open positions ────
+
+function PositionMonitorBlock({
+  acct, aiState,
+}: {
+  acct:    DemoAccount;
+  aiState: GcpStateResponse | null;
+}) {
+  const open = acct.open;
+  const integrity = deriveThesisIntegrity(
+    open?.side ?? null,
+    open?.context.aiStateCode ?? null,
+    open?.context.phase ?? null,
+    open?.context.confidence ?? null,
+    aiState,
+  );
+  if (!open) {
+    return (
+      <div style={{
+        background: 'var(--bg-1)',
+        border: '1px solid var(--line-1)',
+        borderRadius: 'var(--r-md)',
+        padding: '12px 14px',
+      }}>
+        <div style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', fontWeight: 600, marginBottom: 6,
+        }}>
+          POSITION MONITOR
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+          No open position. Thesis integrity tracking activates on entry.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `2px solid ${integrity.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: 8,
+      }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', fontWeight: 600,
+        }}>
+          POSITION MONITOR
+        </span>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.14em', color: integrity.color,
+          fontWeight: 700, fontFamily: 'var(--font-mono)',
+        }}>
+          THESIS {integrity.status.toUpperCase()}
+        </span>
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55,
+      }}>
+        {integrity.hint}
+      </div>
+      <div style={{
+        fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em',
+        fontFamily: 'var(--font-mono)',
+      }}>
+        Open: <span style={{ color: 'var(--fg-2)' }}>
+          {open.side.toUpperCase()} {open.context.symbol} @ {formatPrice(open.entryPrice, open.context.symbol)}
+        </span>
+        {open.context.aiStateCode && (
+          <>
+            {' · '}
+            <span style={{ color: 'var(--fg-3)' }}>
+              entry context: {open.context.aiStateCode}
+              {open.context.phase ? ` ${open.context.phase}` : ''}
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SectionShell({
   title, subtitle, accent, children,
 }: {
@@ -847,6 +1445,7 @@ function SectionShell({
 function TradePanelImpl({
   symbol, timeframe, currentPrice,
   aiState, posture, latestPattern, tradePlan, regime, netVariance,
+  goldTrend = 'unknown',
 }: Props) {
   const [acct, setAcct]                 = useState<DemoAccount>(() => loadDemoAccount());
   const [side, setSide]                 = useState<Side>('long');
@@ -856,6 +1455,22 @@ function TradePanelImpl({
   const [stopLoss, setStopLoss]         = useState<string>('');
   const [takeProfit, setTakeProfit]     = useState<string>('');
   const [, setTick]                     = useState(0);
+  // v13.0: AI state history for State Flow ribbon + Historical Analog.
+  const [records, setRecords] = useState<AiStateHistoryRecord[]>([]);
+  useEffect(() => {
+    setRecords(loadAiStateHistory());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === AI_HISTORY_LS_KEY) setRecords(loadAiStateHistory());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  const symbolRecords = useMemo(
+    () => records
+      .filter(r => r.symbol === symbol)
+      .sort((a, b) => b.timestamp - a.timestamp),
+    [records, symbol],
+  );
 
   // Cross-tab sync.
   useEffect(() => {
@@ -985,54 +1600,89 @@ function TradePanelImpl({
         </div>
       </div>
 
-      {/* Three columns */}
-      <div style={{
-        flex: 1, overflow: 'auto',
-        display: 'grid',
-        gridTemplateColumns: '260px 1fr 280px',
-        gap: 12,
-        padding: 12,
+      {/* v13.0: vertical execution intelligence stack, then a 2-col
+          action+monitor block, then history. The wrapper class is
+          read by the mobile SettingsScreen wrapper to collapse the
+          two-column row into a single column on phones. */}
+      <div className="trade-intelligence" style={{
+        flex: 1, overflow: 'auto', padding: 14,
+        display: 'flex', flexDirection: 'column', gap: 12,
       }}>
-        {/* LEFT — Entry Panel */}
-        <div>
-          <EntryPanel
-            symbol={symbol}
-            currentPrice={currentPrice}
-            side={side}              setSide={setSide}
-            size={size}              setSize={setSize}
-            entryType={entryType}    setEntryType={setEntryType}
-            limitPrice={limitPrice}  setLimitPrice={setLimitPrice}
-            stopLoss={stopLoss}      setStopLoss={setStopLoss}
-            takeProfit={takeProfit}  setTakeProfit={setTakeProfit}
-            onOpen={handleOpen}
-            hasOpen={!!acct.open}
-            alignment={alignmentForSide}
+        <style>{`
+          @media (max-width: 720px) {
+            .trade-intelligence .ti-hero-row,
+            .trade-intelligence .ti-meso-row,
+            .trade-intelligence .ti-action-row {
+              grid-template-columns: 1fr !important;
+            }
+          }
+        `}</style>
+
+        {/* Hero row: Thesis (60%) + Pressure gauge (40%). */}
+        <div className="ti-hero-row" style={{
+          display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12,
+        }}>
+          <ThesisHero
+            aiState={aiState}
+            regime={regime}
+            netVariance={netVariance}
+            goldTrend={goldTrend}
           />
-          {currentPrice == null && (
-            <div style={{
-              fontSize: 9, color: 'var(--fg-4)', marginTop: 6,
-            }}>
-              Waiting for live price…
-            </div>
-          )}
+          <PressureGauge aiState={aiState} />
         </div>
 
-        {/* CENTER — Active position + history */}
-        <div style={{ minWidth: 0 }}>
-          <ActivePositionCard
-            acct={acct}
-            symbol={symbol}
-            currentPrice={currentPrice}
-            alignment={alignmentForActive}
-            onClose={handleClose}
-          />
-          <HistoryTable acct={acct} symbol={symbol} />
+        {/* Meso row: Environment Risk · State Flow · Historical Analog. */}
+        <div className="ti-meso-row" style={{
+          display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 12,
+        }}>
+          <EnvironmentRiskCard aiState={aiState} />
+          <StateFlowRibbon records={symbolRecords} currentState={aiState} />
+          <HistoricalAnalogCard records={records} symbol={symbol} aiState={aiState} />
         </div>
 
-        {/* RIGHT — Guru context */}
-        <div>
-          <GuruContextColumn aiState={aiState} posture={posture} />
+        {/* Action + Monitor row. Pre-v13 these were stacked inside a
+            three-column grid alongside a Guru context column; that
+            column has been folded into ThesisHero / PressureGauge /
+            EnvironmentRiskCard above. */}
+        <div className="ti-action-row" style={{
+          display: 'grid', gridTemplateColumns: '300px 1fr', gap: 12,
+        }}>
+          <div>
+            <EntryPanel
+              symbol={symbol}
+              currentPrice={currentPrice}
+              side={side}              setSide={setSide}
+              size={size}              setSize={setSize}
+              entryType={entryType}    setEntryType={setEntryType}
+              limitPrice={limitPrice}  setLimitPrice={setLimitPrice}
+              stopLoss={stopLoss}      setStopLoss={setStopLoss}
+              takeProfit={takeProfit}  setTakeProfit={setTakeProfit}
+              onOpen={handleOpen}
+              hasOpen={!!acct.open}
+              alignment={alignmentForSide}
+            />
+            {currentPrice == null && (
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', marginTop: 6,
+              }}>
+                Waiting for live price…
+              </div>
+            )}
+          </div>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <PositionMonitorBlock acct={acct} aiState={aiState} />
+            <ActivePositionCard
+              acct={acct}
+              symbol={symbol}
+              currentPrice={currentPrice}
+              alignment={alignmentForActive}
+              onClose={handleClose}
+            />
+          </div>
         </div>
+
+        {/* History table — full width at the bottom. */}
+        <HistoryTable acct={acct} symbol={symbol} />
       </div>
     </div>
   );

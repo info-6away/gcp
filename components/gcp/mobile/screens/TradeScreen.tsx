@@ -1,10 +1,11 @@
 'use client';
 
 // v11.35: mobile Trade screen — same execution surface as desktop,
-// just rendered inside the mobile chrome. The underlying TradePanel
-// is already a deterministic 3-column grid, so on narrow viewports
-// we override the grid to a vertical stack via a wrapper class —
-// no separate component to maintain.
+// just rendered inside the mobile chrome.
+// v13.0: TradePanel is now the execution intelligence console (chart
+// removed). The internal grids it renders already collapse to single
+// columns on narrow viewports via inline @media rules; the wrapper
+// here exists to hand it scroll + the mobile status bar above.
 
 import type { MarketSymbol, Pattern, Timeframe } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
@@ -29,6 +30,10 @@ interface TradeScreenProps {
   latestPattern: Pattern | null;
   tradePlan:     TradePlan | null;
   netVariance:   number | null;
+  // v13.0: gold trend label for the Thesis hero's gold confirmation
+  // / divergence line. Optional — defaults to 'unknown' inside the
+  // panel when callers don't have it threaded yet.
+  goldTrend?:    'up' | 'down' | 'sideways' | 'unknown';
 }
 
 export function TradeScreen(props: TradeScreenProps) {
@@ -43,21 +48,13 @@ export function TradeScreen(props: TradeScreenProps) {
         aiState={props.aiState} aiEnabled={props.aiEnabled}
         aiStatus={props.aiStatus} symbol={props.symbol}
       />
-      {/* Tag the wrapper so a narrow-viewport stylesheet can collapse
-          the underlying TradePanel grid into a single column on
-          phones. Desktop's 260 / 1fr / 280 grid stays correct on
-          tablets via the inline CSS in TradePanel. */}
-      <div className="mobile-trade-wrap" style={{
+      {/* v13.0: TradePanel owns its own internal layout + responsive
+          collapse to single column on phones via @media (max-width:
+          720px). The wrapper here just gives it scroll. */}
+      <div style={{
         flex: 1, minHeight: 0, overflowY: 'auto',
         background: C.bg,
       }}>
-        <style>{`
-          @media (max-width: 720px) {
-            .mobile-trade-wrap > div > div:nth-child(2) {
-              grid-template-columns: 1fr !important;
-            }
-          }
-        `}</style>
         <TradePanel
           symbol={props.symbol}
           timeframe={props.timeframe}
@@ -68,6 +65,7 @@ export function TradeScreen(props: TradeScreenProps) {
           tradePlan={props.tradePlan}
           regime={props.liveRegime}
           netVariance={props.netVariance}
+          goldTrend={props.goldTrend ?? 'unknown'}
         />
       </div>
     </div>

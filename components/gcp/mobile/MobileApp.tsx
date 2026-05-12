@@ -171,6 +171,15 @@ export default function MobileApp({
           latestPattern={latestPattern}
           tradePlan={tradePlan}
           netVariance={baseSeries[baseSeries.length - 1]?.v ?? null}
+          // v13.0: derive a coarse trend label inline so the new
+          // Thesis hero can show gold confirmation / divergence on
+          // mobile without plumbing changes to GCPApp.
+          goldTrend={
+            goldData.changePct == null  ? 'unknown'
+          : goldData.changePct >  0.10  ? 'up'
+          : goldData.changePct < -0.10  ? 'down'
+          :                                'sideways'
+          }
         />
       );
       case 'chart': return (
