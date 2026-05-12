@@ -32,7 +32,10 @@ import type { GcpStateResponse, GcpStatePayload } from '@/lib/engine-gcp';
 // Plateau State overlay has somewhere to point next. The original four
 // stay first because the helpers below still treat them as the
 // canonical laddered states.
-export type LadderState = 'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS';
+// v12.2: + DC so the transition ladder can describe paths into / out
+// of Directional Decay. DC itself is terminal in this pass — we don't
+// emit "from DC" transitions yet (let real samples accumulate first).
+export type LadderState = 'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS' | 'DC';
 
 export interface TransitionResult {
   nextLikelyState?:      LadderState;
@@ -261,6 +264,8 @@ export function ladderColor(code: LadderState): string {
     case 'PS': return '#8a8fb8';   // muted violet (matches stateAccent)
     case 'CL': return '#d46428';   // climax orange
     case 'DS': return '#d4a028';   // discharge amber
+    // v12.2
+    case 'DC': return '#b06b58';   // muted amber/red (matches stateAccent)
   }
 }
 
@@ -275,5 +280,7 @@ export function ladderLabel(code: LadderState): string {
     case 'PS': return 'Plateau';
     case 'CL': return 'Climax';
     case 'DS': return 'Discharge';
+    // v12.2
+    case 'DC': return 'Directional Decay';
   }
 }

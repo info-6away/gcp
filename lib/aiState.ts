@@ -66,6 +66,11 @@ function stateAccent(code: StateCode): string | null {
     // v12.1: Plateau State — muted violet / silver-blue. Caution, not
     // failure: distinct from SS (sync, cyan) and CL (climax, orange).
     case 'PS': return '#8a8fb8';
+    // v12.2: Directional Decay — muted amber/red. Quietly dangerous,
+    // not explosive: distinct from FA red (failure) and DS amber
+    // (clean discharge). The terracotta tone reads as "structural
+    // erosion under weak coherence".
+    case 'DC': return '#b06b58';
     default:   return null;
   }
 }
@@ -94,4 +99,7 @@ export const DEFAULT_INTERPRETATION: Record<StateCode, string> = {
   // saturated plateau. Direction is fragile, exposure should be
   // managed; not a failure but not a fresh-entry zone either.
   PS: 'Synchronized coherence has matured into plateau; direction is fragile.',
+  // v12.2: local overlay — coherence is weak / flat, but price keeps
+  // degrading directionally. Reduce exposure; do not fade passively.
+  DC: 'Structure deteriorating under weak coherence — respect the trend.',
 };

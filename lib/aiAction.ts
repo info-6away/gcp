@@ -108,6 +108,11 @@ function basePosture(state: GcpStateResponse): ActionPosture {
     // table until the plateau resolves into CS / CL / DS / re-AT.
     case 'PS':
       return { text: 'Hold / reduce — plateau saturation', tone: 'risk' };
+
+    // v12.2: Directional Decay — coherence weak while price keeps
+    // moving. Respect direction; do not passively fade.
+    case 'DC':
+      return { text: 'Reduce exposure — structure degrading under weak coherence', tone: 'risk' };
   }
 
   return FALLBACK;
@@ -191,6 +196,11 @@ function deriveMode(state: GcpStateResponse): MarketMode {
     // MarketMode label) — saturation behaves like the tail-end of a
     // trend more than continuation.
     case 'PS': return 'Exhaustion';
+    // v12.2: Directional Decay maps onto Reversal Watch — the
+    // structural degradation could resolve into a clean trend
+    // discovery (most likely down) or a clean reversal of the
+    // would-be CS. Either way, "watch, don't fade".
+    case 'DC': return 'Reversal Watch';
   }
   return 'No Signal';
 }

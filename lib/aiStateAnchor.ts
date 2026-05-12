@@ -57,6 +57,9 @@ const STATE_LABELS: Record<StateCode, GcpStateResponse['state']> = {
   // PS; the label is here only to keep the Record exhaustive against
   // the widened StateCode union.
   PS: 'Plateau State',
+  // v12.2: DC overlay — same arrangement as PS. Code 'DC' to avoid
+  // colliding with Dead Drift's 'DD' code.
+  DC: 'Directional Decay',
 };
 
 // Codes that are CONSISTENT with each story.state. If the Engine

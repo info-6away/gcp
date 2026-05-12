@@ -118,12 +118,18 @@ export type GcpStateResponse = {
     // derivePlateauStateOverlay() upgrades a mature SS into PS when
     // saturation conditions are met. Lives in this type only so the
     // overlay can flow through the existing rendering pipeline.
-    | 'Plateau State';
+    | 'Plateau State'
+    // v12.2: local overlay — Engine never returns Directional Decay.
+    // deriveDirectionalDecayOverlay() upgrades CS / SS to DC when
+    // coherence is weak but gold is trending and pressure remains
+    // weak/moderate. Code is 'DC' (not 'DD') to avoid colliding with
+    // the existing Dead Drift state code.
+    | 'Directional Decay';
 
   stateCode:
     | 'CS' | 'DD' | 'IS' | 'AT' | 'SS'
     | 'CL' | 'SH' | 'FA' | 'DS'
-    | 'PS';
+    | 'PS' | 'DC';
 
   direction: 'Up' | 'Down' | 'Neutral' | 'Mixed';
   phase:     'Early' | 'Mid' | 'Late' | 'Exhausted';
@@ -147,7 +153,8 @@ export type GcpStateResponse = {
   // construct mock responses (tests / fallbacks) keep type-checking.
   // v12.1: widened to include PS / SS / CL / DS so the ladder can
   // describe transitions out of Plateau State.
-  nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS';
+  // v12.2: + DC so the ladder can point into / out of Directional Decay.
+  nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS' | 'DC';
   transitionConfidence?: number;   // 0.25..0.90
   transitionReason?:     string;
 

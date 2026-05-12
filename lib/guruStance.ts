@@ -111,6 +111,17 @@ export function deriveStance(aiState: GcpStateResponse | null): GuruStance | nul
         mode:      'Plateau / Saturation',
         execution: 'Manage exposure; avoid fresh entries until direction resolves',
       };
+
+    // v12.2: Directional Decay — coherence weak but price persists
+    // directionally. The classic "stuck CS" anti-pattern. The user
+    // should NOT passively fade the move thinking it's a bounce;
+    // exposure should come down while direction resolves.
+    case 'DC':
+      return {
+        stance:    'Reduce exposure',
+        mode:      'Coherence breakdown',
+        execution: 'Avoid passively fading the trend; respect direction even under weak coherence',
+      };
   }
 
   return null;

@@ -45,7 +45,7 @@ export interface AiStateHistoryRecord {
   // original Engine answer AND the overlay reasons so future Research
   // can compare SS vs PS outcomes.
   originalStateCode?: string;
-  localOverlay?:      'plateau';
+  localOverlay?:      'plateau' | 'decay';
   overlayReasons?:    string[];
 }
 
@@ -104,7 +104,7 @@ export interface AiStateHistoryInput {
   // to PS by derivePlateauStateOverlay(). originalStateCode is the
   // pre-overlay state code so Research can correlate.
   originalStateCode?: string;
-  localOverlay?:      'plateau';
+  localOverlay?:      'plateau' | 'decay';
   overlayReasons?:    string[];
 }
 

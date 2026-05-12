@@ -61,6 +61,7 @@ import { anchorAiState } from '@/lib/aiStateAnchor';
 import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
 import { derivePlateauStateOverlay } from '@/lib/plateauState';
+import { deriveDirectionalDecayOverlay } from '@/lib/directionalDecay';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -559,23 +560,67 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           regime:            cur.regime.code,
           latestPatternCode,
         });
-        const finalResp: GcpStateResponse = plateau.response;
+        const respAfterPlateau: GcpStateResponse = plateau.response;
         if (isDev() && respWithPressure.stateCode === 'SS') {
           // Only log when SS was the candidate — avoids noise on every
           // unrelated classification.
           console.log('[PLATEAU STATE]', {
             upgraded: plateau.upgraded,
             from:     'SS',
-            to:       finalResp.stateCode,
+            to:       respAfterPlateau.stateCode,
             reasons:  plateau.reasons,
             pressure: {
-              long:  finalResp.longPressure,
-              short: finalResp.shortPressure,
+              long:  respAfterPlateau.longPressure,
+              short: respAfterPlateau.shortPressure,
             },
             slope:    payload.metrics?.slope,
             phase:    anchored.phase,
             regime:   cur.regime.code,
             pattern:  latestPatternCode,
+          });
+        }
+
+        // v12.2: Directional Decay overlay. Catches the "stuck CS / SS
+        // while price keeps trending" anti-pattern that the existing
+        // FA / plateau / weak-pressure stack can suppress. Runs AFTER
+        // plateau so PS keeps priority — a mature SS that converged
+        // on plateau signal stays PS. DC fires when CS or SS HAS NOT
+        // become PS but does meet the directional-decay conditions.
+        const decay = deriveDirectionalDecayOverlay({
+          aiState:      respAfterPlateau,
+          patternStory: payload.patternStory,
+          metrics:      payload.metrics,
+          goldContext:  payload.goldContext,
+          directionalPressure: {
+            longPressure:  respAfterPlateau.longPressure,
+            shortPressure: respAfterPlateau.shortPressure,
+            pressureBand:  respAfterPlateau.pressureBand,
+          },
+          transition: {
+            nextLikelyState:      respAfterPlateau.nextLikelyState,
+            transitionConfidence: respAfterPlateau.transitionConfidence,
+          },
+          previousConfidence: payload.priorState?.confidence ?? null,
+          latestPatternCode,
+        });
+        const finalResp: GcpStateResponse = decay.response;
+        const wasDecayCandidate = respAfterPlateau.stateCode === 'CS'
+                               || respAfterPlateau.stateCode === 'SS';
+        if (isDev() && wasDecayCandidate) {
+          console.log('[DIRECTIONAL DECAY]', {
+            upgraded: decay.upgraded,
+            from:     respAfterPlateau.stateCode,
+            to:       finalResp.stateCode,
+            reasons:  decay.reasons,
+            pressure: {
+              long:  finalResp.longPressure,
+              short: finalResp.shortPressure,
+            },
+            slope:     payload.metrics?.slope,
+            goldTrend: payload.goldContext?.trend,
+            phase:     anchored.phase,
+            regime:    cur.regime.code,
+            pattern:   latestPatternCode,
           });
         }
 
@@ -617,6 +662,12 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             plateauOverlay: respWithPressure.stateCode === 'SS' ? {
               upgraded: plateau.upgraded,
               reasons:  plateau.reasons,
+            } : null,
+            // v12.2: directional decay overlay summary. Empty when
+            // CS/SS wasn't a candidate at that pipeline step.
+            decayOverlay: wasDecayCandidate ? {
+              upgraded: decay.upgraded,
+              reasons:  decay.reasons,
             } : null,
             nextLikelyState: finalResp.nextLikelyState ?? null,
             directionalPressure: {
@@ -715,10 +766,20 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             longPressure:    finalResp.longPressure,
             shortPressure:   finalResp.shortPressure,
             pressureBand:    finalResp.pressureBand,
+            // v12.1 / v12.2: overlay metadata. Plateau wins ordering
+            // when both fire (it doesn't — plateau and decay are
+            // mutually exclusive in practice, since the decay overlay
+            // sees the post-plateau state and PS isn't in its CS/SS
+            // candidate set). If somehow both upgrades happened in
+            // the same pass, plateau's record wins.
             ...(plateau.upgraded ? {
               originalStateCode: 'SS',
               localOverlay:      'plateau' as const,
               overlayReasons:    plateau.reasons,
+            } : decay.upgraded ? {
+              originalStateCode: respAfterPlateau.stateCode,
+              localOverlay:      'decay' as const,
+              overlayReasons:    decay.reasons,
             } : {}),
           });
         }
