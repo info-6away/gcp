@@ -211,6 +211,10 @@ export interface ClassifyErrorEnvelope {
       | 'route_missing'
       | 'provider_unavailable'
       | 'config_missing'
+      // v12.0.5: proxy or frontend wrapper could not extract a
+      // stateCode from the response body. Distinct from
+      // engine_unavailable — the network is fine; the schema isn't.
+      | 'invalid_classification_shape'
       | 'unknown_error';
     message:  string;
     status:   number | null;
@@ -263,6 +267,43 @@ export async function classifyGcpState(
     }
   }
 
+  // v12.0.5: defensive normalizer. Mirrors the proxy's normalization
+  // helper so we never silently null-out a wrapped success body that
+  // slipped past the server. Tries `.classification`, `.data`,
+  // `.result`, `.response`, then the body itself; returns null if no
+  // candidate exposes a stateCode.
+  const normalize = (raw: unknown): GcpStateResponse | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.stateCode === 'string') return obj as unknown as GcpStateResponse;
+    for (const k of ['classification', 'data', 'result', 'response'] as const) {
+      const c = obj[k];
+      if (c && typeof c === 'object'
+          && typeof (c as Record<string, unknown>).stateCode === 'string') {
+        return c as unknown as GcpStateResponse;
+      }
+    }
+    return null;
+  };
+
+  // v12.0.5: build a structured invalid_classification_shape envelope
+  // so useGcpState's existing error-envelope branch surfaces a real
+  // reason instead of the old "classify_returned_null" log.
+  const shapeError = (
+    message: string,
+    httpStatus: number,
+  ): ClassifyErrorEnvelope => ({
+    ok: false,
+    error: {
+      type:     'invalid_classification_shape',
+      message,
+      status:   null,
+      provider: null,
+      model:    null,
+    },
+    httpStatus,
+  });
+
   try {
     const res = await fetch('/api/gcp-state', {
       method:  'POST',
@@ -275,7 +316,35 @@ export async function classifyGcpState(
       signal:  AbortSignal.timeout(40_000),
     });
     const data = (await res.json().catch(() => null)) as unknown;
-    if (!data || typeof data !== 'object') return null;
+
+    // v12.0.5: raw response diagnostic. Pairs with [ENGINE PROXY] raw
+    // response on the server so the user can stitch the request chain
+    // across both ends. Logs key surface info, never the full body.
+    if (process.env.NODE_ENV !== 'production') {
+      const d = (data ?? {}) as Record<string, unknown>;
+      console.log('[SDK RAW RESPONSE]', {
+        httpStatus:        res.status,
+        type:              typeof data,
+        isNull:            data === null,
+        keys:              data && typeof data === 'object' ? Object.keys(d) : [],
+        hasStateCode:      !!d.stateCode,
+        hasData:           !!d.data,
+        hasClassification: !!d.classification,
+        hasResult:         !!d.result,
+        hasResponse:       !!d.response,
+        envelopeOkFalse:   d.ok === false,
+      });
+    }
+
+    if (!data || typeof data !== 'object') {
+      // Pre-v12.0.5: silent return null here. Now we surface a typed
+      // envelope explaining the malformed body so useGcpState's error
+      // branch can show "Guru request failed" with a real reason.
+      return shapeError(
+        `Engine proxy returned a non-JSON or empty body (httpStatus ${res.status}).`,
+        res.status,
+      );
+    }
     // v12.0.3: structured error envelope. Proxy returns
     // `{ ok: false, error: { type, message, status, provider, model } }`
     // on every failure path (manual_required, engine_forbidden,
@@ -295,9 +364,45 @@ export async function classifyGcpState(
         httpStatus: res.status,
       };
     }
-    if (!res.ok) return null;
-    return data as GcpStateResponse;
-  } catch {
-    return null;
+    if (!res.ok) {
+      // Non-2xx without an `{ok:false,...}` envelope. Used to return
+      // null silently; now we surface as a typed shape error so the
+      // user sees a meaningful reason instead of "returned null".
+      return shapeError(
+        `Engine proxy returned HTTP ${res.status} without a structured error envelope.`,
+        res.status,
+      );
+    }
+
+    // v12.0.5: normalize on the client side too. Belt-and-suspenders —
+    // the proxy already normalizes, but if a future deployment chain
+    // ever bypasses the proxy or wraps the body in a CDN envelope,
+    // we still extract the classification cleanly.
+    const normalized = normalize(data);
+    if (!normalized || !normalized.stateCode) {
+      const keys = Object.keys(data as Record<string, unknown>);
+      return shapeError(
+        `Response body had no stateCode at any known unwrap location (keys: [${keys.join(', ')}]).`,
+        res.status,
+      );
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[SDK NORMALIZED RESPONSE]', {
+        stateCode:  normalized.stateCode,
+        state:      normalized.state,
+        phase:      normalized.phase,
+        confidence: normalized.confidence,
+        keys:       Object.keys(normalized as Record<string, unknown>),
+      });
+    }
+    return normalized;
+  } catch (err) {
+    // v12.0.5: surface the underlying error class+message so the user
+    // sees "abort timeout" vs "network" instead of a silent null.
+    return shapeError(
+      `Fetch failed: ${err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err)}`,
+      0,
+    );
   }
 }

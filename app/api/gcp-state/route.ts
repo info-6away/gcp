@@ -39,6 +39,36 @@ export const maxDuration = 40;
 const CACHE_KEY    = 'gcp_state';
 const ENGINE_PATH  = '/v1/coherence/gcp-state';
 
+// v12.0.5: defensive classification normalizer. Engine currently
+// returns the classification at the top level, but we tolerate
+// `{ data: <classification> }`, `{ classification: ... }`, and
+// `{ result: ... }` envelopes so the proxy survives any future
+// SDK / Engine API contract drift without silent null returns.
+// Returns null when nothing usable was found — caller must handle.
+function normalizeClassification(raw: unknown): GcpStateResponse | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  // Direct shape — preferred.
+  if (typeof obj.stateCode === 'string') {
+    return obj as unknown as GcpStateResponse;
+  }
+  // Common wrapper shapes — try each in turn, return the first that
+  // has a stateCode at its top level.
+  const candidates: Array<unknown> = [
+    obj.classification,
+    obj.data,
+    obj.result,
+    obj.response,
+  ];
+  for (const c of candidates) {
+    if (c && typeof c === 'object'
+        && typeof (c as Record<string, unknown>).stateCode === 'string') {
+      return c as unknown as GcpStateResponse;
+    }
+  }
+  return null;
+}
+
 // Stable error-type tags surfaced in the proxy response envelope.
 // These are GCP-Pro-facing values; the SDK's class names map onto
 // these so the frontend has a single switch to render copy.
@@ -52,6 +82,12 @@ type ProxyErrorType =
   | 'route_missing'
   | 'provider_unavailable'
   | 'config_missing'
+  // v12.0.5: SDK returned a body we could not normalize into a
+  // GcpStateResponse — the classification was missing the stateCode
+  // field after trying every known unwrap location. Distinct from
+  // engine_unavailable because the Engine IS reachable; the shape
+  // contract is what broke.
+  | 'invalid_classification_shape'
   | 'unknown_error';
 
 interface ProxyErrorEnvelope {
@@ -222,18 +258,59 @@ export async function POST(req: Request) {
 
   const engine = getEngineClient();
   try {
-    const result = await engine.classifyGcpState(payload);
-    lastClassificationCache.put(CACHE_KEY, result);
+    const raw = await engine.classifyGcpState(payload) as unknown;
+
+    // v12.0.5: raw response diagnostics. Engine admin logs proved the
+    // server is returning valid classification bodies, but the
+    // frontend was seeing classify_returned_null. Log the raw shape
+    // BEFORE any unwrap / cache step so we can compare exactly what
+    // the SDK handed back vs what we forward to the client.
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[ENGINE PROXY] success', {
-        stateCode:  result.stateCode,
-        confidence: result.confidence,
-        model:      result._meta?.model     ?? null,
-        provider:   result._meta?.provider  ?? null,
-        latencyMs:  result._meta?.latencyMs ?? null,
+      const r = (raw ?? {}) as Record<string, unknown>;
+      console.log('[ENGINE PROXY] raw response', {
+        type:              typeof raw,
+        isNull:            raw === null,
+        isUndefined:       raw === undefined,
+        keys:              raw && typeof raw === 'object' ? Object.keys(r) : [],
+        hasStateCode:      !!r.stateCode,
+        hasState:          !!r.state,
+        hasData:           !!r.data,
+        hasClassification: !!r.classification,
+        hasResult:         !!r.result,
+        hasResponse:       !!r.response,
       });
     }
-    return NextResponse.json(result, {
+
+    // v12.0.5: normalize. The Engine currently returns the classification
+    // directly at the top level, BUT we tolerate two common
+    // pre-existing wrappers (`.classification`, `.data`, `.result`)
+    // before falling back to the body itself. Any of them is valid as
+    // long as a `stateCode` lands at the normalized top level. If none
+    // does, we throw — never silently return null / undefined.
+    const normalized = normalizeClassification(raw);
+    if (!normalized || !normalized.stateCode) {
+      const r = (raw ?? {}) as Record<string, unknown>;
+      throw new Error(
+        `Invalid Engine classification shape — no stateCode at top level or in {data,classification,result}. Got keys: [${
+          raw && typeof raw === 'object' ? Object.keys(r).join(', ') : 'none'
+        }]`,
+      );
+    }
+
+    lastClassificationCache.put(CACHE_KEY, normalized);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ENGINE PROXY] normalized response', {
+        stateCode:  normalized.stateCode,
+        state:      normalized.state,
+        phase:      normalized.phase,
+        confidence: normalized.confidence,
+        keys:       Object.keys(normalized as Record<string, unknown>),
+        model:      normalized._meta?.model     ?? null,
+        provider:   normalized._meta?.provider  ?? null,
+        latencyMs:  normalized._meta?.latencyMs ?? null,
+      });
+    }
+    return NextResponse.json(normalized, {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (err) {
@@ -287,6 +364,15 @@ export async function POST(req: Request) {
         httpStatus = err.status && err.status >= 400 && err.status < 600 ? err.status : 502;
         message = err.message || `Engine returned HTTP ${err.status ?? '???'}.`;
       }
+    } else if (err instanceof Error
+        && err.message.startsWith('Invalid Engine classification shape')) {
+      // v12.0.5: thrown by the normalizer above when the Engine
+      // response has no stateCode at any known unwrap location.
+      // Distinct from engine_unavailable — Engine IS reachable; the
+      // schema contract is what failed.
+      type = 'invalid_classification_shape';
+      httpStatus = 502;
+      message = err.message;
     }
 
     console.warn('[ENGINE PROXY] failed', {

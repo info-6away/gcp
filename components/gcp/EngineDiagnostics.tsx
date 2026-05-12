@@ -241,6 +241,11 @@ export default function EngineDiagnostics({
               No active routing rule for gcp_state on this workspace. Configure one on the Engine.
             </div>
           )}
+          {aiLastError.error.type === 'invalid_classification_shape' && (
+            <div style={{ marginTop: 4, fontSize: 9, color: 'var(--fg-3)' }}>
+              Engine returned a body the proxy could not normalize into a classification. Check the `[ENGINE PROXY] raw response` server log for the actual shape.
+            </div>
+          )}
         </div>
       )}
 
