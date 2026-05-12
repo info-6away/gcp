@@ -40,8 +40,8 @@ export interface EnvironmentRiskRead {
  *                   warning. Low chop risk.
  *   Transitional  — anchored state has a non-trivial transition target
  *                   (next likely state). Edges might flip soon.
- *   Fragile       — low state certainty AND/OR weak pressure. Reads
- *                   can degrade without warning.
+ *   Fragile       — low environment clarity AND/OR weak pressure.
+ *                   Reads can degrade without warning.
  *   Volatile      — Shock / Climax / Failed-Alignment states. Whip
  *                   risk + headline event risk dominate.
  *   Exhausted     — Late / Exhausted phase of a directional state, or
@@ -116,8 +116,8 @@ export function deriveEnvironmentRisk(
     };
   }
 
-  // Fragile — low state certainty OR weak directional skew while in
-  // CS / DD / IS / AT.
+  // Fragile — low environment clarity OR weak directional skew while
+  // in CS / DD / IS / AT.
   const weakBand   = band === 'weak';
   const lowSkew    = skew != null && skew < 15;
   const lowConf    = conf < 0.40;
@@ -126,7 +126,7 @@ export function deriveEnvironmentRisk(
       label: 'Fragile',
       color: '#d4a028',
       hint:  lowConf
-        ? `State certainty low (${Math.round(conf * 100)}%) — pace down.`
+        ? `Environment clarity low (${Math.round(conf * 100)}%) — pace down.`
         : 'Weak directional pressure — reads can degrade fast.',
     };
   }
@@ -329,7 +329,7 @@ export function deriveThesisIntegrity(
     return {
       status: 'drift',
       color:  '#d4a028',
-      hint:   `State certainty fell ${Math.round(openContextConf * 100)}% → ${Math.round(curConf * 100)}% — thesis drifting.`,
+      hint:   `Environment clarity fell ${Math.round(openContextConf * 100)}% → ${Math.round(curConf * 100)}% — thesis drifting.`,
     };
   }
 

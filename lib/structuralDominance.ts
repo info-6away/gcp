@@ -1,9 +1,22 @@
 // v13.1: structural dominance layer.
+// v13.1.1: penalty + sanity-guard pass softened ~50%; new
+//          amplification path added so confirming structure can push
+//          pressure further (not just dampen it).
 //
 // Local-only correction layer that prevents directional pressure from
 // drifting unrealistically bullish (or bearish) when price structure
 // clearly disagrees with the coherence read. Engine + payload + SDK
 // stay untouched.
+//
+// EXPRESSIVE RANGES — what the displayed pressure should hit:
+//   weak environments        45-55
+//   moderate environments    60-40
+//   strong environments      70-30
+//   extreme environments     80-20
+// Pre-v13.1.1 the cascade collapsed everything to ~49/51 by stacking
+// hard penalties + an aggressive sanity guard. v13.1.1 reduces every
+// penalty magnitude by ~50% and adds a structural-amplification block
+// so confirming evidence reinforces pressure instead of being neutral.
 //
 // Core philosophy:
 //
@@ -190,86 +203,168 @@ export function deriveStructuralDominance(
   score = clamp(score, -100, 100);
   const dominance = labelFromScore(score);
 
-  // ── 7. Hard contradiction penalties ────────────────────────────
-  // Apply BEFORE the sanity guard so we never over-clamp a soft
-  // contradiction that would have been handled by penalties alone.
+  // ── 7. Contradiction penalties — softened in v13.1.1 ────────────
+  //
+  // The pre-v13.1.1 penalties were correct in direction but too eager
+  // in magnitude, and they collapsed everything to ~49/51 by stacking
+  // with the sanity guard. v13.1.1 cuts every penalty by ~50% and
+  // requires the trigger to ACTUALLY conflict with the prior pressure
+  // direction (no point dampening long when long is already at 45).
   let long  = preLong;
   let short = preShort;
 
-  // 7a. FA state + bearish structure: hard bearish.
-  if (aiState?.stateCode === 'FA' && dominance.endsWith('bearish')) {
-    long  -= 18;
-    short += 18;
-    reasons.push('penalty: FA state + bearish structure (-18 long)');
-  }
-
-  // 7b. Repeated FA chain + LH+LL: chronic bearish exhaustion.
-  if (faChain && priceStructure?.structure === 'Bearish') {
-    long  -= 12;
-    short += 12;
-    reasons.push('penalty: repeated FA chain + LH/LL (-12 long)');
-  }
-
-  // 7c. Negative slope + no continuation pattern + Bearish structure:
-  //     classic late-session breakdown.
   const noContinuation = !latestPatternCode
     || !continuationCodes.has(latestPatternCode);
-  if (slope < -SLOPE_NUDGE
-      && noContinuation
-      && priceStructure?.structure === 'Bearish') {
+
+  // 7a. FA state + bearish structure: was -18, now -10. And only when
+  // pressure actually leans long against the bearish read.
+  if (aiState?.stateCode === 'FA'
+      && dominance.endsWith('bearish')
+      && preLong > 55) {
     long  -= 10;
     short += 10;
-    reasons.push('penalty: negative slope + no continuation + bearish structure (-10 long)');
+    reasons.push('penalty: FA state + bearish structure (-10 long)');
   }
 
-  // 7d. Symmetric upside penalty — bullish slope + no continuation +
-  //     bullish structure with mismatch... actually this case is
-  //     usually correct, so no penalty. We're guarding AGAINST
-  //     unwarranted bullish drift, not vice versa. But if pressure is
-  //     long-heavy while gold is trending down, dampen:
-  if (goldTrend === 'down' && long > 65) {
-    const overshoot = long - 65;
-    long  -= overshoot * 0.5;     // pull halfway back toward 65
-    short = 100 - long;
-    reasons.push(`penalty: gold-down contradiction dampener (long → ${Math.round(long)})`);
+  // 7b. Repeated FA chain + LH+LL: was -12, now -6.
+  if (faChain && priceStructure?.structure === 'Bearish' && preLong > 55) {
+    long  -= 6;
+    short += 6;
+    reasons.push('penalty: repeated FA chain + LH/LL (-6 long)');
   }
-  // Symmetric: gold up + short > 65 → dampen short.
-  if (goldTrend === 'up' && short > 65) {
-    const overshoot = short - 65;
+
+  // 7c. Negative slope + no continuation + bearish structure: was
+  // -10, now -5.
+  if (slope < -SLOPE_NUDGE
+      && noContinuation
+      && priceStructure?.structure === 'Bearish'
+      && preLong > 55) {
+    long  -= 5;
+    short += 5;
+    reasons.push('penalty: negative slope + no continuation + bearish structure (-5 long)');
+  }
+
+  // 7d. Gold-trend dampeners — raised threshold from 65 to 70 so they
+  // only kick in when pressure is materially against gold. Halfway
+  // pullback toward 70 (not 65), so the cap effect is much milder.
+  if (goldTrend === 'down' && long > 70) {
+    const overshoot = long - 70;
+    long  -= overshoot * 0.5;
+    short = 100 - long;
+    reasons.push(`penalty: gold-down dampener (long → ${Math.round(long)})`);
+  }
+  if (goldTrend === 'up' && short > 70) {
+    const overshoot = short - 70;
     short -= overshoot * 0.5;
     long  = 100 - short;
-    reasons.push(`penalty: gold-up contradiction dampener (short → ${Math.round(short)})`);
+    reasons.push(`penalty: gold-up dampener (short → ${Math.round(short)})`);
   }
 
-  // ── 8. Sanity guard — contradiction resolution, not clipping ────
-  // When structural dominance and pressure point in opposite directions
-  // by a wide margin, the displayed pressure must capitulate. This is
-  // the loudest correction; reserved for cases where the gap would
-  // otherwise show "LONG 78%" on a clean bearish bleed.
-  if (dominance === 'bearish' && long > 70) {
-    long  = 58;
-    short = 42;
-    reasons.push('sanity: bearish dominance vs long>70 → reset 58/42');
+  // ── 8. NEW v13.1.1: structural amplification ───────────────────
+  //
+  // When dominance AGREES with the existing pressure lean, push the
+  // pressure further toward that side. The pre-v13.1.1 system only
+  // suppressed contradictions — it never rewarded confirmation, so a
+  // 60/40 lean stayed 60/40 no matter how much structural evidence
+  // piled on. v13.1.1 amplifies up to the natural expressive ranges:
+  //   weak     45-55    no amplification
+  //   moderate 60-40    +5 boost
+  //   strong   70-30    +10 boost (score |≥| 60)
+  //   extreme  80-20    +15 boost (score |≥| 80 + faChain reclaim /
+  //                                strong structure agreement)
+
+  // 8a. Bullish dominance + long already leans: boost.
+  if ((dominance === 'bullish' || dominance === 'fragile_bullish')
+      && preLong >= 50) {
+    let boost = 0;
+    if (score >= 80) boost = 15;
+    else if (score >= 60) boost = 10;
+    else if (score >= 40) boost =  5;
+    else if (score >= 20) boost =  3;
+    if (boost > 0) {
+      long  += boost;
+      short -= boost;
+      reasons.push(`amplify: bullish dominance (+${boost} long)`);
+    }
   }
-  if (dominance === 'bullish' && short > 70) {
-    short = 58;
-    long  = 42;
-    reasons.push('sanity: bullish dominance vs short>70 → reset 42/58');
-  }
-  // Softer guard for fragile_*: still resolve obvious contradictions
-  // but with a smaller correction so the band stays "fragile".
-  if (dominance === 'fragile_bearish' && long > 70) {
-    long  = 62;
-    short = 38;
-    reasons.push('sanity: fragile_bearish vs long>70 → 62/38');
-  }
-  if (dominance === 'fragile_bullish' && short > 70) {
-    short = 62;
-    long  = 38;
-    reasons.push('sanity: fragile_bullish vs short>70 → 62/38');
+  // 8b. Bearish dominance + short already leans: boost.
+  if ((dominance === 'bearish' || dominance === 'fragile_bearish')
+      && preShort >= 50) {
+    let boost = 0;
+    if (score <= -80) boost = 15;
+    else if (score <= -60) boost = 10;
+    else if (score <= -40) boost =  5;
+    else if (score <= -20) boost =  3;
+    if (boost > 0) {
+      short += boost;
+      long  -= boost;
+      reasons.push(`amplify: bearish dominance (+${boost} short)`);
+    }
   }
 
-  // Final clamp + integerise.
+  // ── 9. Sanity guard — tiered, much softer in v13.1.1 ───────────
+  //
+  // Pre-v13.1.1 the guard fired on dominance + skew alone and reset
+  // to 58/42 — a 12-pt forced move that crushed expressiveness.
+  // v13.1.1 only fires when MULTIPLE converging signals point the
+  // same way:
+  //
+  //   sev = count({
+  //     score |>=| 60                 — extreme dominance
+  //     faChain                       — repeated FA evidence
+  //     clean structure agreeing      — confidence ≥ 0.6 + matching
+  //     extreme skew against          — pressure > 75 vs dominance
+  //   })
+  //
+  //   sev >= 3 → hard cap  65/35  (still less harsh than the old 58/42)
+  //   sev == 2 → soft cap  70/30
+  //   sev <= 1 → no cap (penalties + amplification do the work)
+
+  const cleanStruct =
+    priceStructure
+    && priceStructure.confidence >= 0.6
+    && priceStructure.structure !== 'Unclear';
+  const structAgreesBearish = cleanStruct
+    && priceStructure!.structure === 'Bearish';
+  const structAgreesBullish = cleanStruct
+    && priceStructure!.structure === 'Bullish';
+
+  function bearishSanity(): void {
+    let sev = 0;
+    if (score <= -60)        sev++;
+    if (faChain)             sev++;
+    if (structAgreesBearish) sev++;
+    if (long > 75)           sev++;
+    if (sev >= 3) {
+      long = 65; short = 35;
+      reasons.push(`sanity: bearish triple-trigger (sev=${sev}) → 65/35`);
+    } else if (sev === 2 && long > 75) {
+      long = 70; short = 30;
+      reasons.push(`sanity: bearish double-trigger (sev=2) → 70/30`);
+    }
+  }
+  function bullishSanity(): void {
+    let sev = 0;
+    if (score >=  60)        sev++;
+    // reclaim acts like the "structural conviction" signal on the
+    // bullish side (we don't have a positive analog to faChain).
+    if (reclaimedAfterFA(recentHistory)) sev++;
+    if (structAgreesBullish) sev++;
+    if (short > 75)          sev++;
+    if (sev >= 3) {
+      short = 65; long = 35;
+      reasons.push(`sanity: bullish triple-trigger (sev=${sev}) → 35/65`);
+    } else if (sev === 2 && short > 75) {
+      short = 70; long = 30;
+      reasons.push(`sanity: bullish double-trigger (sev=2) → 30/70`);
+    }
+  }
+  if (dominance === 'bearish'         || dominance === 'fragile_bearish') bearishSanity();
+  if (dominance === 'bullish'         || dominance === 'fragile_bullish') bullishSanity();
+
+  // Final clamp + integerise. Range is 15..85 — the natural expressive
+  // band the v13.1 spec calls for; the dominance pass can no longer
+  // drag everything into the 48-52 dead zone.
   const adjustedLong  = clamp(Math.round(long),  15, 85);
   const adjustedShort = 100 - adjustedLong;
 

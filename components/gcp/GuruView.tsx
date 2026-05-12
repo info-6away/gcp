@@ -352,7 +352,7 @@ function GuruHeader({
                   width: 4, height: 4, borderRadius: '50%',
                   background: '#d4a028',
                 }} />
-                Low state certainty — structure still forming.
+                Low environment clarity — structure still forming.
               </div>
             )}
           </>
@@ -360,12 +360,14 @@ function GuruHeader({
 
         {/* v11.34: relabelled CONFIDENCE → STATE CERTAINTY so it
             stops competing semantically with TRANSITION LIKELIHOOD.
-            Same value (aiState.confidence × 100), clearer name —
-            "how stable / certain the current state is" vs "how
-            likely we transition to the next state". */}
+            v13.1.1: relabelled again → ENVIRONMENT CLARITY. Reads as
+            "how clearly the current environment is resolving" which
+            matches what the metric actually communicates better than
+            the prior "state certainty" framing. Same value
+            (aiState.confidence × 100). */}
         {stateConfPct != null && (
           <div
-            title="How stable / certain the current Guru state is"
+            title="How clearly the current environment is resolving"
             style={{
               marginTop: 8,
               fontSize: 10, color: 'var(--fg-3)',
@@ -374,7 +376,7 @@ function GuruHeader({
             }}
           >
             <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
-              STATE CERTAINTY
+              ENVIRONMENT CLARITY
             </span>
             <span style={{
               color: 'var(--fg-1)', marginLeft: 6,

@@ -910,7 +910,7 @@ function ThesisHero({
       }}>
         {conf != null && (
           <span>
-            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>CERTAINTY </span>
+            <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>CLARITY </span>
             <span style={{
               color: 'var(--fg-1)', fontWeight: 600,
               fontVariantNumeric: 'tabular-nums',
