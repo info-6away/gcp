@@ -28,7 +28,11 @@
 
 import type { GcpStateResponse, GcpStatePayload } from '@/lib/engine-gcp';
 
-export type LadderState = 'CS' | 'IS' | 'AT' | 'FA';
+// v12.1: ladder widened to include PS / SS / CL / DS so the new
+// Plateau State overlay has somewhere to point next. The original four
+// stay first because the helpers below still treat them as the
+// canonical laddered states.
+export type LadderState = 'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS';
 
 export interface TransitionResult {
   nextLikelyState?:      LadderState;
@@ -60,10 +64,11 @@ export function deriveNextState(inputs: TransitionInputs): TransitionResult {
   if (!aiState) return {};
   const state = aiState.stateCode;
 
-  // Only run on the four laddered states. SH/DS handled by shockDecay
-  // upstream; SS / CL / DD don't have well-defined ladder targets in
-  // this v1, so they fall through to "no overlay".
-  if (state !== 'CS' && state !== 'IS' && state !== 'AT' && state !== 'FA') {
+  // v12.1: SS + PS now have laddered targets too. SH / DS / CL / DD
+  // still fall through to "no overlay" — they're terminal states from
+  // this ladder's perspective.
+  if (state !== 'CS' && state !== 'IS' && state !== 'AT' && state !== 'FA'
+      && state !== 'SS' && state !== 'PS') {
     return {};
   }
 
@@ -175,6 +180,69 @@ export function deriveNextState(inputs: TransitionInputs): TransitionResult {
     }
   }
 
+  // ── v12.1: SS / PS branches ────────────────────────────────
+
+  // SS → PS: synchronization maturing into plateau. Hint only —
+  // derivePlateauStateOverlay() runs AFTER this and may actually
+  // promote the displayed state, in which case the ladder shows
+  // PS → ... below on the next classification.
+  if (state === 'SS') {
+    const lateMature = aiState.phase === 'Late' || aiState.phase === 'Exhausted';
+    if (lateMature && Math.abs(slope) < SLOPE_RISING) {
+      return {
+        nextLikelyState:      'PS',
+        transitionConfidence: applyMods(0.55, {
+          storyAligned: storyState === 'Plateau forming'
+                     || storyState === 'Plateau decaying',
+        }),
+        transitionReason:     'Synchronization maturing into plateau',
+      };
+    }
+  }
+
+  // PS branches — climax / discharge / compression / re-acceleration.
+  if (state === 'PS') {
+    // PS → CL: volatility expansion or curvature spike from plateau.
+    if (Math.abs(curv) > 0.30) {
+      return {
+        nextLikelyState:      'CL',
+        transitionConfidence: applyMods(0.55),
+        transitionReason:     'Curvature spiking from plateau → climax risk',
+      };
+    }
+    // PS → DS: slope turning sharply negative-of-direction.
+    const dischargeDown =
+      (dir === 'Up'   && slope < -SLOPE_RISING) ||
+      (dir === 'Down' && slope >  SLOPE_RISING);
+    if (dischargeDown) {
+      return {
+        nextLikelyState:      'DS',
+        transitionConfidence: applyMods(0.60),
+        transitionReason:     'Direction reversing from plateau → discharge',
+      };
+    }
+    // PS → AT: rare re-acceleration. Slope re-strengthens in the
+    // SAME direction the SS was pointing.
+    const reAccel =
+      (dir === 'Up'   && slope >  SLOPE_TREND) ||
+      (dir === 'Down' && slope < -SLOPE_TREND);
+    if (reAccel) {
+      return {
+        nextLikelyState:      'AT',
+        transitionConfidence: applyMods(0.45),
+        transitionReason:     'Trend re-accelerating from plateau',
+      };
+    }
+    // PS → CS: energy fades back toward base.
+    if (lowVol) {
+      return {
+        nextLikelyState:      'CS',
+        transitionConfidence: applyMods(0.55),
+        transitionReason:     'Plateau energy fading → recompression',
+      };
+    }
+  }
+
   // No clear transition — leave the overlay empty so the UI can
   // render nothing instead of a stale arrow.
   return {};
@@ -188,6 +256,11 @@ export function ladderColor(code: LadderState): string {
     case 'AT': return '#22c55e';   // green
     case 'FA': return '#ef4444';   // red
     case 'CS': return '#7F98A3';   // grey
+    // v12.1
+    case 'SS': return '#4dd9e8';   // cyan (sync = ignition family)
+    case 'PS': return '#8a8fb8';   // muted violet (matches stateAccent)
+    case 'CL': return '#d46428';   // climax orange
+    case 'DS': return '#d4a028';   // discharge amber
   }
 }
 
@@ -197,5 +270,10 @@ export function ladderLabel(code: LadderState): string {
     case 'AT': return 'Alignment Trend';
     case 'FA': return 'Failed Alignment';
     case 'CS': return 'Compression';
+    // v12.1
+    case 'SS': return 'Synchronization';
+    case 'PS': return 'Plateau';
+    case 'CL': return 'Climax';
+    case 'DS': return 'Discharge';
   }
 }

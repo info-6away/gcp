@@ -102,6 +102,12 @@ function basePosture(state: GcpStateResponse): ActionPosture {
         return { text: 'Favor continuation — sync trend', tone: 'favor' };
       }
       return { text: 'Observe — sync direction unclear', tone: 'wait' };
+
+    // v12.1: Plateau State — local overlay. Direction is fragile;
+    // existing exposure can be held but fresh entries are off the
+    // table until the plateau resolves into CS / CL / DS / re-AT.
+    case 'PS':
+      return { text: 'Hold / reduce — plateau saturation', tone: 'risk' };
   }
 
   return FALLBACK;
@@ -181,6 +187,10 @@ function deriveMode(state: GcpStateResponse): MarketMode {
     case 'CL': return 'Exhaustion';
     case 'SH': return 'Exhaustion';
     case 'DD': return 'Ranging';
+    // v12.1: Plateau State maps onto Exhaustion (closest existing
+    // MarketMode label) — saturation behaves like the tail-end of a
+    // trend more than continuation.
+    case 'PS': return 'Exhaustion';
   }
   return 'No Signal';
 }

@@ -113,11 +113,17 @@ export type GcpStateResponse = {
     | 'Climax State'
     | 'Shock State'
     | 'Failed Alignment State'
-    | 'Discharge State';
+    | 'Discharge State'
+    // v12.1: local overlay — Engine never returns Plateau State.
+    // derivePlateauStateOverlay() upgrades a mature SS into PS when
+    // saturation conditions are met. Lives in this type only so the
+    // overlay can flow through the existing rendering pipeline.
+    | 'Plateau State';
 
   stateCode:
     | 'CS' | 'DD' | 'IS' | 'AT' | 'SS'
-    | 'CL' | 'SH' | 'FA' | 'DS';
+    | 'CL' | 'SH' | 'FA' | 'DS'
+    | 'PS';
 
   direction: 'Up' | 'Down' | 'Neutral' | 'Mixed';
   phase:     'Early' | 'Mid' | 'Late' | 'Exhausted';
@@ -139,7 +145,9 @@ export type GcpStateResponse = {
   // lib/stateTransition.deriveNextState() AFTER anchor + shockDecay
   // — never sent by the Engine. Optional so existing call sites that
   // construct mock responses (tests / fallbacks) keep type-checking.
-  nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA';
+  // v12.1: widened to include PS / SS / CL / DS so the ladder can
+  // describe transitions out of Plateau State.
+  nextLikelyState?:      'CS' | 'IS' | 'AT' | 'FA' | 'SS' | 'PS' | 'CL' | 'DS';
   transitionConfidence?: number;   // 0.25..0.90
   transitionReason?:     string;
 

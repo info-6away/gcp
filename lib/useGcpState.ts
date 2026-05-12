@@ -60,6 +60,7 @@ import { appendAiStateHistory } from '@/lib/aiStateHistory';
 import { anchorAiState } from '@/lib/aiStateAnchor';
 import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
+import { derivePlateauStateOverlay } from '@/lib/plateauState';
 
 const PREFS_LS_KEY = 'gcpro-settings';
 
@@ -517,7 +518,7 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
         });
         // v12.0.1: carry the proxy's stale + _meta fields through onto
         // the final response so the Guru header chip can render them.
-        const finalResp: GcpStateResponse = {
+        const respWithPressure: GcpStateResponse = {
           ...withTransition,
           longPressure:        pressure.longPressure,
           shortPressure:       pressure.shortPressure,
@@ -534,6 +535,47 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             short: pressure.shortPressure,
             band:  pressure.confidenceBand,
             why:   pressure.explanation,
+          });
+        }
+
+        // v12.1: Plateau State overlay. Pure local rename of SS into
+        // PS when saturation conditions converge. Runs AFTER pressure
+        // so it can inspect the skew. Other state codes pass through
+        // unchanged. When upgraded, the helper dampens pressure toward
+        // neutral and shaves 0.05 off confidence to communicate that
+        // the displayed state is a local read, not Engine ground truth.
+        const latestPatternCode =
+          cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode ?? null;
+        const plateau = derivePlateauStateOverlay({
+          aiState:      respWithPressure,
+          patternStory: payload.patternStory,
+          metrics:      payload.metrics,
+          directionalPressure: {
+            longPressure:  respWithPressure.longPressure,
+            shortPressure: respWithPressure.shortPressure,
+            pressureBand:  respWithPressure.pressureBand,
+          },
+          transition: { nextLikelyState: respWithPressure.nextLikelyState },
+          regime:            cur.regime.code,
+          latestPatternCode,
+        });
+        const finalResp: GcpStateResponse = plateau.response;
+        if (isDev() && respWithPressure.stateCode === 'SS') {
+          // Only log when SS was the candidate — avoids noise on every
+          // unrelated classification.
+          console.log('[PLATEAU STATE]', {
+            upgraded: plateau.upgraded,
+            from:     'SS',
+            to:       finalResp.stateCode,
+            reasons:  plateau.reasons,
+            pressure: {
+              long:  finalResp.longPressure,
+              short: finalResp.shortPressure,
+            },
+            slope:    payload.metrics?.slope,
+            phase:    anchored.phase,
+            regime:   cur.regime.code,
+            pattern:  latestPatternCode,
           });
         }
 
@@ -569,6 +611,13 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
               state:      finalResp.state,
               confidence: finalResp.confidence,
             },
+            // v12.1: plateau overlay summary for traceability. Empty
+            // when SS wasn't a candidate; reasons[] populated when the
+            // overlay actually fired.
+            plateauOverlay: respWithPressure.stateCode === 'SS' ? {
+              upgraded: plateau.upgraded,
+              reasons:  plateau.reasons,
+            } : null,
             nextLikelyState: finalResp.nextLikelyState ?? null,
             directionalPressure: {
               long:  pressure.longPressure,
@@ -638,16 +687,21 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           // v11.26.1: history records the ANCHORED classification so
           // Research statistics reflect what the user actually saw.
           const lastSeries = cur.series[cur.series.length - 1];
+          // v12.1: history records the DISPLAYED state (post-plateau)
+          // so the State Flow ribbon shows PS when applicable. When
+          // the overlay upgraded SS → PS, also record originalStateCode
+          // + localOverlay + overlayReasons so future Research can
+          // correlate SS vs PS outcomes.
           appendAiStateHistory({
             timestamp:       Date.now(),
             symbol:          cur.symbol,
             timeframe:       cur.timeframe,
-            state:           anchored.state,
-            stateCode:       anchored.stateCode,
-            phase:           anchored.phase,
-            direction:       anchored.direction,
-            confidence:      anchored.confidence,
-            marketBias:      anchored.marketBias,
+            state:           finalResp.state,
+            stateCode:       finalResp.stateCode,
+            phase:           finalResp.phase,
+            direction:       finalResp.direction,
+            confidence:      finalResp.confidence,
+            marketBias:      finalResp.marketBias,
             regime:          cur.regime.code,
             netVariance:     lastSeries ? lastSeries.v : 0,
             patternCode:     cur.recentPatterns[cur.recentPatterns.length - 1]?.patternCode,
@@ -657,9 +711,15 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             // v11.36: snapshot directional pressure alongside the anchored
             // classification so future research can correlate environment
             // bias % with actual price moves.
-            longPressure:    pressure.longPressure,
-            shortPressure:   pressure.shortPressure,
-            pressureBand:    pressure.confidenceBand,
+            // v12.1: post-overlay pressure (PS dampens these toward 50/50).
+            longPressure:    finalResp.longPressure,
+            shortPressure:   finalResp.shortPressure,
+            pressureBand:    finalResp.pressureBand,
+            ...(plateau.upgraded ? {
+              originalStateCode: 'SS',
+              localOverlay:      'plateau' as const,
+              overlayReasons:    plateau.reasons,
+            } : {}),
           });
         }
       } else {

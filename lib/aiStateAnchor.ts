@@ -52,6 +52,11 @@ const STATE_LABELS: Record<StateCode, GcpStateResponse['state']> = {
   SH: 'Shock State',
   FA: 'Failed Alignment State',
   DS: 'Discharge State',
+  // v12.1: PS is a local overlay applied AFTER anchor + transition by
+  // derivePlateauStateOverlay(). The anchor itself never overrides TO
+  // PS; the label is here only to keep the Record exhaustive against
+  // the widened StateCode union.
+  PS: 'Plateau State',
 };
 
 // Codes that are CONSISTENT with each story.state. If the Engine

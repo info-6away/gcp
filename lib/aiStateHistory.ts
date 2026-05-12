@@ -39,6 +39,14 @@ export interface AiStateHistoryRecord {
   longPressure?:    number;
   shortPressure?:   number;
   pressureBand?:    'weak' | 'moderate' | 'strong';
+
+  // v12.1: local overlay metadata. When the displayed stateCode came
+  // from derivePlateauStateOverlay() (SS → PS) we record both the
+  // original Engine answer AND the overlay reasons so future Research
+  // can compare SS vs PS outcomes.
+  originalStateCode?: string;
+  localOverlay?:      'plateau';
+  overlayReasons?:    string[];
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -91,6 +99,13 @@ export interface AiStateHistoryInput {
   longPressure?:    number;
   shortPressure?:   number;
   pressureBand?:    'weak' | 'moderate' | 'strong';
+
+  // v12.1: local overlay metadata — populated when SS was upgraded
+  // to PS by derivePlateauStateOverlay(). originalStateCode is the
+  // pre-overlay state code so Research can correlate.
+  originalStateCode?: string;
+  localOverlay?:      'plateau';
+  overlayReasons?:    string[];
 }
 
 // Append a single record. Returns the new history. Dedupes against

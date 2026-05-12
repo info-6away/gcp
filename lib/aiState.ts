@@ -63,6 +63,9 @@ function stateAccent(code: StateCode): string | null {
     case 'IS': return '#4dd9e8';               // Ignition (cyan)
     case 'DD': return 'var(--fg-3)';           // Dead Drift (neutral)
     case 'DS': return '#d4a028';               // Discharge (amber)
+    // v12.1: Plateau State — muted violet / silver-blue. Caution, not
+    // failure: distinct from SS (sync, cyan) and CL (climax, orange).
+    case 'PS': return '#8a8fb8';
     default:   return null;
   }
 }
@@ -87,4 +90,8 @@ export const DEFAULT_INTERPRETATION: Record<StateCode, string> = {
   SH: 'Shock event. Expect extreme volatility either way.',
   FA: 'Sync attempt failed. Mean-reversion / fade setup.',
   DS: 'Trend discharging. Momentum fading.',
+  // v12.1: local overlay — synchronization that has matured into a
+  // saturated plateau. Direction is fragile, exposure should be
+  // managed; not a failure but not a fresh-entry zone either.
+  PS: 'Synchronized coherence has matured into plateau; direction is fragile.',
 };

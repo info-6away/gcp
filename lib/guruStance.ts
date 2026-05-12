@@ -100,6 +100,17 @@ export function deriveStance(aiState: GcpStateResponse | null): GuruStance | nul
         mode:      'Climax / exhaustion risk',
         execution: 'No new entries; trim into strength',
       };
+
+    // v12.1: Plateau State — local overlay above SS Late/Exhausted +
+    // weak pressure + flat slope. Reads as "edge is fragile" rather
+    // than "trend is broken"; the right action is to manage existing
+    // exposure rather than initiate fresh entries.
+    case 'PS':
+      return {
+        stance:    'Hold / reduce',
+        mode:      'Plateau / Saturation',
+        execution: 'Manage exposure; avoid fresh entries until direction resolves',
+      };
   }
 
   return null;
