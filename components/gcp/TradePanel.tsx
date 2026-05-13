@@ -67,6 +67,9 @@ import {
   type InheritedTrend, type MomentumState,
 } from '@/lib/temporalPressure';
 import {
+  derivePressureDriver, deriveAlignment, deriveTrendIntegrity,
+} from '@/lib/pressureSemantics';
+import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
@@ -1097,59 +1100,57 @@ function PressureGauge({ aiState }: { aiState: GcpStateResponse | null }) {
         </div>
       )}
 
-      {/* v13.1: STRUCTURE line — local structural dominance read
-          surfaced as a small muted row. Distinct from pressure: pressure
-          is the coherence-level tendency, structure is the actual price
-          control. When the two disagree the dominance label tells the
-          user "the chart is bearish even though pressure leans long".
-          Hidden when no dominance has been derived yet (first render
-          before any classification). */}
-      {aiState?.structureDominance && (
-        <div style={{
-          marginTop: 4, display: 'flex', alignItems: 'baseline', gap: 8,
-          fontSize: 10, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.06em', color: 'var(--fg-4)',
-        }}>
-          <span style={{ letterSpacing: '0.16em' }}>STRUCTURE</span>
-          <span style={{
-            color: dominanceColor(aiState.structureDominance as StructuralDominance),
-            fontWeight: 600, letterSpacing: '0.04em',
+      {/* v13.4: PRESSURE DRIVER — explains WHY pressure is what it
+          is. Reads as "X favoring Y pressure". Lives inside the
+          pressure block because it's pressure-side semantics. */}
+      {(() => {
+        const driver = derivePressureDriver(aiState);
+        if (!driver || driver === aiState?.pressureExplanation) return null;
+        return (
+          <div style={{
+            marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2,
+            fontSize: 10, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
           }}>
-            {dominanceLabel(aiState.structureDominance as StructuralDominance)}
-          </span>
-          {typeof aiState.structureScore === 'number' && (
-            <span style={{
-              color: 'var(--fg-4)', fontVariantNumeric: 'tabular-nums',
-              fontSize: 9,
-            }}>
-              · score {aiState.structureScore >= 0 ? '+' : ''}{aiState.structureScore}
+            <span style={{ letterSpacing: '0.16em', color: 'var(--fg-4)' }}>
+              PRESSURE DRIVER
             </span>
-          )}
-        </div>
-      )}
+            <span style={{
+              color: 'var(--fg-2)', letterSpacing: '0.02em',
+              fontFamily: 'inherit', lineHeight: 1.45,
+            }}>
+              {driver}
+            </span>
+          </div>
+        );
+      })()}
 
-      {/* v13.2: MOMENTUM line — directional inheritance + trajectory
-          class. Sits directly under STRUCTURE so the user reads
-          environment → structure → momentum top-down. Muted styling
-          on purpose; never overpowers the gauge or stance block. */}
-      {aiState?.momentumState && (
-        <div style={{
-          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 8,
-          fontSize: 10, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.06em', color: 'var(--fg-4)',
-        }}>
-          <span style={{ letterSpacing: '0.16em' }}>MOMENTUM</span>
-          <span style={{
-            color: momentumColor(aiState.momentumState as MomentumState),
-            fontWeight: 600, letterSpacing: '0.04em',
+      {/* v13.4: ALIGNMENT — whether structure and pressure agree. The
+          critical decision-support row: divergence is INTENTIONAL,
+          not a bug, and the user must see it framed as such. */}
+      {(() => {
+        const align = deriveAlignment(aiState);
+        if (align.status === 'unclear' && !aiState?.structureDominance) return null;
+        const icon = align.status === 'aligned'   ? '✓'
+                   : align.status === 'diverging' ? '⚠'
+                   :                                 '·';
+        return (
+          <div style={{
+            marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 8,
+            fontSize: 10, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em', color: 'var(--fg-4)',
           }}>
-            {momentumLabel(
-              aiState.momentumState as MomentumState,
-              (aiState.inheritedTrend ?? 'neutral') as InheritedTrend,
-            )}
-          </span>
-        </div>
-      )}
+            <span style={{ letterSpacing: '0.16em' }}>ALIGNMENT</span>
+            <span style={{
+              color: align.color,
+              fontWeight: 600, letterSpacing: '0.02em',
+              fontFamily: 'inherit',
+            }}>
+              {icon} {align.label}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Stance — Sections 3 from the spec folded into the same panel
           so STANCE / MODE / EXECUTION sit visually next to the gauge
@@ -1194,6 +1195,101 @@ function PressureGauge({ aiState }: { aiState: GcpStateResponse | null }) {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── v13.4: MARKET CONTEXT (structure / momentum / trend integrity)
+//
+// Sibling to PressureGauge inside the hero stack. Pulled out so
+// structural reads never visually fuse with pressure direction —
+// structure communicates "is the trend skeleton intact?", pressure
+// communicates "which way is the environment leaning?". Two questions.
+
+function MarketContextCard({ aiState }: { aiState: GcpStateResponse | null }) {
+  if (!aiState) return null;
+  const dom            = aiState.structureDominance;
+  const momentumState  = aiState.momentumState;
+  const inheritedTrend = aiState.inheritedTrend;
+  const trendIntegrity = deriveTrendIntegrity(aiState);
+
+  if (!dom && !momentumState) return null;
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '2px solid var(--fg-3)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        MARKET CONTEXT
+      </div>
+      {dom && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: '128px 1fr', gap: 10,
+          alignItems: 'baseline',
+          fontSize: 11, fontFamily: 'var(--font-mono)',
+        }}>
+          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+            MARKET STRUCTURE
+          </span>
+          <span style={{
+            color: dominanceColor(dom as StructuralDominance),
+            fontWeight: 600, letterSpacing: '0.02em',
+          }}>
+            {dominanceLabel(dom as StructuralDominance)}
+            {typeof aiState.structureScore === 'number' && (
+              <span style={{
+                color: 'var(--fg-4)', fontVariantNumeric: 'tabular-nums',
+                fontSize: 9, marginLeft: 6,
+              }}>
+                · score {aiState.structureScore >= 0 ? '+' : ''}{aiState.structureScore}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+      {momentumState && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: '128px 1fr', gap: 10,
+          alignItems: 'baseline',
+          fontSize: 11, fontFamily: 'var(--font-mono)',
+        }}>
+          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+            MOMENTUM
+          </span>
+          <span style={{
+            color: momentumColor(momentumState as MomentumState),
+            fontWeight: 600, letterSpacing: '0.02em',
+          }}>
+            {momentumLabel(
+              momentumState as MomentumState,
+              (inheritedTrend ?? 'neutral') as InheritedTrend,
+            )}
+          </span>
+        </div>
+      )}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '128px 1fr', gap: 10,
+        alignItems: 'baseline',
+        fontSize: 11, fontFamily: 'var(--font-mono)',
+      }}>
+        <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+          TREND INTEGRITY
+        </span>
+        <span style={{
+          color: trendIntegrity.color,
+          fontWeight: 600, letterSpacing: '0.02em',
+        }}>
+          {trendIntegrity.label}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1690,7 +1786,14 @@ function TradePanelImpl({
             netVariance={netVariance}
             goldTrend={goldTrend}
           />
-          <PressureGauge aiState={aiState} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <PressureGauge aiState={aiState} />
+            {/* v13.4: MARKET CONTEXT lives directly under the pressure
+                gauge — same column, separate card. Visually clear that
+                structure / momentum are a different category from
+                pressure direction. */}
+            <MarketContextCard aiState={aiState} />
+          </div>
         </div>
 
         {/* Meso row: Environment Risk · State Flow · Historical Analog. */}

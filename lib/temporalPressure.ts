@@ -307,19 +307,25 @@ export function momentumLabel(
   momentumState: MomentumState,
   inheritedTrend: InheritedTrend,
 ): string {
-  const dir = inheritedTrend === 'up'   ? 'bullish'
-            : inheritedTrend === 'down' ? 'bearish'
-            :                              null;
+  // v13.4: concrete momentum phrasing keyed off direction-of-inheritance.
+  // The pre-v13.4 "Accelerating" / "Decelerating" copy was abstract —
+  // useful for debugging but didn't communicate WHICH direction's
+  // momentum was changing. The new copy is read-aloud-friendly.
   switch (momentumState) {
     case 'accelerating':
-      return dir ? `Accelerating ${dir} expansion`  : 'Accelerating';
+      if (inheritedTrend === 'up')   return 'Bullish acceleration';
+      if (inheritedTrend === 'down') return 'Bearish acceleration';
+      return 'Acceleration without direction';
     case 'decelerating':
-      return dir ? `Decelerating ${dir} expansion`  : 'Decelerating';
+      if (inheritedTrend === 'up')   return 'Bullish momentum fading';
+      if (inheritedTrend === 'down') return 'Bearish momentum fading';
+      return 'Momentum fading';
     case 'exhausted':
-      return dir ? `${dir.charAt(0).toUpperCase() + dir.slice(1)} exhaustion`
-                 : 'Exhausted';
+      if (inheritedTrend === 'up')   return 'Bullish exhaustion';
+      if (inheritedTrend === 'down') return 'Bearish exhaustion';
+      return 'Momentum exhausted';
     case 'transitioning':
-      return 'Regime transitioning';
+      return 'Momentum neutralizing';
   }
 }
 

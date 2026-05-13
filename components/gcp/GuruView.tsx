@@ -49,6 +49,9 @@ import {
   momentumLabel, momentumColor,
   type InheritedTrend, type MomentumState,
 } from '@/lib/temporalPressure';
+import {
+  derivePressureDriver, deriveAlignment, deriveTrendIntegrity,
+} from '@/lib/pressureSemantics';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
 
@@ -321,15 +324,18 @@ function GuruHeader({
             has attached pressure values. */}
         {aiState?.longPressure != null && aiState?.shortPressure != null && (
           <DirectionalPressureBlock
-            structureDominance={aiState.structureDominance}
-            momentumState={aiState.momentumState}
-            inheritedTrend={aiState.inheritedTrend}
+            aiStateForSemantics={aiState}
             longPct={aiState.longPressure}
             shortPct={aiState.shortPressure}
             band={aiState.pressureBand ?? 'weak'}
             explanation={aiState.pressureExplanation ?? ''}
           />
         )}
+
+        {/* v13.4: MARKET CONTEXT — structure / momentum / trend
+            integrity. Pulled out of the pressure block so the two
+            categories never visually fuse. */}
+        <MarketContextBlock aiState={aiState} />
 
         {/* v11.29: state-transition ladder overlay — SECONDARY (lighter).
             Sits below the state block so the user sees both "what is"
@@ -604,21 +610,18 @@ function StanceRow({
 
 function DirectionalPressureBlock({
   longPct, shortPct, band, explanation,
-  // v13.1: optional structural dominance label, rendered as a tiny
-  // muted row under the explanation when present. Subtle on purpose —
-  // the Guru tab is for environment reads, not execution density.
-  structureDominance,
-  // v13.2: optional momentum line under STRUCTURE. Same muted styling.
-  momentumState,
-  inheritedTrend,
+  // v13.4: pressure block now CARRIES pressure semantics only —
+  // pressure driver + alignment. Structure / momentum live in the
+  // separate MarketContextBlock below this. The aiState reference is
+  // passed in so the helpers can read the structureDominance /
+  // momentumState / pressureExplanation fields already attached.
+  aiStateForSemantics,
 }: {
   longPct:     number;
   shortPct:    number;
   band:        'weak' | 'moderate' | 'strong';
   explanation: string;
-  structureDominance?: GcpStateResponse['structureDominance'];
-  momentumState?:      GcpStateResponse['momentumState'];
-  inheritedTrend?:     GcpStateResponse['inheritedTrend'];
+  aiStateForSemantics?: GcpStateResponse | null;
 }) {
   const longColor   = '#4dd9e8';        // cyan, matches existing accent
   const shortColor  = '#c45a5a';        // muted red, not screaming
@@ -697,38 +700,130 @@ function DirectionalPressureBlock({
         </div>
       )}
 
-      {/* v13.1: STRUCTURE line — local structural dominance read.
-          Subtle, single muted row, never overpowers the gauge. Hidden
-          when no dominance has been derived yet. */}
-      {structureDominance && (
-        <div style={{
-          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 6,
-          fontSize: 9, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.06em', color: 'var(--fg-4)',
-        }}>
-          <span style={{ letterSpacing: '0.16em' }}>STRUCTURE</span>
-          <span style={{
-            color: dominanceColor(structureDominance as StructuralDominance),
-            fontWeight: 600, letterSpacing: '0.04em',
+      {/* v13.4: PRESSURE DRIVER — one-line "why pressure is what it
+          is" derived from state + dominance + momentum + the existing
+          pressureExplanation. Sits inside the pressure block (this
+          block) because it's pressure-side semantics, not structure. */}
+      {(() => {
+        const driver = derivePressureDriver(aiStateForSemantics ?? null);
+        if (!driver || driver === explanation) return null;
+        return (
+          <div style={{
+            marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2,
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
           }}>
-            {dominanceLabel(structureDominance as StructuralDominance)}
+            <span style={{ letterSpacing: '0.16em', color: 'var(--fg-4)' }}>
+              PRESSURE DRIVER
+            </span>
+            <span style={{
+              color: 'var(--fg-2)', letterSpacing: '0.02em',
+              fontFamily: 'inherit', lineHeight: 1.45,
+            }}>
+              {driver}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* v13.4: ALIGNMENT — whether structure and pressure point the
+          same way. Critical because structure ≠ pressure: divergence
+          is intentional, not a bug, and the user needs to see it
+          framed as such. */}
+      {(() => {
+        const align = deriveAlignment(aiStateForSemantics ?? null);
+        if (align.status === 'unclear'
+            && !aiStateForSemantics?.structureDominance) return null;
+        const icon = align.status === 'aligned'   ? '✓'
+                   : align.status === 'diverging' ? '⚠'
+                   :                                 '·';
+        return (
+          <div style={{
+            marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 6,
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em', color: 'var(--fg-4)',
+          }}>
+            <span style={{ letterSpacing: '0.16em' }}>ALIGNMENT</span>
+            <span style={{
+              color: align.color,
+              fontWeight: 600, letterSpacing: '0.02em',
+              fontFamily: 'inherit',
+            }}>
+              {icon} {align.label}
+            </span>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// v13.4: MARKET CONTEXT block — structure / momentum / trend integrity.
+//
+// Pulled OUT of the pressure block so the two categories never visually
+// fuse. Structure communicates "is the trend skeleton intact?"; pressure
+// communicates "which side is the environment leaning right now?".
+// These are different questions and the new block makes that explicit.
+// ────────────────────────────────────────────────────────────────────
+
+function MarketContextBlock({ aiState }: { aiState: GcpStateResponse | null }) {
+  if (!aiState) return null;
+  const dom            = aiState.structureDominance;
+  const momentumState  = aiState.momentumState;
+  const inheritedTrend = aiState.inheritedTrend;
+  const trendIntegrity = deriveTrendIntegrity(aiState);
+
+  // Nothing to show — keep the layout from rendering an empty box.
+  if (!dom && !momentumState) return null;
+
+  return (
+    <div style={{
+      marginTop: 8,
+      padding: '8px 10px',
+      background: 'rgba(255,255,255,0.018)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '2px solid var(--fg-3)',
+      borderRadius: 3,
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        MARKET CONTEXT
+      </div>
+      {dom && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: '110px 1fr', gap: 10,
+          alignItems: 'baseline',
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.04em',
+        }}>
+          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+            MARKET STRUCTURE
+          </span>
+          <span style={{
+            color: dominanceColor(dom as StructuralDominance),
+            fontWeight: 600,
+          }}>
+            {dominanceLabel(dom as StructuralDominance)}
           </span>
         </div>
       )}
-
-      {/* v13.2: MOMENTUM line — directional inheritance + trajectory
-          class from the temporal pressure layer. Same subtle styling
-          as STRUCTURE. */}
       {momentumState && (
         <div style={{
-          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 6,
-          fontSize: 9, fontFamily: 'var(--font-mono)',
-          letterSpacing: '0.06em', color: 'var(--fg-4)',
+          display: 'grid', gridTemplateColumns: '110px 1fr', gap: 10,
+          alignItems: 'baseline',
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.04em',
         }}>
-          <span style={{ letterSpacing: '0.16em' }}>MOMENTUM</span>
+          <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+            MOMENTUM
+          </span>
           <span style={{
             color: momentumColor(momentumState as MomentumState),
-            fontWeight: 600, letterSpacing: '0.04em',
+            fontWeight: 600,
           }}>
             {momentumLabel(
               momentumState as MomentumState,
@@ -737,6 +832,22 @@ function DirectionalPressureBlock({
           </span>
         </div>
       )}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '110px 1fr', gap: 10,
+        alignItems: 'baseline',
+        fontSize: 10, fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.04em',
+      }}>
+        <span style={{ color: 'var(--fg-4)', letterSpacing: '0.14em', fontSize: 9 }}>
+          TREND INTEGRITY
+        </span>
+        <span style={{
+          color: trendIntegrity.color,
+          fontWeight: 600,
+        }}>
+          {trendIntegrity.label}
+        </span>
+      </div>
     </div>
   );
 }

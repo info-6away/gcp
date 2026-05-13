@@ -461,11 +461,15 @@ export function dominanceColor(d: StructuralDominance): string {
 }
 
 export function dominanceLabel(d: StructuralDominance): string {
+  // v13.4: "control" framing replaced with "intact" / "weakening" so
+  // the structure label cannot be misread as a directional bias call
+  // (which is what pressure communicates). Structure is about whether
+  // the trend skeleton holds, not which side is winning the bar.
   switch (d) {
-    case 'bullish':         return 'Bullish control';
-    case 'fragile_bullish': return 'Fragile bullish recovery';
-    case 'bearish':         return 'Bearish control';
-    case 'fragile_bearish': return 'Fragile bearish bleed';
-    case 'neutral':         return 'Neutral range';
+    case 'bullish':         return 'Bullish trend intact';
+    case 'fragile_bullish': return 'Bullish trend weakening';
+    case 'bearish':         return 'Bearish structure intact';
+    case 'fragile_bearish': return 'Bearish structure weakening';
+    case 'neutral':         return 'Structure neutral / range';
   }
 }
