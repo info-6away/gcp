@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -34,6 +34,33 @@ type ChartTF = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
 const INIT_SIZE: Record<ChartTF, number> = {
   '1m': 500, '5m': 500, '15m': 500, '1h': 500, '4h': 300, '1D': 180,
 };
+
+// v13.5.1: chartTF preference persistence. Default flips from '5m' to
+// '1m' so the price pane feels as alive as the GCP coherence line —
+// 5m bars close every 300s and the visible motion is dominated by the
+// 60s candle-refresh cadence; 1m bars close every 60s and the
+// intrabar live-tick path paints a fluid wick. The user's manual
+// dropdown selection is saved to localStorage and restored on
+// reload, so people who prefer 5m / 15m / 1h aren't forced back to
+// the new default on every visit.
+const CHART_TF_LS_KEY    = 'gcpro-chart-tf';
+const VALID_CHART_TFS    = new Set<ChartTF>(['1m', '5m', '15m', '1h', '4h', '1D']);
+const DEFAULT_CHART_TF: ChartTF = '1m';
+
+function loadChartTF(): ChartTF {
+  if (typeof window === 'undefined') return DEFAULT_CHART_TF;
+  try {
+    const raw = window.localStorage.getItem(CHART_TF_LS_KEY);
+    if (raw && VALID_CHART_TFS.has(raw as ChartTF)) return raw as ChartTF;
+  } catch { /* quota / storage disabled — fall through */ }
+  return DEFAULT_CHART_TF;
+}
+
+function saveChartTF(tf: ChartTF): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(CHART_TF_LS_KEY, tf); }
+  catch { /* */ }
+}
 
 const C = {
   bg:      '#07080a',
@@ -110,6 +137,21 @@ function normalizeCandleColors<T extends CandlestickData>(d: T): T {
   return { ...d, color: col, borderColor: col, wickColor: col };
 }
 
+// v13.5.1: historical bars get a slight opacity reduction so the
+// rightmost (forming) bar reads as the live focal point. Subtle —
+// the eye picks it up as "depth" rather than "fade". The active bar
+// always goes through normalizeCandleColors() unchanged.
+const HISTORICAL_GREEN     = '#1c9c4d';   // 22c55e ~80% saturation
+const HISTORICAL_RED       = '#cc3939';   // ef4444 ~80% saturation
+function dimHistoricalCandle<T extends CandlestickData>(d: T): T {
+  if (typeof d.color === 'string' && d.color.startsWith('rgba(0,0,0,0)')) {
+    return d;
+  }
+  const isUp = (d.close as number) >= (d.open as number);
+  const col  = isUp ? HISTORICAL_GREEN : HISTORICAL_RED;
+  return { ...d, color: col, borderColor: col, wickColor: col };
+}
+
 // Thin wrapper around the shared tdTimeSeries helper. The lazy-scroll
 // path doesn't want the synthetic weekend / extend-to-now passes that
 // fetchCandlesForWindow applies — backfill candles need to land at their
@@ -181,7 +223,35 @@ export default function ChartView({
   useEffect(() => { livePriceRef.current     = livePrice     ?? null; }, [livePrice]);
   useEffect(() => { livePriceTimeRef.current = livePriceTime ?? null; }, [livePriceTime]);
 
-  const [chartTF,       setChartTF]       = useState<ChartTF>('5m');
+  // v13.5.1: live-pulse dot. Tiny absolutely-positioned div tracking
+  // the current bar's close coordinate. Updated imperatively (via ref)
+  // on every cs.update() and on every visible-range change so we
+  // don't trigger React re-renders for what is purely visual feedback.
+  // CSS animation respects prefers-reduced-motion.
+  const pulseDotRef = useRef<HTMLDivElement>(null);
+  const positionPulseDot = useCallback(() => {
+    const dot = pulseDotRef.current;
+    const chart = chartRef.current;
+    const cs = candleSeriesRef.current;
+    if (!dot || !chart || !cs) return;
+    const last = allCandlesRef.current[allCandlesRef.current.length - 1];
+    if (!last || !isValidCandle(last)) { dot.style.display = 'none'; return; }
+    let x: number | null = null;
+    let y: number | null = null;
+    try {
+      x = chart.timeScale().timeToCoordinate(toTime(last.t)) as number | null;
+      y = cs.priceToCoordinate(last.c) as number | null;
+    } catch { /* */ }
+    if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) {
+      dot.style.display = 'none';
+      return;
+    }
+    dot.style.display = 'block';
+    dot.style.left    = `${x}px`;
+    dot.style.top     = `${y}px`;
+  }, []);
+
+  const [chartTF,       setChartTF]       = useState<ChartTF>(() => loadChartTF());
   const [candles,       setCandles]       = useState<Candle[]>([]);
   const [isLoading,     setIsLoading]     = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -328,6 +398,20 @@ export default function ChartView({
   // overlap) or lost recent candles (clipping price to GCP). The honest
   // representation is the right one.
   const displayCandles = candles;
+
+  // v13.5.1: keep the live-pulse dot tracked to the current bar across
+  // pans, zooms, and resizes. The dot updates imperatively via
+  // positionPulseDot — no React re-render on every tick.
+  useEffect(() => {
+    if (!chartReady) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const ts = chart.timeScale();
+    const refresh = () => positionPulseDot();
+    refresh();
+    ts.subscribeVisibleTimeRangeChange(refresh);
+    return () => ts.unsubscribeVisibleTimeRangeChange(refresh);
+  }, [chartReady, positionPulseDot]);
 
   const chartGCPSeries = useMemo(() => {
     if (!series.length) return [];
@@ -623,7 +707,12 @@ export default function ChartView({
       },
     );
 
-    const data: CandlestickData[] = sortedCandles.map(c => {
+    // v13.5.1: per-bar saturation. The LAST candle (rightmost,
+    // currently forming) keeps the full-bright palette so it reads
+    // as live; historical bars get the ~80%-saturation variant.
+    // Subtle on purpose — the eye picks it up as depth, not as fade.
+    const lastIdx = sortedCandles.length - 1;
+    const data: CandlestickData[] = sortedCandles.map((c, i) => {
       const base = {
         time:  toTime(c.t),
         open:  c.o,
@@ -647,7 +736,12 @@ export default function ChartView({
       // OHLC every time. Without this, a later cs.update() that omits
       // the color triplet inherits whatever color stuck from a prior
       // payload — the source of the mixed-direction artifacts.
-      return normalizeCandleColors(base as CandlestickData);
+      // v13.5.1: route historical bars through dimHistoricalCandle;
+      // the active bar stays through the full-bright normalizer so
+      // it visibly stands forward.
+      return i < lastIdx
+        ? dimHistoricalCandle(base as CandlestickData)
+        : normalizeCandleColors(base as CandlestickData);
     });
 
     if (process.env.NODE_ENV !== 'production') {
@@ -667,6 +761,7 @@ export default function ChartView({
     }
 
     try { cs.setData(data); } catch { /* time ordering harmless */ }
+    positionPulseDot();
 
     // v11.20.2: re-apply the latest live tick to the rightmost bar
     // immediately after setData. Without this, the 60 s fetch loop
@@ -695,6 +790,7 @@ export default function ChartView({
               time: toTime(slot), open: bar.o, high: bar.h, low: bar.l, close: bar.c,
             } as CandlestickData));
           } catch { /* */ }
+          positionPulseDot();
           if (process.env.NODE_ENV !== 'production') {
             console.log('[LIVE BAR]', {
               path:     'after-setData',
@@ -748,6 +844,18 @@ export default function ChartView({
       // already passed the v11.13.1 finite + > 0 gate above, but defense
       // in depth keeps the candle pipeline self-consistent.
       if (!isValidCandle(bar)) return;
+      // v13.5.1: at slot rollover, re-paint the just-completed bar
+      // with the dimmed historical palette so it visually recedes —
+      // otherwise it inherits the full-saturation paint from its
+      // live-tick lifetime and the eye reads TWO active bars.
+      if (isValidCandle(last)) {
+        try {
+          cs.update(dimHistoricalCandle({
+            time:  toTime(last.t),
+            open:  last.o, high: last.h, low: last.l, close: last.c,
+          } as CandlestickData));
+        } catch { /* */ }
+      }
       allCandlesRef.current.push(bar);
       try {
         cs.update(normalizeCandleColors({
@@ -755,6 +863,7 @@ export default function ChartView({
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
         } as CandlestickData));
       } catch { /* */ }
+      positionPulseDot();
       // v13.5: unified [LIVE BAR] diagnostic — confirms color decision
       // is per-candle. isUp computed ONLY from this bar's open/close,
       // never from previous candle or external feed.
@@ -794,6 +903,7 @@ export default function ChartView({
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
         } as CandlestickData));
       } catch { /* */ }
+      positionPulseDot();
       if (process.env.NODE_ENV !== 'production') {
         const tfMsHere = CHART_TF_MS[chartTF] ?? 60_000;
         console.log('[LIVE BAR]', {
@@ -1088,7 +1198,15 @@ export default function ChartView({
 
         <select
           value={chartTF}
-          onChange={e => { isInitRef.current = true; setChartTF(e.target.value as ChartTF); }}
+          onChange={e => {
+            const next = e.target.value as ChartTF;
+            isInitRef.current = true;
+            setChartTF(next);
+            // v13.5.1: persist user choice — the next reload restores
+            // whatever they last picked instead of jumping back to
+            // the v13.5.1 '1m' default.
+            saveChartTF(next);
+          }}
           style={{
             background: 'var(--bg-2)',
             border: '1px solid var(--line-2)',
@@ -1215,6 +1333,47 @@ export default function ChartView({
         }}
         onClick={() => setCtxMenu(null)}
       >
+        {/* v13.5.1: LIVE PULSE dot. Tiny cyan halo tracked to the
+            current candle's close, updated imperatively via
+            positionPulseDot(). Respects prefers-reduced-motion. */}
+        <style>{`
+          @keyframes gcpro-live-pulse {
+            0%, 100% {
+              transform: translate(-50%, -50%) scale(1);
+              opacity:   0.95;
+              box-shadow: 0 0 0 0 rgba(77, 217, 232, 0.55);
+            }
+            50% {
+              transform: translate(-50%, -50%) scale(1.25);
+              opacity:   0.75;
+              box-shadow: 0 0 14px 4px rgba(77, 217, 232, 0.25);
+            }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .gcpro-live-pulse {
+              animation: none !important;
+            }
+          }
+        `}</style>
+        <div
+          ref={pulseDotRef}
+          className="gcpro-live-pulse"
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            display:  'none',
+            width:    7,
+            height:   7,
+            borderRadius: '50%',
+            background:   'rgba(77, 217, 232, 0.9)',
+            pointerEvents: 'none',
+            zIndex: 5,
+            transform: 'translate(-50%, -50%)',
+            animation: 'gcpro-live-pulse 1.6s ease-in-out infinite',
+            willChange: 'transform, opacity, box-shadow',
+          }}
+        />
+
         {/* Reaction-window shading + +15 / +30 / +60 min markers for the
             selected pattern. Spans the candle pane only (top 67% of the
             chart container, which matches the 68/32 pane stretch). */}
