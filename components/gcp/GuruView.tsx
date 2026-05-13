@@ -45,6 +45,10 @@ import {
   dominanceColor, dominanceLabel,
   type StructuralDominance,
 } from '@/lib/structuralDominance';
+import {
+  momentumLabel, momentumColor,
+  type InheritedTrend, type MomentumState,
+} from '@/lib/temporalPressure';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
 
@@ -318,6 +322,8 @@ function GuruHeader({
         {aiState?.longPressure != null && aiState?.shortPressure != null && (
           <DirectionalPressureBlock
             structureDominance={aiState.structureDominance}
+            momentumState={aiState.momentumState}
+            inheritedTrend={aiState.inheritedTrend}
             longPct={aiState.longPressure}
             shortPct={aiState.shortPressure}
             band={aiState.pressureBand ?? 'weak'}
@@ -602,12 +608,17 @@ function DirectionalPressureBlock({
   // muted row under the explanation when present. Subtle on purpose —
   // the Guru tab is for environment reads, not execution density.
   structureDominance,
+  // v13.2: optional momentum line under STRUCTURE. Same muted styling.
+  momentumState,
+  inheritedTrend,
 }: {
   longPct:     number;
   shortPct:    number;
   band:        'weak' | 'moderate' | 'strong';
   explanation: string;
   structureDominance?: GcpStateResponse['structureDominance'];
+  momentumState?:      GcpStateResponse['momentumState'];
+  inheritedTrend?:     GcpStateResponse['inheritedTrend'];
 }) {
   const longColor   = '#4dd9e8';        // cyan, matches existing accent
   const shortColor  = '#c45a5a';        // muted red, not screaming
@@ -701,6 +712,28 @@ function DirectionalPressureBlock({
             fontWeight: 600, letterSpacing: '0.04em',
           }}>
             {dominanceLabel(structureDominance as StructuralDominance)}
+          </span>
+        </div>
+      )}
+
+      {/* v13.2: MOMENTUM line — directional inheritance + trajectory
+          class from the temporal pressure layer. Same subtle styling
+          as STRUCTURE. */}
+      {momentumState && (
+        <div style={{
+          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 6,
+          fontSize: 9, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.06em', color: 'var(--fg-4)',
+        }}>
+          <span style={{ letterSpacing: '0.16em' }}>MOMENTUM</span>
+          <span style={{
+            color: momentumColor(momentumState as MomentumState),
+            fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            {momentumLabel(
+              momentumState as MomentumState,
+              (inheritedTrend ?? 'neutral') as InheritedTrend,
+            )}
           </span>
         </div>
       )}

@@ -62,7 +62,10 @@ import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
 import { derivePlateauStateOverlay } from '@/lib/plateauState';
 import { deriveDirectionalDecayOverlay } from '@/lib/directionalDecay';
-import { deriveStructuralDominance } from '@/lib/structuralDominance';
+import {
+  deriveStructuralDominance, applyStructuralSanityGuard,
+} from '@/lib/structuralDominance';
+import { deriveTemporalPressureBias } from '@/lib/temporalPressure';
 import { loadAiStateHistory } from '@/lib/aiStateHistory';
 
 const PREFS_LS_KEY = 'gcpro-settings';
@@ -626,12 +629,11 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
           });
         }
 
-        // v13.1: structural dominance layer. Local correction pass
-        // that prevents directional pressure from drifting unrealistically
-        // bullish/bearish when the price structure (HH+HL / LH+LL /
-        // FA chain / slope sign) clearly disagrees. Reads the same
-        // post-decay pressure values, returns adjusted values + a
-        // dominance label + the score + the reasons array.
+        // v13.1: structural dominance — penalties + amplification.
+        // v13.2: the sanity guard is now a separate step that runs
+        // AFTER the new temporal-pressure layer (which depends on
+        // dominance context). So we ask deriveStructuralDominance to
+        // skip its internal sanity guard here and re-apply it later.
         const recentHistoryForDominance = loadAiStateHistory()
           .filter(r => r.symbol === cur.symbol)
           .sort((a, b) => b.timestamp - a.timestamp)
@@ -647,32 +649,85 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             long:  respAfterDecay.longPressure  ?? 50,
             short: respAfterDecay.shortPressure ?? 50,
           },
+          runSanityGuard: false,   // v13.2: deferred until after temporal
         });
-        const finalResp: GcpStateResponse = {
-          ...respAfterDecay,
-          longPressure:       dominance.adjustedLong,
-          shortPressure:      dominance.adjustedShort,
-          structureDominance: dominance.dominance,
-          structureScore:     dominance.score,
-          structureReasons:   dominance.reasons,
-        };
         if (isDev()) {
           const changed = dominance.adjustedLong  !== dominance.preLong
                        || dominance.adjustedShort !== dominance.preShort;
-          // Only log when something actually changed OR a non-neutral
-          // dominance was detected. Keeps the console clean on quiet
-          // classifications.
           if (changed || dominance.dominance !== 'neutral') {
             console.log('[STRUCTURAL DOMINANCE]', {
               dominance: dominance.dominance,
               score:     dominance.score,
               reasons:   dominance.reasons,
-              before:    { long: dominance.preLong, short: dominance.preShort },
+              before:    { long: dominance.preLong,      short: dominance.preShort },
               after:     { long: dominance.adjustedLong, short: dominance.adjustedShort },
               structure: cur.priceStructure?.structure ?? null,
             });
           }
         }
+
+        // v13.2: Temporal pressure intelligence. Reads inherited
+        // directional energy from the last 5 anchored history rows
+        // and applies state-specific nudges so DC / DS / PS / CL no
+        // longer collapse into 50/50. Runs BEFORE sanity so any
+        // temporal overshoot still gets capped.
+        const temporal = deriveTemporalPressureBias({
+          aiState:          respAfterDecay,
+          recentHistory:    recentHistoryForDominance,
+          currentPressure:  {
+            long:  dominance.adjustedLong,
+            short: dominance.adjustedShort,
+          },
+          metrics:          payload.metrics,
+          priceStructure:   cur.priceStructure,
+          latestPatternCode,
+        });
+        const longAfterTemporal  = dominance.adjustedLong  + temporal.longAdjust;
+        const shortAfterTemporal = dominance.adjustedShort + temporal.shortAdjust;
+        if (isDev()
+            && (temporal.longAdjust !== 0
+             || temporal.momentumState !== 'transitioning'
+             || temporal.inheritedTrend !== 'neutral')) {
+          console.log('[TEMPORAL PRESSURE]', {
+            state:          respAfterDecay.stateCode,
+            inheritedTrend: temporal.inheritedTrend,
+            momentumState:  temporal.momentumState,
+            reasons:        temporal.reasons,
+            before:         { long: dominance.adjustedLong, short: dominance.adjustedShort },
+            after:          { long: longAfterTemporal,      short: shortAfterTemporal },
+          });
+        }
+
+        // v13.2: sanity guard runs LAST. Same logic as the v13.1.1
+        // tiered severity guard; only fires on triple-trigger
+        // contradictions (sev>=3) or double-trigger with skew>75.
+        const sanity = applyStructuralSanityGuard({
+          dominance:      dominance.dominance,
+          score:          dominance.score,
+          currentPressure: { long: longAfterTemporal, short: shortAfterTemporal },
+          faChain:        dominance.faChain,
+          reclaim:        dominance.reclaim,
+          structureClean: dominance.structureClean,
+          priceStructure: cur.priceStructure,
+        });
+        const finalLong  = Math.max(15, Math.min(85, Math.round(sanity.long)));
+        const finalShort = 100 - finalLong;
+        const combinedReasons = [
+          ...dominance.reasons,
+          ...(temporal.longAdjust !== 0 ? temporal.reasons : []),
+          ...sanity.reasons,
+        ];
+
+        const finalResp: GcpStateResponse = {
+          ...respAfterDecay,
+          longPressure:       finalLong,
+          shortPressure:      finalShort,
+          structureDominance: dominance.dominance,
+          structureScore:     dominance.score,
+          structureReasons:   combinedReasons,
+          inheritedTrend:     temporal.inheritedTrend,
+          momentumState:      temporal.momentumState,
+        };
 
         // v12.0.1: unified pipeline trace. One log entry per classification
         // showing raw → anchored → final, plus the diagnostics that drove
@@ -727,6 +782,15 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
               score:     dominance.score,
               before:    { long: dominance.preLong,      short: dominance.preShort },
               after:     { long: dominance.adjustedLong, short: dominance.adjustedShort },
+            },
+            // v13.2: temporal pressure summary.
+            temporalPressure: {
+              inheritedTrend: temporal.inheritedTrend,
+              momentumState:  temporal.momentumState,
+              longAdjust:     temporal.longAdjust,
+              shortAdjust:    temporal.shortAdjust,
+              afterTemporal:  { long: longAfterTemporal, short: shortAfterTemporal },
+              afterSanity:    { long: finalLong,         short: finalShort },
             },
             nextLikelyState: finalResp.nextLikelyState ?? null,
             directionalPressure: {

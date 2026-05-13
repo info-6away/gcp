@@ -63,6 +63,10 @@ import {
   type StructuralDominance,
 } from '@/lib/structuralDominance';
 import {
+  momentumLabel, momentumColor,
+  type InheritedTrend, type MomentumState,
+} from '@/lib/temporalPressure';
+import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
@@ -1121,6 +1125,29 @@ function PressureGauge({ aiState }: { aiState: GcpStateResponse | null }) {
               · score {aiState.structureScore >= 0 ? '+' : ''}{aiState.structureScore}
             </span>
           )}
+        </div>
+      )}
+
+      {/* v13.2: MOMENTUM line — directional inheritance + trajectory
+          class. Sits directly under STRUCTURE so the user reads
+          environment → structure → momentum top-down. Muted styling
+          on purpose; never overpowers the gauge or stance block. */}
+      {aiState?.momentumState && (
+        <div style={{
+          marginTop: 2, display: 'flex', alignItems: 'baseline', gap: 8,
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.06em', color: 'var(--fg-4)',
+        }}>
+          <span style={{ letterSpacing: '0.16em' }}>MOMENTUM</span>
+          <span style={{
+            color: momentumColor(aiState.momentumState as MomentumState),
+            fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            {momentumLabel(
+              aiState.momentumState as MomentumState,
+              (aiState.inheritedTrend ?? 'neutral') as InheritedTrend,
+            )}
+          </span>
         </div>
       )}
 

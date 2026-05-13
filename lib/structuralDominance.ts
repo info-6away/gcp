@@ -68,19 +68,29 @@ export interface StructuralDominanceArgs {
   /** The post-pressure / post-plateau pressure values from the
    *  prior step. These are the numbers we may adjust. */
   currentPressure: { long: number; short: number };
+  /** v13.2: skip the sanity-guard step so the temporal-pressure layer
+   *  can run between penalties+amp and sanity. Defaults to true for
+   *  back-compat with v13.1 callers. */
+  runSanityGuard?: boolean;
 }
 
 export interface StructuralDominanceResult {
   dominance:    StructuralDominance;
   score:        number;       // -100..+100, negative = bearish
   reasons:      string[];
-  adjustedLong:  number;       // post-penalties + sanity guard
+  adjustedLong:  number;       // post-penalties + amplification (+ sanity if runSanityGuard)
   adjustedShort: number;
   /** Pressures from BEFORE the structural dominance layer ran.
    *  Surfaced for the dev log so the user can see exactly what the
    *  correction changed. */
   preLong:       number;
   preShort:      number;
+  /** v13.2: detectors needed by the separate sanity-guard pass so the
+   *  caller can interpose temporal pressure between dominance and
+   *  sanity without recomputing structure semantics. */
+  faChain:        boolean;
+  reclaim:        boolean;
+  structureClean: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -321,46 +331,23 @@ export function deriveStructuralDominance(
   //   sev <= 1 → no cap (penalties + amplification do the work)
 
   const cleanStruct =
-    priceStructure
-    && priceStructure.confidence >= 0.6
-    && priceStructure.structure !== 'Unclear';
-  const structAgreesBearish = cleanStruct
-    && priceStructure!.structure === 'Bearish';
-  const structAgreesBullish = cleanStruct
-    && priceStructure!.structure === 'Bullish';
+    !!(priceStructure
+      && priceStructure.confidence >= 0.6
+      && priceStructure.structure !== 'Unclear');
+  const reclaim = reclaimedAfterFA(recentHistory);
 
-  function bearishSanity(): void {
-    let sev = 0;
-    if (score <= -60)        sev++;
-    if (faChain)             sev++;
-    if (structAgreesBearish) sev++;
-    if (long > 75)           sev++;
-    if (sev >= 3) {
-      long = 65; short = 35;
-      reasons.push(`sanity: bearish triple-trigger (sev=${sev}) → 65/35`);
-    } else if (sev === 2 && long > 75) {
-      long = 70; short = 30;
-      reasons.push(`sanity: bearish double-trigger (sev=2) → 70/30`);
-    }
+  if (args.runSanityGuard !== false) {
+    const guard = applyStructuralSanityGuard({
+      dominance, score,
+      currentPressure: { long, short },
+      faChain, reclaim,
+      structureClean: cleanStruct,
+      priceStructure,
+    });
+    long  = guard.long;
+    short = guard.short;
+    reasons.push(...guard.reasons);
   }
-  function bullishSanity(): void {
-    let sev = 0;
-    if (score >=  60)        sev++;
-    // reclaim acts like the "structural conviction" signal on the
-    // bullish side (we don't have a positive analog to faChain).
-    if (reclaimedAfterFA(recentHistory)) sev++;
-    if (structAgreesBullish) sev++;
-    if (short > 75)          sev++;
-    if (sev >= 3) {
-      short = 65; long = 35;
-      reasons.push(`sanity: bullish triple-trigger (sev=${sev}) → 35/65`);
-    } else if (sev === 2 && short > 75) {
-      short = 70; long = 30;
-      reasons.push(`sanity: bullish double-trigger (sev=2) → 30/70`);
-    }
-  }
-  if (dominance === 'bearish'         || dominance === 'fragile_bearish') bearishSanity();
-  if (dominance === 'bullish'         || dominance === 'fragile_bullish') bullishSanity();
 
   // Final clamp + integerise. Range is 15..85 — the natural expressive
   // band the v13.1 spec calls for; the dominance pass can no longer
@@ -376,7 +363,87 @@ export function deriveStructuralDominance(
     adjustedShort,
     preLong,
     preShort,
+    faChain,
+    reclaim,
+    structureClean: cleanStruct,
   };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// v13.2: standalone sanity-guard step.
+//
+// Extracted out of deriveStructuralDominance so the new
+// lib/temporalPressure layer can run BETWEEN the structural pass and
+// the final sanity guard, exactly per the v13.2 pipeline spec:
+//
+//   dominance (penalties + amp, NO sanity)
+//   → temporalPressure
+//   → applyStructuralSanityGuard
+//   → setState
+//
+// Logic identical to the v13.1.1 in-line block: tiered severity
+// counter, hard cap at 65/35 on sev>=3, soft cap at 70/30 on sev==2
+// only when skew > 75 against dominance, NO cap on sev<=1.
+// ──────────────────────────────────────────────────────────────────
+
+export interface SanityGuardArgs {
+  dominance:      StructuralDominance;
+  score:          number;
+  currentPressure: { long: number; short: number };
+  faChain:        boolean;
+  reclaim:        boolean;
+  structureClean: boolean;
+  priceStructure: StructureRead | null | undefined;
+}
+
+export interface SanityGuardResult {
+  long:    number;
+  short:   number;
+  reasons: string[];
+}
+
+export function applyStructuralSanityGuard(
+  args: SanityGuardArgs,
+): SanityGuardResult {
+  let { long, short } = args.currentPressure;
+  const reasons: string[] = [];
+  const { dominance, score, faChain, reclaim, structureClean, priceStructure } = args;
+
+  const structAgreesBearish = structureClean
+    && priceStructure!.structure === 'Bearish';
+  const structAgreesBullish = structureClean
+    && priceStructure!.structure === 'Bullish';
+
+  if (dominance === 'bearish' || dominance === 'fragile_bearish') {
+    let sev = 0;
+    if (score <= -60)        sev++;
+    if (faChain)             sev++;
+    if (structAgreesBearish) sev++;
+    if (long > 75)           sev++;
+    if (sev >= 3) {
+      long = 65; short = 35;
+      reasons.push(`sanity: bearish triple-trigger (sev=${sev}) → 65/35`);
+    } else if (sev === 2 && long > 75) {
+      long = 70; short = 30;
+      reasons.push(`sanity: bearish double-trigger (sev=2) → 70/30`);
+    }
+  }
+  if (dominance === 'bullish' || dominance === 'fragile_bullish') {
+    let sev = 0;
+    if (score >=  60)        sev++;
+    if (reclaim)             sev++;
+    if (structAgreesBullish) sev++;
+    if (short > 75)          sev++;
+    if (sev >= 3) {
+      short = 65; long = 35;
+      reasons.push(`sanity: bullish triple-trigger (sev=${sev}) → 35/65`);
+    } else if (sev === 2 && short > 75) {
+      short = 70; long = 30;
+      reasons.push(`sanity: bullish double-trigger (sev=2) → 30/70`);
+    }
+  }
+
+  return { long, short, reasons };
 }
 
 // ──────────────────────────────────────────────────────────────────

@@ -202,6 +202,16 @@ export type GcpStateResponse = {
   structureDominance?:    'bullish' | 'bearish' | 'neutral' | 'fragile_bullish' | 'fragile_bearish';
   structureScore?:        number;        // -100..+100
   structureReasons?:      string[];
+
+  // v13.2: temporal pressure intelligence. Attached locally by
+  // deriveTemporalPressureBias() AFTER structural dominance, BEFORE
+  // the sanity guard. inheritedTrend is the weighted directional
+  // memory from the last 5 anchored states; momentumState is the
+  // trajectory class (accelerating / decelerating / exhausted /
+  // transitioning). UI shows them as a small "MOMENTUM" line under
+  // STRUCTURE.
+  inheritedTrend?:        'up' | 'down' | 'neutral';
+  momentumState?:         'accelerating' | 'decelerating' | 'exhausted' | 'transitioning';
 };
 
 // v12.0.3 — structured error envelope mirrored from /api/gcp-state.
