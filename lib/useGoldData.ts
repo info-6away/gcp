@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MarketSymbol } from '@/types/gcp';
 import { isValidPrice, isReasonableJump } from '@/lib/sanity';
 
@@ -74,18 +74,25 @@ async function tryTwelveData(symbol: MarketSymbol): Promise<number> {
   return p;
 }
 
-async function tryYahoo(symbol: MarketSymbol): Promise<number> {
+async function tryYahoo(symbol: MarketSymbol): Promise<{ price: number; providerTs: number | null }> {
   const res = await fetch(`/api/gold?symbol=${symbol}`, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`Yahoo proxy ${res.status}`);
   const d = await res.json();
   if (!d.lastPrice) throw new Error('No price in response');
-  return d.lastPrice;
+  // v13.5: surface the provider's sample timestamp so the [PRICE FEED]
+  // diagnostic can compute upstream age (helpful for detecting whether
+  // the synthetic feel is upstream sample lag).
+  return {
+    price:      d.lastPrice,
+    providerTs: typeof d.providerTs === 'number' ? d.providerTs : null,
+  };
 }
 
 interface PriceResult {
-  price:  number;
-  source: string;
-  saw429: boolean;
+  price:      number;
+  source:     string;
+  saw429:     boolean;
+  providerTs: number | null;
 }
 
 // Twelve Data is the primary live-price source for all three symbols
@@ -95,7 +102,13 @@ interface PriceResult {
 // 429 so the caller can switch the polling loop into a backoff window
 // even when a fallback succeeded.
 async function fetchPrice(symbol: MarketSymbol): Promise<PriceResult> {
-  const sources = [
+  // v13.5: Yahoo returns { price, providerTs }; TD + gold-api return
+  // a bare number. Unify on { price, providerTs? } so the diagnostic
+  // log can surface upstream age uniformly.
+  const sources: Array<{
+    name: string;
+    fn:   () => Promise<number | { price: number; providerTs: number | null }>;
+  }> = [
     { name: 'twelve-data', fn: () => tryTwelveData(symbol) },
     { name: 'gold-api',    fn: () => tryGoldApi(symbol)    },
     { name: 'yahoo',       fn: () => tryYahoo(symbol)      },
@@ -105,8 +118,10 @@ async function fetchPrice(symbol: MarketSymbol): Promise<PriceResult> {
   const errors: string[] = [];
   for (const { name, fn } of sources) {
     try {
-      const price = await fn();
-      return { price, source: name, saw429 };
+      const raw = await fn();
+      const price      = typeof raw === 'number' ? raw : raw.price;
+      const providerTs = typeof raw === 'number' ? null : raw.providerTs;
+      return { price, source: name, saw429, providerTs };
     } catch (e) {
       if (e instanceof Rate429Error) saw429 = true;
       errors.push(`${name}: ${e}`);
@@ -174,9 +189,22 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
     loading: true, error: null, lastFetch: null,
   });
 
+  // v13.5: per-tick diagnostic state. Carries the last seen price /
+  // source / localTs so the [PRICE FEED] log can compute tickDelta +
+  // detect repeated ticks (a leading indicator of stale upstream data
+  // during low-volatility periods).
+  const priceDiagRef = useRef<{
+    price:         number | null;
+    source:        string | null;
+    localTs:       number | null;
+    repeatedTicks: number;
+  }>({ price: null, source: null, localTs: null, repeatedTicks: 0 });
+
   const fetchGold = useCallback(async (): Promise<{ saw429: boolean }> => {
+    const fetchStartedAt = Date.now();
     try {
-      const { price, source, saw429 } = await fetchPrice(symbol);
+      const { price, source, saw429, providerTs } = await fetchPrice(symbol);
+      const fetchEndedAt = Date.now();
 
       // v11.13.1 sanity gate. tryTwelveData / tryGoldApi / tryYahoo
       // already throw on parse failure / non-positive prices, but
@@ -185,6 +213,41 @@ export function useGoldData(symbol: MarketSymbol = 'XAUUSD'): GoldState {
       if (!isValidPrice(price)) {
         console.warn('[GOLD] invalid price rejected:', price);
         return { saw429 };
+      }
+
+      // v13.5 — [PRICE FEED] diagnostic. Logs the actual cadence + freshness
+      // characteristics of the upstream feed so the user can confirm the
+      // chart's "synthetic" feel is upstream-data-driven rather than a
+      // rendering bug. Only logs when:
+      //  - the price changed vs last tick (so quiet markets don't spam), OR
+      //  - the source changed (provider fell back), OR
+      //  - a 429 was seen on any source (rate-limit window engaged).
+      if (process.env.NODE_ENV !== 'production') {
+        const last         = priceDiagRef.current;
+        const tickDeltaMs  = last.localTs ? fetchEndedAt - last.localTs : null;
+        const priceChanged = last.price == null ? true : price !== last.price;
+        const sourceChanged = last.source !== source;
+        if (priceChanged || sourceChanged || saw429) {
+          console.log('[PRICE FEED]', {
+            symbol,
+            source,
+            price,
+            localTs:        new Date(fetchEndedAt).toISOString(),
+            providerTs:     providerTs != null ? new Date(providerTs).toISOString() : null,
+            providerAgeMs:  providerTs != null ? fetchEndedAt - providerTs : null,
+            tickDeltaMs,
+            repeatedTicks:  priceChanged ? 0 : last.repeatedTicks + 1,
+            roundTripMs:    fetchEndedAt - fetchStartedAt,
+            saw429,
+            stale:          tickDeltaMs != null && tickDeltaMs > ACTIVE_INTERVAL_MS * 4,
+          });
+        }
+        priceDiagRef.current = {
+          price,
+          source,
+          localTs:        fetchEndedAt,
+          repeatedTicks:  priceChanged ? 0 : last.repeatedTicks + 1,
+        };
       }
 
       setState(s => {

@@ -696,7 +696,13 @@ export default function ChartView({
             } as CandlestickData));
           } catch { /* */ }
           if (process.env.NODE_ENV !== 'production') {
-            console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'after-setData' });
+            console.log('[LIVE BAR]', {
+              path:     'after-setData',
+              symbol, tf: chartTF, slot,
+              ohlc:     { o: bar.o, h: bar.h, l: bar.l, c: bar.c },
+              isUp:     bar.c >= bar.o,
+              candleAgeMs: livePriceTime ? Date.now() - livePriceTime.getTime() : null,
+            });
           }
         }
       }
@@ -749,11 +755,21 @@ export default function ChartView({
           open:  bar.o, high: bar.h, low: bar.l, close: bar.c,
         } as CandlestickData));
       } catch { /* */ }
-      // v11.20.2 dev log: confirms color decision is per-candle.
-      // isUp computed ONLY from this bar's open/close, never from
-      // previous candle or external feed.
+      // v13.5: unified [LIVE BAR] diagnostic — confirms color decision
+      // is per-candle. isUp computed ONLY from this bar's open/close,
+      // never from previous candle or external feed.
       if (process.env.NODE_ENV !== 'production') {
-        console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'new-slot' });
+        const tfMsHere = CHART_TF_MS[chartTF] ?? 60_000;
+        console.log('[LIVE BAR]', {
+          path:        'new-slot',
+          symbol,
+          tf:          chartTF,
+          slot,
+          ohlc:        { o: bar.o, h: bar.h, l: bar.l, c: bar.c },
+          isUp:        bar.c >= bar.o,
+          tfMs:        tfMsHere,
+          candleAgeMs: 0,
+        });
       }
     } else if (slot === last.t) {
       // v11.13.2: if the existing last candle is corrupt (h/l NaN from
@@ -779,11 +795,22 @@ export default function ChartView({
         } as CandlestickData));
       } catch { /* */ }
       if (process.env.NODE_ENV !== 'production') {
-        console.log('[CANDLE]', { open: bar.o, close: bar.c, isUp: bar.c >= bar.o, source: 'live-tick' });
+        const tfMsHere = CHART_TF_MS[chartTF] ?? 60_000;
+        console.log('[LIVE BAR]', {
+          path:        'live-tick',
+          symbol,
+          tf:          chartTF,
+          slot,
+          ohlc:        { o: bar.o, h: bar.h, l: bar.l, c: bar.c },
+          isUp:        bar.c >= bar.o,
+          tfMs:        tfMsHere,
+          candleAgeMs: Date.now() - slot,
+          intrabarPct: Math.min(100, Math.round(((Date.now() - slot) / tfMsHere) * 100)),
+        });
       }
     }
     // slot < last.t: out-of-order tick, ignore.
-  }, [chartReady, livePrice, livePriceTime, chartTF]);
+  }, [chartReady, livePrice, livePriceTime, chartTF, symbol]);
 
   // ── Initial candle fetch + reset on symbol/TF change ───────────────────────
   useEffect(() => {
