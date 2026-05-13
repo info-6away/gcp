@@ -904,6 +904,41 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
               localOverlay:      'decay' as const,
               overlayReasons:    decay.reasons,
             } : {}),
+            // ── v13.3: full snapshot for Expandable Guru History ─────
+            pressureExplanation:  finalResp.pressureExplanation,
+            structureDominance:   finalResp.structureDominance,
+            structureScore:       finalResp.structureScore,
+            structureReasons:     finalResp.structureReasons,
+            inheritedTrend:       finalResp.inheritedTrend,
+            momentumState:        finalResp.momentumState,
+            patternStorySnap:     payload.patternStory
+              ? {
+                  seq:     payload.patternStory.seq,
+                  state:   payload.patternStory.state,
+                  bias:    payload.patternStory.bias,
+                  cycle:   payload.patternStory.cycle,
+                  dom:     payload.patternStory.dom,
+                  posture: payload.patternStory.posture,
+                }
+              : undefined,
+            nextLikelyState:      finalResp.nextLikelyState,
+            transitionConfidence: finalResp.transitionConfidence,
+            transitionReason:     finalResp.transitionReason,
+            anchorOverridden:     anchor.overridden,
+            anchorReasons:        anchor.reasons.length > 0 ? anchor.reasons : undefined,
+            anchorFromCode:       anchor.overridden ? result.stateCode : undefined,
+            stale:                finalResp.stale ?? false,
+            staleReason:          finalResp.staleReason,
+            modelMeta:            finalResp._meta
+              ? {
+                  model:        finalResp._meta.model,
+                  provider:     finalResp._meta.provider,
+                  latencyMs:    finalResp._meta.latencyMs,
+                  routeSource:  finalResp._meta.routeSource,
+                  fallback:     finalResp._meta.fallback,
+                  deploymentId: finalResp._meta.deploymentId,
+                }
+              : undefined,
           });
         }
       } else {

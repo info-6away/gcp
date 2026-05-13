@@ -47,6 +47,56 @@ export interface AiStateHistoryRecord {
   originalStateCode?: string;
   localOverlay?:      'plateau' | 'decay';
   overlayReasons?:    string[];
+
+  // ── v13.3: Expandable Guru History snapshot fields ─────────────
+  // All optional so older entries written before v13.3 still validate.
+  // The expanded-row UI in GuruView hides any section that has no
+  // values present, so older entries simply degrade gracefully.
+
+  pressureExplanation?: string;
+
+  // Structural dominance (v13.1+)
+  structureDominance?:  'bullish' | 'bearish' | 'neutral' | 'fragile_bullish' | 'fragile_bearish';
+  structureScore?:      number;
+  structureReasons?:    string[];
+
+  // Temporal pressure (v13.2+)
+  inheritedTrend?:      'up' | 'down' | 'neutral';
+  momentumState?:       'accelerating' | 'decelerating' | 'exhausted' | 'transitioning';
+
+  // Pattern story snapshot
+  patternStorySnap?: {
+    seq?:     string[];
+    state?:   string;
+    bias?:    'bullish' | 'bearish' | 'neutral';
+    cycle?:   string;
+    dom?:     string;
+    posture?: string;
+  };
+
+  // Transition ladder
+  nextLikelyState?:      string;
+  transitionConfidence?: number;
+  transitionReason?:     string;
+
+  // Anchor override metadata
+  anchorOverridden?: boolean;
+  anchorReasons?:    string[];
+  anchorFromCode?:   string;
+
+  // Stale fallback flags (v12.0.1+)
+  stale?:        boolean;
+  staleReason?:  string;
+
+  // Engine diagnostics (_meta) — model / provider / latency / route
+  modelMeta?: {
+    model?:        string | null;
+    provider?:     string | null;
+    latencyMs?:    number | null;
+    routeSource?:  string | null;
+    fallback?:     boolean;
+    deploymentId?: string | null;
+  };
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -106,6 +156,45 @@ export interface AiStateHistoryInput {
   originalStateCode?: string;
   localOverlay?:      'plateau' | 'decay';
   overlayReasons?:    string[];
+
+  // ── v13.3: expandable history snapshot inputs. All optional. ───
+  pressureExplanation?: string;
+
+  structureDominance?:  'bullish' | 'bearish' | 'neutral' | 'fragile_bullish' | 'fragile_bearish';
+  structureScore?:      number;
+  structureReasons?:    string[];
+
+  inheritedTrend?:      'up' | 'down' | 'neutral';
+  momentumState?:       'accelerating' | 'decelerating' | 'exhausted' | 'transitioning';
+
+  patternStorySnap?: {
+    seq?:     string[];
+    state?:   string;
+    bias?:    'bullish' | 'bearish' | 'neutral';
+    cycle?:   string;
+    dom?:     string;
+    posture?: string;
+  };
+
+  nextLikelyState?:      string;
+  transitionConfidence?: number;
+  transitionReason?:     string;
+
+  anchorOverridden?: boolean;
+  anchorReasons?:    string[];
+  anchorFromCode?:   string;
+
+  stale?:        boolean;
+  staleReason?:  string;
+
+  modelMeta?: {
+    model?:        string | null;
+    provider?:     string | null;
+    latencyMs?:    number | null;
+    routeSource?:  string | null;
+    fallback?:     boolean;
+    deploymentId?: string | null;
+  };
 }
 
 // Append a single record. Returns the new history. Dedupes against

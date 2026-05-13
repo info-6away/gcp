@@ -1064,6 +1064,292 @@ function WatchNext({
 }
 
 // ────────────────────────────────────────────────────────────────────
+// v13.3: Expandable Guru History snapshot.
+//
+// Each row in the history list now toggles into a black-box style
+// detail block on click. Only ONE row stays expanded at a time so
+// the user can scan vertically without losing focus. Every section
+// renders only when its data is present — older entries written
+// before v13.3 simply show fewer panels.
+// ────────────────────────────────────────────────────────────────────
+
+function SnapSection({ title, children }: {
+  title:    string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 4,
+      minWidth: 0,
+    }}>
+      <div style={{
+        fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+        textTransform: 'uppercase',
+      }}>
+        {title}
+      </div>
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 2,
+        fontSize: 10, fontFamily: 'var(--font-mono)',
+        color: 'var(--fg-1)', lineHeight: 1.45,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SnapRow({ label, value, accent }: {
+  label:   string;
+  value:   React.ReactNode;
+  accent?: string;
+}) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'minmax(70px, auto) 1fr',
+      gap: 8, alignItems: 'baseline',
+    }}>
+      <span style={{ color: 'var(--fg-4)', letterSpacing: '0.06em' }}>{label}</span>
+      <span style={{
+        color: accent ?? 'var(--fg-1)',
+        fontVariantNumeric: 'tabular-nums',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ExpandedHistoryRow({
+  r, symbol,
+}: {
+  r:      AiStateHistoryRecord;
+  symbol: MarketSymbol;
+}) {
+  const sections: React.ReactNode[] = [];
+  const stateAccent = stateColor({
+    stateCode: r.stateCode, direction: r.direction,
+  } as unknown as GcpStateResponse);
+
+  // A) Environment ─────────────────────────────────────────────────
+  sections.push(
+    <SnapSection key="env" title="Environment">
+      <SnapRow label="state"        value={`${r.stateCode} · ${r.state}`}             accent={stateAccent} />
+      <SnapRow label="phase / bias" value={`${r.phase} · ${r.direction}`} />
+      {typeof r.confidence === 'number' && (
+        <SnapRow label="clarity"    value={`${Math.round(r.confidence * 100)}%`} />
+      )}
+      {r.marketBias && (
+        <SnapRow label="market bias" value={r.marketBias} />
+      )}
+      <SnapRow label="regime · NV"  value={`${r.regime ?? '—'} · ${r.netVariance?.toFixed(1) ?? '—'}`} />
+      <SnapRow label="symbol · tf"  value={`${r.symbol} · ${r.timeframe}`} />
+      <SnapRow
+        label="price"
+        value={fmtLevel(symbol, r.priceAtAnalysis ?? undefined) ?? '—'}
+      />
+    </SnapSection>,
+  );
+
+  // B) Guru Stance — DERIVED at view time from the stored stateCode
+  // / phase / direction. v13.3 doesn't persist stance separately; the
+  // derivation is deterministic from the fields already in the record.
+  const stance = deriveStance({
+    stateCode: r.stateCode, phase: r.phase, direction: r.direction,
+  } as unknown as GcpStateResponse);
+  if (stance) {
+    sections.push(
+      <SnapSection key="stance" title="Guru Stance">
+        <SnapRow label="stance"    value={stance.stance}    accent="var(--fg-0)" />
+        <SnapRow label="mode"      value={stance.mode}      accent="#d4a028" />
+        <SnapRow label="execution" value={stance.execution} accent="var(--cyan)" />
+      </SnapSection>,
+    );
+  }
+
+  // C) Directional Pressure ────────────────────────────────────────
+  if (typeof r.longPressure === 'number' && typeof r.shortPressure === 'number') {
+    sections.push(
+      <SnapSection key="pressure" title="Directional Pressure">
+        <SnapRow label="long"  value={`${r.longPressure}%`}  accent="#4dd9e8" />
+        <SnapRow label="short" value={`${r.shortPressure}%`} accent="#c45a5a" />
+        {r.pressureBand && (
+          <SnapRow label="band" value={r.pressureBand.toUpperCase()} />
+        )}
+        {r.pressureExplanation && (
+          <SnapRow label="why" value={
+            <span style={{ fontStyle: 'italic', color: 'var(--fg-3)' }}>
+              {r.pressureExplanation}
+            </span>
+          } />
+        )}
+      </SnapSection>,
+    );
+  }
+
+  // D) Structure / Momentum ────────────────────────────────────────
+  if (r.structureDominance || r.momentumState || r.inheritedTrend) {
+    sections.push(
+      <SnapSection key="struct" title="Structure / Momentum">
+        {r.structureDominance && (
+          <SnapRow label="dominance" value={r.structureDominance.replace('_', ' ')} />
+        )}
+        {typeof r.structureScore === 'number' && (
+          <SnapRow label="score" value={`${r.structureScore >= 0 ? '+' : ''}${r.structureScore}`} />
+        )}
+        {r.inheritedTrend && (
+          <SnapRow label="inherited" value={r.inheritedTrend} />
+        )}
+        {r.momentumState && (
+          <SnapRow label="momentum" value={r.momentumState} />
+        )}
+        {r.structureReasons && r.structureReasons.length > 0 && (
+          <SnapRow label="reasons" value={
+            <span style={{ color: 'var(--fg-3)', fontSize: 9, lineHeight: 1.4 }}>
+              {r.structureReasons.slice(0, 4).join(' · ')}
+            </span>
+          } />
+        )}
+      </SnapSection>,
+    );
+  }
+
+  // E) Pattern Story ───────────────────────────────────────────────
+  const ps = r.patternStorySnap;
+  if (ps && (ps.state || ps.dom || (ps.seq && ps.seq.length))) {
+    sections.push(
+      <SnapSection key="story" title="Pattern Story">
+        {ps.state && <SnapRow label="state" value={ps.state} />}
+        {ps.dom   && <SnapRow label="dominant" value={ps.dom} />}
+        {ps.bias  && <SnapRow label="bias" value={ps.bias} />}
+        {ps.cycle && <SnapRow label="cycle" value={ps.cycle} />}
+        {ps.seq && ps.seq.length > 0 && (
+          <SnapRow label="sequence" value={ps.seq.join(' → ')} />
+        )}
+        {ps.posture && (
+          <SnapRow label="posture" value={
+            <span style={{ color: 'var(--fg-3)' }}>{ps.posture}</span>
+          } />
+        )}
+      </SnapSection>,
+    );
+  }
+  // Fallback to the simple top-level pattern fields if no snapshot
+  // pattern-story was persisted (older rows).
+  else if (r.patternCode || r.patternName) {
+    sections.push(
+      <SnapSection key="pattern-lite" title="Pattern">
+        {r.patternCode && <SnapRow label="code" value={r.patternCode} />}
+        {r.patternName && <SnapRow label="name" value={r.patternName} />}
+        {typeof r.pss === 'number' && (
+          <SnapRow label="pss" value={`${Math.round(r.pss * 100)}%`} />
+        )}
+      </SnapSection>,
+    );
+  }
+
+  // F) Transition ──────────────────────────────────────────────────
+  if (r.nextLikelyState || r.transitionReason) {
+    sections.push(
+      <SnapSection key="transition" title="Transition">
+        {r.nextLikelyState && (
+          <SnapRow label="next →" value={r.nextLikelyState} />
+        )}
+        {typeof r.transitionConfidence === 'number' && (
+          <SnapRow label="confidence" value={`${Math.round(r.transitionConfidence * 100)}%`} />
+        )}
+        {r.transitionReason && (
+          <SnapRow label="reason" value={
+            <span style={{ color: 'var(--fg-3)', fontStyle: 'italic' }}>
+              {r.transitionReason}
+            </span>
+          } />
+        )}
+      </SnapSection>,
+    );
+  }
+
+  // G) Overlays / Corrections ──────────────────────────────────────
+  const overlayAny =
+    r.originalStateCode || r.localOverlay
+    || (r.overlayReasons && r.overlayReasons.length > 0)
+    || r.anchorOverridden
+    || r.stale;
+  if (overlayAny) {
+    sections.push(
+      <SnapSection key="overlay" title="Overlays / Corrections">
+        {r.anchorOverridden && r.anchorFromCode && (
+          <SnapRow label="anchor"     value={`${r.anchorFromCode} → ${r.stateCode}`} accent="#d4a028" />
+        )}
+        {r.anchorReasons && r.anchorReasons.length > 0 && (
+          <SnapRow label="anchor why" value={
+            <span style={{ color: 'var(--fg-3)', fontSize: 9 }}>
+              {r.anchorReasons.slice(0, 3).join('; ')}
+            </span>
+          } />
+        )}
+        {r.localOverlay && (
+          <SnapRow label="overlay"
+            value={r.localOverlay}
+            accent={r.localOverlay === 'plateau' ? '#8a8fb8' : '#b06b58'} />
+        )}
+        {r.originalStateCode && r.originalStateCode !== r.stateCode && (
+          <SnapRow label="from" value={`${r.originalStateCode} → ${r.stateCode}`} />
+        )}
+        {r.overlayReasons && r.overlayReasons.length > 0 && (
+          <SnapRow label="overlay why" value={
+            <span style={{ color: 'var(--fg-3)', fontSize: 9 }}>
+              {r.overlayReasons.slice(0, 3).join('; ')}
+            </span>
+          } />
+        )}
+        {r.stale && (
+          <SnapRow label="stale" value={r.staleReason ?? 'true'} accent="#d4a028" />
+        )}
+      </SnapSection>,
+    );
+  }
+
+  // H) Diagnostics ─────────────────────────────────────────────────
+  const m = r.modelMeta;
+  if (m && (m.model || m.provider || m.latencyMs != null
+        || m.routeSource || m.deploymentId)) {
+    sections.push(
+      <SnapSection key="meta" title="Diagnostics">
+        {m.model       && <SnapRow label="model"       value={m.model} />}
+        {m.provider    && <SnapRow label="provider"    value={m.provider} />}
+        {m.latencyMs != null && (
+          <SnapRow label="latency"    value={`${m.latencyMs}ms`} />
+        )}
+        {m.routeSource && <SnapRow label="route"       value={m.routeSource} />}
+        {m.fallback != null && (
+          <SnapRow label="fallback"   value={m.fallback ? 'yes' : 'no'} />
+        )}
+        {m.deploymentId && <SnapRow label="deployment" value={m.deploymentId} />}
+      </SnapSection>,
+    );
+  }
+
+  return (
+    <div style={{
+      marginTop: 6,
+      padding: '10px 12px',
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '2px solid var(--cyan)',
+      borderRadius: 3,
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+      gap: 14,
+    }}>
+      {sections}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Section: Guru History (with transitions + filter)
 // ────────────────────────────────────────────────────────────────────
 
@@ -1075,6 +1361,8 @@ function GuruHistory({
 }) {
   type Filter = 'all' | 'changes';
   const [filter, setFilter] = useState<Filter>('all');
+  // v13.3: single-expand row state. null when no row is expanded.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Mark transition rows: a record is a "change" when the prior
   // entry (older) had a different stateCode.
@@ -1136,60 +1424,102 @@ function GuruHistory({
             const { r, isTransition, fromState } = entry;
             const accent = stateColor(r as unknown as GcpStateResponse);
             const conf = Math.round(r.confidence * 100);
-            const isCurrent = i === 0;
+            const isCurrent  = i === 0;
+            const isExpanded = expandedId === r.id;
             return (
-              <div key={r.id} style={{
-                padding: '7px 10px',
-                background: isCurrent ? 'var(--bg-3)' : 'var(--bg-2)',
-                border: `1px solid ${isCurrent ? accent + '99' : 'var(--line-1)'}`,
-                borderLeft: `2px solid ${accent}`,
-                borderRadius: 3,
-                fontSize: 10,
-                lineHeight: 1.5,
-                display: 'grid',
-                gridTemplateColumns: '110px 1fr auto',
-                gap: 12,
-                alignItems: 'baseline',
-              }}>
-                <div style={{
-                  color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {fmtTime(r.timestamp)}
-                  {isCurrent && (
-                    <span style={{
-                      marginLeft: 6, fontSize: 8, color: accent, letterSpacing: '0.14em',
-                    }}>· CURRENT</span>
-                  )}
-                </div>
-                <div>
+              <div key={r.id} style={{ display: 'flex', flexDirection: 'column' }}>
+                {/* v13.3: each row is now a button-styled clickable.
+                    Native <button> would inherit the default browser
+                    chrome on some platforms; we use a div + role to
+                    keep the terminal aesthetic but stay accessible. */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() =>
+                    setExpandedId(prev => prev === r.id ? null : r.id)
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setExpandedId(prev => prev === r.id ? null : r.id);
+                    }
+                  }}
+                  style={{
+                    padding: '7px 10px',
+                    background: isCurrent ? 'var(--bg-3)' : 'var(--bg-2)',
+                    border: `1px solid ${
+                      isExpanded ? 'var(--cyan)'
+                      : isCurrent ? accent + '99'
+                      :              'var(--line-1)'
+                    }`,
+                    borderLeft: `2px solid ${isExpanded ? 'var(--cyan)' : accent}`,
+                    borderRadius: 3,
+                    fontSize: 10,
+                    lineHeight: 1.5,
+                    display: 'grid',
+                    gridTemplateColumns: '110px 1fr auto 12px',
+                    gap: 12,
+                    alignItems: 'baseline',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    transition: 'border-color 0.15s ease',
+                  }}
+                >
                   <div style={{
-                    color: accent, fontWeight: 600, letterSpacing: '0.04em',
+                    color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
                   }}>
-                    {isTransition && fromState && (
-                      <span style={{ color: 'var(--fg-3)', fontWeight: 500 }}>
-                        {fromState} → {' '}
-                      </span>
+                    {fmtTime(r.timestamp)}
+                    {isCurrent && (
+                      <span style={{
+                        marginLeft: 6, fontSize: 8, color: accent, letterSpacing: '0.14em',
+                      }}>· CURRENT</span>
                     )}
-                    {r.stateCode} · {r.state}
                   </div>
-                  <div style={{ color: 'var(--fg-3)', marginTop: 2 }}>
-                    {r.phase} · {r.direction}
-                    {r.patternCode ? ` · pattern ${r.patternCode}` : ''}
-                    {r.regime ? ` · regime ${r.regime}` : ''}
+                  <div>
+                    <div style={{
+                      color: accent, fontWeight: 600, letterSpacing: '0.04em',
+                    }}>
+                      {isTransition && fromState && (
+                        <span style={{ color: 'var(--fg-3)', fontWeight: 500 }}>
+                          {fromState} → {' '}
+                        </span>
+                      )}
+                      {r.stateCode} · {r.state}
+                    </div>
+                    <div style={{ color: 'var(--fg-3)', marginTop: 2 }}>
+                      {r.phase} · {r.direction}
+                      {r.patternCode ? ` · pattern ${r.patternCode}` : ''}
+                      {r.regime ? ` · regime ${r.regime}` : ''}
+                    </div>
                   </div>
+                  <div style={{
+                    textAlign: 'right',
+                    color: 'var(--fg-2)',
+                    fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    <div>{conf}% conf</div>
+                    <div style={{ color: 'var(--fg-4)', fontSize: 9, marginTop: 2 }}>
+                      @ {fmtLevel(symbol, r.priceAtAnalysis ?? undefined) ?? '—'}
+                    </div>
+                  </div>
+                  {/* Chevron indicator — rotates 90° when expanded. */}
+                  <span style={{
+                    color: isExpanded ? 'var(--cyan)' : 'var(--fg-4)',
+                    fontSize: 10,
+                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.15s ease, color 0.15s ease',
+                    display: 'inline-block',
+                    transformOrigin: '50% 50%',
+                  }}>
+                    ▸
+                  </span>
                 </div>
-                <div style={{
-                  textAlign: 'right',
-                  color: 'var(--fg-2)',
-                  fontFamily: 'var(--font-mono)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  <div>{conf}% conf</div>
-                  <div style={{ color: 'var(--fg-4)', fontSize: 9, marginTop: 2 }}>
-                    @ {fmtLevel(symbol, r.priceAtAnalysis ?? undefined) ?? '—'}
-                  </div>
-                </div>
+
+                {isExpanded && (
+                  <ExpandedHistoryRow r={r} symbol={symbol} />
+                )}
               </div>
             );
           })}
