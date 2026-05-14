@@ -36,7 +36,7 @@ import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
-import { deriveStateStory } from '@/lib/stateStory';
+import { deriveStateStory, deriveEvolutionTag } from '@/lib/stateStory';
 import {
   deriveReadEvolution, derivePersistenceSummary,
   type PersistenceSummary,
@@ -1020,6 +1020,10 @@ function StateEvolution({
   }
 
   const fmtRelative = (ts: number): string => relativeTime(ts, Date.now());
+  // v13.8.3: one-line interpretation tag derived from the segment
+  // chain — "Recovery sequence", "Shock fading", "Compression
+  // stabilizing", etc. No AI call; pure helper on existing history.
+  const evolutionTag = deriveEvolutionTag(records);
 
   return (
     <Section title="STATE EVOLUTION">
@@ -1108,6 +1112,19 @@ function StateEvolution({
           );
         })}
       </div>
+      {/* v13.8.3: pure-derivation interpretation of the rail. Reads
+          one of: Recovery sequence / Shock fading / Compression
+          stabilizing / Failed progression / Momentum deteriorating /
+          Ignition building / Saturation hold / Trend in progress /
+          Synchronizing. No AI call. */}
+      {evolutionTag && (
+        <div style={{
+          marginTop: 10, fontSize: 11, color: 'var(--fg-2)',
+          letterSpacing: '0.06em', fontStyle: 'italic',
+        }}>
+          {evolutionTag}
+        </div>
+      )}
     </Section>
   );
 }
@@ -1447,26 +1464,72 @@ function HeroPersistenceSummary({ p }: { p: PersistenceSummary }) {
   );
 }
 
-// v13.8.1: Monk / Watcher silhouette. Stroke-only inline SVG so the
-// figure inherits the surrounding color theme. Three rendering states:
-//   live    — cyan stroke + breathing pulse + halo
-//   normal  — soft cyan stroke, no animation
-//   stale   — muted grey stroke, dimmed
-// Built to feel like a calm observer presence, not an emoji.
+// v13.8.3: STATE AVATAR — the figure is now a living, state-aware
+// presence rather than a static silhouette. The watcher silhouette
+// (head + robe + third-eye dot + horizon) stays as the constant
+// identity; the energy AROUND the silhouette varies per state code,
+// using pure CSS/SVG (no Lottie, no canvas):
+//
+//   CS / PS / DD          — calm cyan pulse
+//   IS                    — quickened pulse (breath sharpens)
+//   AT                    — upward energy motion (rising chevrons)
+//   SS                    — coherent concentric pulse rings
+//   FA                    — split halo (two arcs drift apart)
+//   SH                    — fractured red glow (jitter + broken arcs)
+//   CL                    — climax burst (strong outward ring)
+//   DS / DC               — directional decay (lower-half dim)
+//
+// `presence` (live / normal / stale) still modulates intensity:
+// stale dims everything; live amplifies the glow.
 
-function MonkFigure({
-  state, accent,
+type AvatarBehavior =
+  | 'calm' | 'ignite' | 'rising' | 'coherent'
+  | 'split' | 'fractured' | 'climax' | 'decay';
+
+function behaviorForState(code: string | null): AvatarBehavior {
+  switch (code) {
+    case 'SH':                       return 'fractured';
+    case 'FA':                       return 'split';
+    case 'SS':                       return 'coherent';
+    case 'AT':                       return 'rising';
+    case 'CL':                       return 'climax';
+    case 'DS': case 'DC':            return 'decay';
+    case 'IS':                       return 'ignite';
+    // CS, PS, DD, unknown
+    default:                         return 'calm';
+  }
+}
+
+function StateAvatar({
+  stateCode, presence, accent,
 }: {
-  state:  'live' | 'normal' | 'stale';
-  accent: string;
+  stateCode: string | null;
+  presence:  'live' | 'normal' | 'stale';
+  accent:    string;
 }) {
+  const behavior = behaviorForState(stateCode);
   const color =
-    state === 'stale' ? 'var(--fg-4)'
-  :                     accent;
-  const halo =
-    state === 'live'   ? `0 0 30px ${accent}66, inset 0 0 18px ${accent}22`
-  : state === 'normal' ? `0 0 18px ${accent}33, inset 0 0 14px ${accent}11`
-  :                       'none';
+    presence === 'stale' ? 'var(--fg-4)'
+  :                        accent;
+
+  const haloIntensity =
+    presence === 'live'   ? 1
+  : presence === 'normal' ? 0.55
+  :                          0.15;
+
+  const halo = behavior === 'fractured'
+    ? `0 0 ${28 * haloIntensity}px ${accent}66, inset 0 0 ${14 * haloIntensity}px ${accent}33`
+    : `0 0 ${24 * haloIntensity}px ${accent}55, inset 0 0 ${14 * haloIntensity}px ${accent}1f`;
+
+  // The shell breath rate / motion is behavior-specific. The shell
+  // itself does the breathing for calm/ignite, jitters for fractured,
+  // and stays still for the others (ring/chevron layers do the work).
+  const shellAnimation: string | undefined =
+    presence === 'stale' ? undefined
+  : behavior === 'calm'      ? 'gcpro-avatar-breathe 4.6s ease-in-out infinite'
+  : behavior === 'ignite'    ? 'gcpro-avatar-breathe-quick 2.4s ease-in-out infinite'
+  : behavior === 'fractured' ? 'gcpro-avatar-jitter 0.4s ease-in-out infinite'
+  :                            undefined;
 
   return (
     <div
@@ -1474,37 +1537,154 @@ function MonkFigure({
       style={{
         width: 84, height: 84, flexShrink: 0,
         borderRadius: '50%',
-        border: `1px solid ${state === 'stale' ? 'var(--line-2)' : `${accent}44`}`,
+        border: `1px solid ${presence === 'stale' ? 'var(--line-2)' : `${accent}44`}`,
         boxShadow: halo,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'radial-gradient(circle, rgba(13,15,18,0.6), rgba(7,8,10,0.95))',
-        opacity: state === 'stale' ? 0.55 : 1,
-        animation: state === 'live'
-          ? 'gcpro-monk-breathe 4.2s ease-in-out infinite'
-          : undefined,
+        opacity: presence === 'stale' ? 0.55 : 1,
+        animation: shellAnimation,
         position: 'relative',
         transition: 'opacity 0.4s ease, box-shadow 0.4s ease, border-color 0.4s ease',
+        overflow: 'hidden',
       }}
     >
-      <svg width={54} height={54} viewBox="0 0 54 54" fill="none">
-        {/* Head — small oval. */}
+      {/* Behavior-specific decorative layers — sit behind the figure. */}
+      {presence !== 'stale' && (
+        <AvatarDecoration behavior={behavior} accent={accent} />
+      )}
+
+      {/* The watcher silhouette — kept constant across states so the
+          figure has continuity. Only its stroke color shifts (via the
+          accent prop passed down from CurrentReadCard). */}
+      <svg width={54} height={54} viewBox="0 0 54 54" fill="none"
+           style={{ position: 'relative', zIndex: 1 }}>
         <ellipse cx={27} cy={18} rx={6.2} ry={7}
           stroke={color} strokeWidth={1.4} fill="none" />
-        {/* Robe / shoulders — wide-bottomed trapezoid suggesting
-            seated meditation. */}
         <path
           d="M11 44 C 13 30 19 24 27 24 C 35 24 41 30 43 44 Z"
           stroke={color} strokeWidth={1.4} strokeLinejoin="round"
-          fill={state === 'live' ? `${accent}11` : 'transparent'}
+          fill={presence === 'live' ? `${accent}11` : 'transparent'}
         />
-        {/* Inner contemplation marker — a single dot at the head's
-            third-eye position. Glows on live. */}
         <circle cx={27} cy={17} r={1.2} fill={color} />
-        {/* Gentle horizon line at the base — grounds the figure. */}
         <path d="M9 46 H45" stroke={color} strokeWidth={0.6} opacity={0.5} />
       </svg>
     </div>
   );
+}
+
+// Behavior decoration layer — purely visual atmosphere around the
+// watcher silhouette. Picks the right SVG/CSS treatment per behavior.
+function AvatarDecoration({
+  behavior, accent,
+}: {
+  behavior: AvatarBehavior;
+  accent:   string;
+}) {
+  // Coherent pulse rings (SS) — three concentric circles expanding outward.
+  if (behavior === 'coherent') {
+    return (
+      <>
+        {[0, 1.2, 2.4].map((delay, i) => (
+          <span key={i} style={{
+            position: 'absolute', inset: 0, margin: 'auto',
+            width: 30, height: 30, borderRadius: '50%',
+            border: `1px solid ${accent}66`,
+            animation: `gcpro-avatar-ring 3.6s ease-out ${delay}s infinite`,
+            opacity: 0,
+          }} />
+        ))}
+      </>
+    );
+  }
+  // Split halo (FA) — two semicircle arcs that drift apart.
+  if (behavior === 'split') {
+    return (
+      <svg width={84} height={84} viewBox="0 0 84 84"
+           style={{ position: 'absolute', inset: 0 }}>
+        <path d="M 14 42 A 28 28 0 0 1 42 14"
+              stroke={accent} strokeWidth={1.2} fill="none"
+              strokeLinecap="round" opacity={0.7}
+              style={{
+                transformOrigin: '42px 42px',
+                animation: 'gcpro-avatar-split-a 3.2s ease-in-out infinite',
+              }} />
+        <path d="M 42 70 A 28 28 0 0 1 70 42"
+              stroke={accent} strokeWidth={1.2} fill="none"
+              strokeLinecap="round" opacity={0.7}
+              style={{
+                transformOrigin: '42px 42px',
+                animation: 'gcpro-avatar-split-b 3.2s ease-in-out infinite',
+              }} />
+      </svg>
+    );
+  }
+  // Fractured glow (SH) — four broken arc segments with jittered offset.
+  if (behavior === 'fractured') {
+    const arcs = [
+      'M 14 42 A 28 28 0 0 1 30 18',
+      'M 42 14 A 28 28 0 0 1 58 22',
+      'M 70 42 A 28 28 0 0 1 60 64',
+      'M 28 68 A 28 28 0 0 1 16 52',
+    ];
+    return (
+      <svg width={84} height={84} viewBox="0 0 84 84"
+           style={{ position: 'absolute', inset: 0 }}>
+        {arcs.map((d, i) => (
+          <path key={i} d={d}
+            stroke={accent} strokeWidth={1.2} fill="none"
+            strokeLinecap="round" opacity={0.65}
+            style={{
+              animation: `gcpro-avatar-fracture 0.9s ease-in-out ${i * 0.2}s infinite`,
+            }} />
+        ))}
+      </svg>
+    );
+  }
+  // Rising energy (AT) — upward chevrons drifting up through the shell.
+  if (behavior === 'rising') {
+    return (
+      <>
+        {[0, 0.6, 1.2].map((delay, i) => (
+          <span key={i} style={{
+            position: 'absolute', left: '50%', bottom: 6,
+            width: 12, height: 6,
+            transform: 'translateX(-50%)',
+            borderTop: `1.2px solid ${accent}aa`,
+            borderRight: `1.2px solid transparent`,
+            borderLeft: `1.2px solid transparent`,
+            borderTopLeftRadius: 2, borderTopRightRadius: 2,
+            opacity: 0,
+            animation: `gcpro-avatar-rise 2.2s ease-out ${delay}s infinite`,
+          }} />
+        ))}
+      </>
+    );
+  }
+  // Climax burst (CL) — single large ring expanding aggressively.
+  if (behavior === 'climax') {
+    return (
+      <span style={{
+        position: 'absolute', inset: 0, margin: 'auto',
+        width: 36, height: 36, borderRadius: '50%',
+        border: `1.4px solid ${accent}aa`,
+        animation: 'gcpro-avatar-climax 1.8s ease-out infinite',
+        opacity: 0,
+      }} />
+    );
+  }
+  // Decay (DS / DC) — drooping radial gradient overlay on the lower
+  // half, pulsing slowly.
+  if (behavior === 'decay') {
+    return (
+      <span style={{
+        position: 'absolute', inset: 0,
+        background: `radial-gradient(circle at 50% 70%, ${accent}22, transparent 55%)`,
+        animation: 'gcpro-avatar-decay 4s ease-in-out infinite',
+      }} />
+    );
+  }
+  // calm / ignite — no decoration beyond the shell breath.
+  return null;
 }
 
 function CurrentReadCard({
@@ -1591,18 +1771,69 @@ function CurrentReadCard({
       boxShadow: isFresh ? `0 0 22px ${accent}22` : 'none',
       transition: 'box-shadow 0.6s ease, border-color 0.6s ease',
     }}>
-      {/* v13.8.1: monk breathing keyframes (component-local). */}
+      {/* v13.8.3: state-avatar keyframes. The avatar reuses the
+          watcher silhouette but layers state-specific atmosphere
+          (rings / arcs / chevrons / glow) on top of it via these
+          animations. All pure CSS — no Lottie, no JS tickers. */}
       <style>{`
         @keyframes gcpro-monk-breathe {
           0%, 100% { transform: scale(1);    opacity: 0.95; }
           50%      { transform: scale(1.04); opacity: 1; }
         }
+        @keyframes gcpro-avatar-breathe {
+          0%, 100% { transform: scale(1);    opacity: 0.94; }
+          50%      { transform: scale(1.035); opacity: 1; }
+        }
+        @keyframes gcpro-avatar-breathe-quick {
+          0%, 100% { transform: scale(1);    opacity: 0.9; }
+          50%      { transform: scale(1.055); opacity: 1; }
+        }
+        @keyframes gcpro-avatar-jitter {
+          0%, 100% { transform: translate(0px, 0px); }
+          25%      { transform: translate(0.6px, -0.4px); }
+          50%      { transform: translate(-0.5px, 0.4px); }
+          75%      { transform: translate(0.4px, 0.5px); }
+        }
+        @keyframes gcpro-avatar-ring {
+          0%   { transform: scale(0.55); opacity: 0.65; }
+          80%  { opacity: 0.04; }
+          100% { transform: scale(1.9);  opacity: 0; }
+        }
+        @keyframes gcpro-avatar-rise {
+          0%   { transform: translate(-50%, 0)    scale(0.85); opacity: 0; }
+          15%  { opacity: 0.85; }
+          100% { transform: translate(-50%, -42px) scale(1.05); opacity: 0; }
+        }
+        @keyframes gcpro-avatar-split-a {
+          0%, 100% { transform: rotate(-4deg); opacity: 0.7; }
+          50%      { transform: rotate(-14deg); opacity: 1; }
+        }
+        @keyframes gcpro-avatar-split-b {
+          0%, 100% { transform: rotate(4deg);  opacity: 0.7; }
+          50%      { transform: rotate(14deg); opacity: 1; }
+        }
+        @keyframes gcpro-avatar-climax {
+          0%   { transform: scale(0.7); opacity: 0.95; }
+          100% { transform: scale(2.4); opacity: 0; }
+        }
+        @keyframes gcpro-avatar-decay {
+          0%, 100% { opacity: 0.45; }
+          50%      { opacity: 0.85; }
+        }
+        @keyframes gcpro-avatar-fracture {
+          0%, 100% { opacity: 0.55; transform: translate(0, 0); }
+          50%      { opacity: 1;    transform: translate(0.3px, -0.2px); }
+        }
         @media (prefers-reduced-motion: reduce) {
-          [aria-hidden="true"] { animation: none !important; }
+          [aria-hidden="true"], [aria-hidden="true"] * { animation: none !important; }
         }
       `}</style>
 
-      <MonkFigure state={monkState} accent={accent} />
+      <StateAvatar
+        stateCode={aiState?.stateCode ?? null}
+        presence={monkState}
+        accent={accent}
+      />
 
       <div style={{
         flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8,
@@ -1647,32 +1878,51 @@ function CurrentReadCard({
           )}
         </div>
 
-        {/* State headline */}
+        {/* v13.8.3: HIERARCHY PROMOTION. Action (stance) is now the
+            largest, most prominent element. The state + phase becomes
+            a small context strip above it, the mode reads as a
+            descriptor line below, and the execution gate is the
+            quietest line. Reading order:
+              COMPRESSION · LATE              ← context (small caps)
+              WAIT                            ← action  (BIG)
+              Build-up phase                  ← mode    (medium)
+              No entry until ignition trigger ← gate    (small italic) */}
         <div style={{
-          display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+          fontSize: 11, fontWeight: 700, color: accent,
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.16em',
+          textTransform: 'uppercase',
         }}>
-          <span style={{
-            fontSize: 24, fontWeight: 700, color: accent,
-            letterSpacing: '0.01em', lineHeight: 1.15,
-          }}>
-            {aiState ? aiState.state.toUpperCase() : 'NO READ'}
-          </span>
+          {aiState ? aiState.state.toUpperCase() : 'NO READ'}
           {aiState && (
-            <span style={{
-              fontSize: 16, color: 'var(--fg-3)', letterSpacing: '0.02em',
-            }}>
-              · {aiState.phase}
-            </span>
+            <span style={{ color: 'var(--fg-3)' }}> · {aiState.phase}</span>
           )}
         </div>
 
-        {/* Stance label — read-only, no execution controls. */}
         {stance && (
           <div style={{
-            fontSize: 15, color: 'var(--fg-1)', fontWeight: 600,
-            letterSpacing: '0.02em',
+            fontSize: 30, fontWeight: 800, color: 'var(--fg-0)',
+            letterSpacing: '0.04em', lineHeight: 1.05,
+            textTransform: 'uppercase',
           }}>
             {stance.stance}
+          </div>
+        )}
+
+        {stance && (
+          <div style={{
+            fontSize: 13, color: 'var(--fg-2)', letterSpacing: '0.02em',
+            lineHeight: 1.3,
+          }}>
+            {stance.mode}
+          </div>
+        )}
+
+        {stance && (
+          <div style={{
+            fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic',
+            letterSpacing: '0.02em', lineHeight: 1.4,
+          }}>
+            {stance.execution}
           </div>
         )}
 

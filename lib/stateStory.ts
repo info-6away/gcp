@@ -1,59 +1,40 @@
-// v13.8: deterministic state-evolution narrative.
-// v13.8.1: richer phrasing — adds clarity-trend tracking + a
-// stable / unresolved / drifting environment classification, and
-// uses full state names ("Compression") instead of short codes
-// ("CS") when reading as prose.
+// v13.8.3: human-summary rewrite. The previous "arc" framing read as
+// an event log — "Failed alignment resolved into Compression …".
+// The new copy frames consequences instead — "After failed alignment,
+// conviction reset." — and follows it with short pressure / clarity
+// trend lines pulled directly from the current-segment record fields.
 //
-// Reads the recent aiStateHistory and produces a 1-3 sentence
-// plain-English summary like:
-//
-//   "Failed alignment resolved into a long Compression plateau.
-//    Guru has held CS for 6 reads, with read clarity strengthening
-//    from 31% to 54%. The environment is stable but unresolved."
-//
-// Pure derivation. No LLM, no Engine call. Used by the Guru
-// timeline page as the "STATE STORY" banner above the history list.
+// Pure derivation. No LLM, no Engine call. Used by:
+//   • StateStoryBanner — narrative under the hero
+//   • StateEvolution — a one-line interpretation tag under the rail
+//                      ("Recovery sequence", "Shock fading", …)
 
 import type { AiStateHistoryRecord } from '@/lib/aiStateHistory';
 
-// Friendly short labels for state codes that appear in the narrative.
-const SHORT_LABEL: Record<string, string> = {
-  CS: 'CS',
-  IS: 'IS',
-  AT: 'AT',
-  SS: 'SS',
-  FA: 'FA',
-  CL: 'climax',
-  SH: 'shock',
-  DS: 'discharge',
-  DD: 'flat',
-  PS: 'plateau',
-  DC: 'decay',
+// Full prose names for state codes, used in narrative sentences.
+const PROSE_NAME: Record<string, string> = {
+  CS: 'Compression',
+  IS: 'Ignition',
+  AT: 'Alignment',
+  SS: 'Synchronization',
+  FA: 'Failed alignment',
+  CL: 'Climax',
+  SH: 'Shock',
+  DS: 'Discharge',
+  DD: 'Dead drift',
+  PS: 'Plateau',
+  DC: 'Directional decay',
 };
 
-// Optional flavor phrases keyed off the state — used when the state
-// appears as a SEGMENT in the narrative. e.g. an FA segment reads as
-// "FA failure", a CL segment as "climax", etc.
-const FLAVOR: Record<string, string> = {
-  FA: 'failed alignment',
-  SH: 'shock event',
-  CL: 'climax exhaustion',
-  DS: 'discharge',
-  PS: 'plateau saturation',
-  DC: 'directional decay',
-};
+// Event-class codes — these are the "things that happened" that the
+// arc-of-consequence framing reads off of.
+const EVENT_CODES = new Set(['FA', 'SH', 'CL', 'DC']);
 
 interface Segment {
   code:  string;
-  count: number;     // how many consecutive records collapsed into this segment
+  count: number;
 }
 
-/**
- * Collapse consecutive same-state records into segments, walking
- * OLDEST-first. Caller passes records newest-first as stored on
- * localStorage; we reverse internally so the narrative reads in time
- * order ("X → Y → Z" matches user mental model).
- */
 function buildSegments(recordsNewestFirst: AiStateHistoryRecord[]): Segment[] {
   if (recordsNewestFirst.length === 0) return [];
   const ordered = recordsNewestFirst.slice().reverse();
@@ -70,174 +51,151 @@ function buildSegments(recordsNewestFirst: AiStateHistoryRecord[]): Segment[] {
   return out;
 }
 
-// describeSegment was used by the v13.8 single-line arrow rendering;
-// v13.8.1's narrative builder no longer needs it. Helper preserved
-// for potential future callers — referenced via `void` to silence
-// noUnusedLocals.
-function describeSegment(seg: Segment): string {
-  const label = SHORT_LABEL[seg.code] ?? seg.code;
-  const flavor = FLAVOR[seg.code];
-  if (seg.count >= 3) return `${label} persisted for ${seg.count} reads`;
-  if (seg.count === 2) return `${label}${flavor ? ` (${flavor})` : ''} held twice`;
-  if (flavor) return `${label} (${flavor})`;
-  return label;
-}
-void describeSegment;
-
-// Full prose names for state codes, used in narrative sentences
-// where SHORT_LABEL would read as jargon.
-const PROSE_NAME: Record<string, string> = {
-  CS: 'Compression',
-  IS: 'Ignition',
-  AT: 'Alignment Trend',
-  SS: 'Synchronization',
-  FA: 'Failed Alignment',
-  CL: 'Climax',
-  SH: 'Shock',
-  DS: 'Discharge',
-  DD: 'Dead Drift',
-  PS: 'Plateau',
-  DC: 'Directional Decay',
-};
-
-// State codes whose appearance reads as an event worth narrating.
-const EVENT_CODES = new Set(['FA', 'SH', 'CL', 'DC']);
-
 export interface StateStory {
-  /** Full 1-3 sentence narrative string. */
-  text:     string;
-  /** Number of source records the narrative summarised. */
-  samples:  number;
-  /** Distinct state codes covered by the narrative — useful for the
-   *  UI's "states seen" badge if it ever wants one. */
-  codes:    string[];
-  /** Environment temperament — "stable" / "unresolved" / "drifting". */
-  temperament?: 'stable' | 'unresolved' | 'drifting';
+  text:        string;
+  samples:     number;
+  codes:       string[];
+  temperament?: 'stable' | 'unresolved' | 'drifting' | 'stabilizing';
 }
 
 const DEFAULT_WINDOW = 8;
 
-/**
- * Pick the most recent segment as the "current" segment and produce
- * a sentence about how Guru has held that state, including a clarity
- * trend over the segment's records if available.
- */
-function describePersistenceTrend(
-  current: Segment,
-  recentRecords: AiStateHistoryRecord[],
-): string {
-  const prose = PROSE_NAME[current.code] ?? current.code;
-  const short = SHORT_LABEL[current.code] ?? current.code;
-  if (current.count <= 1) {
-    return `Guru is currently in ${prose}.`;
-  }
-  // Pull clarity for the current segment's records (most-recent first).
-  // We treat the first `current.count` records as belonging to the
-  // segment since they're consecutive same-state.
-  const inSegment = recentRecords.slice(0, current.count);
-  // Records are stored newest-first; reverse so we read oldest → newest.
-  const conf = inSegment.slice().reverse().map(r => r.confidence ?? 0);
-  if (conf.length < 2) {
-    return `Guru has held ${short} for ${current.count} reads.`;
-  }
-  const first = Math.round(conf[0] * 100);
-  const last  = Math.round(conf[conf.length - 1] * 100);
-  const delta = last - first;
-  let trend: string;
-  if (Math.abs(delta) < 5) {
-    trend = `read clarity flat near ${last}%`;
-  } else if (delta > 0) {
-    trend = `read clarity strengthening from ${first}% to ${last}%`;
-  } else {
-    trend = `read clarity slipping from ${first}% to ${last}%`;
-  }
-  return `Guru has held ${short} for ${current.count} reads, with ${trend}.`;
-}
+// ────────────────────────────────────────────────────────────────────
+// Consequence-framing arc sentence.
+// Where the v13.8.1 builder read "FA resolved into CS", this reads
+// "After failed alignment, conviction reset." — past-tense, human,
+// no event-log fingerprint.
+// ────────────────────────────────────────────────────────────────────
 
-/**
- * Classify the overall environment temperament from the segment chain.
- *   stable      — single long segment, no event states
- *   unresolved  — mixed segments with at least one event state but
- *                 current segment is a passive one (CS / DD / PS)
- *   drifting    — current segment is short (≤2) and surrounded by
- *                 churn (3+ segments in window)
- */
-function classifyTemperament(
-  segs: Segment[],
-): 'stable' | 'unresolved' | 'drifting' {
-  if (segs.length === 0) return 'unresolved';
-  const current = segs[segs.length - 1];
-  const hasEvent = segs.some(s => EVENT_CODES.has(s.code));
-  // Single-segment window — fully stable.
-  if (segs.length === 1) return 'stable';
-  // Many segments + short current → drifting.
-  if (segs.length >= 4 && current.count <= 2) return 'drifting';
-  // Event in the chain but current passive → unresolved.
-  if (hasEvent && (current.code === 'CS' || current.code === 'DD' || current.code === 'PS')) {
-    return 'unresolved';
-  }
-  // Long current segment (≥4) → stable.
-  if (current.count >= 4) return 'stable';
-  return 'drifting';
-}
-
-const TEMPERAMENT_SUFFIX: Record<'stable' | 'unresolved' | 'drifting', string> = {
-  stable:     'The environment is stable.',
-  unresolved: 'The environment is stable but unresolved.',
-  drifting:   'The environment is drifting.',
-};
-
-/**
- * Build the opening "what happened" sentence from the segment chain.
- * For ≤1 distinct code: skipped (the persistence sentence carries it).
- * For ≥2 codes: "<oldest event> resolved into <current>" style copy
- * with friendly transitions for common patterns.
- */
 function describeArc(segs: Segment[]): string | null {
   if (segs.length < 2) return null;
   const current = segs[segs.length - 1];
   const prev    = segs[segs.length - 2];
 
-  const cur = PROSE_NAME[current.code] ?? current.code;
-  const pr  = PROSE_NAME[prev.code]    ?? prev.code;
-
-  // FA / SH / CL events resolving into something quieter — preferred
-  // narrative pattern.
+  // Event → passive: the EVENT just happened, the environment is
+  // settling. Read as "After X, …".
   if (EVENT_CODES.has(prev.code) && !EVENT_CODES.has(current.code)) {
-    const intro =
-      prev.code === 'FA' ? 'Failed alignment resolved'
-    : prev.code === 'SH' ? 'Shock event resolved'
-    : prev.code === 'CL' ? 'Climax exhaustion resolved'
-    : prev.code === 'DC' ? 'Directional decay resolved'
-    :                       `${pr} resolved`;
-    const tail =
-      current.count >= 4 ? `into a long ${cur} plateau`
-    : current.count >= 2 ? `into ${cur}`
-    :                       `into a fresh ${cur} read`;
-    return `${intro} ${tail}.`;
+    switch (prev.code) {
+      case 'SH': return 'After shock, environment cooled.';
+      case 'FA': return 'After failed alignment, conviction reset.';
+      case 'CL': return 'After climax, momentum eased.';
+      case 'DC': return 'Directional decay subsided.';
+    }
   }
 
-  // Same-direction continuation (CS → IS, IS → AT, etc.) → "advanced".
-  const continuationChains: Record<string, string> = {
-    'CS|IS': 'compression broke into ignition',
-    'IS|AT': 'ignition resolved into alignment',
-    'AT|SS': 'alignment matured into synchronization',
-    'SS|PS': 'synchronization saturated into plateau',
+  // Constructive continuations — read as a single verb.
+  const continuation: Record<string, string> = {
+    'CS|IS': 'Compression released into ignition.',
+    'IS|AT': 'Ignition matured into trend.',
+    'AT|SS': 'Trend tightened into synchronization.',
+    'SS|PS': 'Synchronization saturated into plateau.',
+    'PS|DC': 'Plateau gave way to decay.',
+    'AT|FA': 'Trend attempt failed.',
+    'IS|FA': 'Ignition failed.',
+    'AT|CS': 'Trend lost coherence, back to compression.',
+    'SS|CS': 'Synchronization unwound back to compression.',
+    'AT|DC': 'Trend coherence broke down.',
+    'SS|DC': 'Synchronization coherence broke down.',
   };
   const key = `${prev.code}|${current.code}`;
-  if (continuationChains[key]) {
-    return continuationChains[key].charAt(0).toUpperCase()
-      + continuationChains[key].slice(1) + '.';
-  }
+  if (continuation[key]) return continuation[key];
 
-  // Failure entering — e.g., IS → FA.
-  if (EVENT_CODES.has(current.code) && !EVENT_CODES.has(prev.code)) {
-    return `${pr} attempt ended in ${cur}.`;
-  }
-
-  // Generic fallback.
-  return `${pr} transitioned into ${cur}.`;
+  // Generic fallback — still consequence-flavored, not event-log.
+  const pr = PROSE_NAME[prev.code] ?? prev.code;
+  const cu = PROSE_NAME[current.code]?.toLowerCase() ?? current.code;
+  return `${pr} gave way to ${cu}.`;
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Pressure trend across the current segment.
+// Reads "Pressure built." / "Pressure weakened." / "Pressure tilted long."
+// based on the change in directional skew between segment-start and
+// segment-end. Skips if change is small or fields are missing.
+// ────────────────────────────────────────────────────────────────────
+
+function describePressureChange(
+  oldest: AiStateHistoryRecord | undefined,
+  newest: AiStateHistoryRecord | undefined,
+): string | null {
+  if (!oldest || !newest) return null;
+  const oL = oldest.longPressure;
+  const oS = oldest.shortPressure;
+  const nL = newest.longPressure;
+  const nS = newest.shortPressure;
+  if (oL == null || oS == null || nL == null || nS == null) return null;
+
+  const oSkew = oL - oS;
+  const nSkew = nL - nS;
+  const oMag  = Math.abs(oSkew);
+  const nMag  = Math.abs(nSkew);
+
+  // Direction flip — pressure rotated.
+  if (Math.sign(oSkew) !== Math.sign(nSkew) && oMag > 6 && nMag > 6) {
+    return nSkew > 0 ? 'Pressure rotated long.' : 'Pressure rotated short.';
+  }
+  // Magnitude change.
+  const delta = nMag - oMag;
+  if (Math.abs(delta) < 8) return null;
+  if (delta > 0) {
+    return nSkew > 0 ? 'Long pressure built.'
+        : nSkew < 0 ? 'Short pressure built.'
+        :              'Pressure built.';
+  }
+  return 'Pressure weakened.';
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Clarity trend across the current segment.
+// Reads "Clarity firmed: 18% → 31%." or "Clarity slipped: 27% → 18%.".
+// ────────────────────────────────────────────────────────────────────
+
+function describeClarityChange(
+  oldest: AiStateHistoryRecord | undefined,
+  newest: AiStateHistoryRecord | undefined,
+): string | null {
+  if (!oldest || !newest) return null;
+  const o = Math.round((oldest.confidence ?? 0) * 100);
+  const n = Math.round((newest.confidence ?? 0) * 100);
+  if (Math.abs(n - o) < 5) return null;
+  const verb = n > o ? 'firmed' : 'slipped';
+  return `Clarity ${verb}: ${o}% → ${n}%.`;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Temperament — same 4-way classification, but the copy is shorter.
+// ────────────────────────────────────────────────────────────────────
+
+function classifyTemperament(
+  segs: Segment[],
+  current: Segment,
+): 'stable' | 'unresolved' | 'drifting' | 'stabilizing' {
+  if (segs.length === 0) return 'unresolved';
+  const hasEvent = segs.some(s => EVENT_CODES.has(s.code));
+  if (segs.length === 1) return 'stable';
+  // Long current passive segment after an event → stabilizing.
+  if (hasEvent && current.count >= 3
+      && !EVENT_CODES.has(current.code)) {
+    return 'stabilizing';
+  }
+  if (segs.length >= 4 && current.count <= 2) return 'drifting';
+  if (hasEvent && (current.code === 'CS' || current.code === 'DD' || current.code === 'PS')) {
+    return 'unresolved';
+  }
+  if (current.count >= 4) return 'stable';
+  return 'drifting';
+}
+
+const TEMPERAMENT_PROSE: Record<NonNullable<StateStory['temperament']>, string> = {
+  stable:       'Environment stable.',
+  unresolved:   'Environment unresolved.',
+  drifting:     'Environment drifting.',
+  stabilizing:  'Environment stabilizing.',
+};
+
+// ────────────────────────────────────────────────────────────────────
+// Public: deriveStateStory.
+// Returns a 1-4 sentence human summary of recent state activity.
+// ────────────────────────────────────────────────────────────────────
 
 export function deriveStateStory(
   records: AiStateHistoryRecord[],
@@ -249,41 +207,118 @@ export function deriveStateStory(
   const segs = buildSegments(slice);
   if (segs.length === 0) return null;
 
-  // Single-segment edge case — entire window is the same state.
-  if (segs.length === 1) {
-    const only = segs[0];
-    const short = SHORT_LABEL[only.code] ?? only.code;
-    const persistence = describePersistenceTrend(only, slice);
-    return {
-      text:    persistence
-             + (only.count >= 4
-                ? ` ${TEMPERAMENT_SUFFIX.stable}`
-                : ''),
-      samples: slice.length,
-      codes:   [only.code],
-      temperament: 'stable',
-    };
-  }
-
   const current = segs[segs.length - 1];
-  const arc = describeArc(segs);
-  const persistence = describePersistenceTrend(current, slice);
-  const temperament = classifyTemperament(segs);
-  const tail = TEMPERAMENT_SUFFIX[temperament];
 
-  const parts: string[] = [];
-  if (arc) parts.push(arc);
-  parts.push(persistence);
-  // Only append a temperament tail if it adds something beyond the
-  // arc + persistence sentences already conveyed.
-  if (temperament !== 'stable' || segs.length > 1) {
-    parts.push(tail);
+  // Current segment occupies the first `current.count` records (newest
+  // first). Segment endpoints used for trend sentences.
+  const segmentRecords = slice.slice(0, current.count);
+  const segOldest = segmentRecords[segmentRecords.length - 1];
+  const segNewest = segmentRecords[0];
+
+  const sentences: string[] = [];
+
+  // 1. Arc — only if a prior segment exists (multi-segment chain).
+  const arc = describeArc(segs);
+  if (arc) sentences.push(arc);
+
+  // 2. Pressure verb across the current segment.
+  const pressure = describePressureChange(segOldest, segNewest);
+  if (pressure) sentences.push(pressure);
+
+  // 3. Clarity verb across the current segment.
+  const clarity = describeClarityChange(segOldest, segNewest);
+  if (clarity) sentences.push(clarity);
+
+  // Single-segment window with no movement — fall back to a soft
+  // observation so the banner isn't empty.
+  if (sentences.length === 0) {
+    const prose = PROSE_NAME[current.code] ?? current.code;
+    if (current.count >= 2) {
+      sentences.push(`${prose} holding across ${current.count} reads.`);
+    } else {
+      sentences.push(`${prose} just read.`);
+    }
   }
-  const text = parts.join(' ');
+
+  // 4. Temperament tail.
+  const temperament = classifyTemperament(segs, current);
+  sentences.push(TEMPERAMENT_PROSE[temperament]);
+
   return {
-    text,
+    text:    sentences.join(' '),
     samples: slice.length,
     codes:   Array.from(new Set(segs.map(s => s.code))),
     temperament,
   };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Public: deriveEvolutionTag.
+// Short interpretation tag (≤3 words) shown under the State Evolution
+// rail — e.g. "Recovery sequence", "Shock fading", "Compression
+// stabilizing", "Failed progression", "Momentum deteriorating".
+//
+// Pure derivation from the segment chain — no AI call.
+// ────────────────────────────────────────────────────────────────────
+
+export function deriveEvolutionTag(
+  records: AiStateHistoryRecord[],
+  options: { window?: number } = {},
+): string | null {
+  const window = options.window ?? DEFAULT_WINDOW;
+  const slice = records.slice(0, window);
+  if (slice.length === 0) return null;
+  const segs = buildSegments(slice);
+  if (segs.length === 0) return null;
+
+  const current = segs[segs.length - 1];
+  const prev    = segs.length >= 2 ? segs[segs.length - 2] : null;
+
+  // Failed progression — IS or AT collapsed into FA.
+  if (prev && (prev.code === 'IS' || prev.code === 'AT') && current.code === 'FA') {
+    return 'Failed progression';
+  }
+
+  // Recovery sequence — event state immediately followed by a passive.
+  if (prev && EVENT_CODES.has(prev.code) && !EVENT_CODES.has(current.code)) {
+    return 'Recovery sequence';
+  }
+
+  // Shock fading — shock appeared in the recent chain but current
+  // segment is past it for at least 2 reads.
+  const sawShock = segs.some(s => s.code === 'SH');
+  if (sawShock && current.code !== 'SH' && current.count >= 2) {
+    return 'Shock fading';
+  }
+
+  // Momentum deteriorating — trend/sync rolled into compression/dead
+  // drift/decay.
+  if (prev
+      && (prev.code === 'AT' || prev.code === 'SS')
+      && (current.code === 'CS' || current.code === 'DD' || current.code === 'DC')) {
+    return 'Momentum deteriorating';
+  }
+
+  // Ignition building — CS just released into IS, or a long CS with
+  // strengthening clarity (caller can also surface this).
+  if (prev && prev.code === 'CS' && current.code === 'IS') {
+    return 'Ignition building';
+  }
+
+  // Compression stabilizing — long-held CS run.
+  if (current.code === 'CS' && current.count >= 4) {
+    return 'Compression stabilizing';
+  }
+
+  // Saturation hold — PS persisted.
+  if (current.code === 'PS' && current.count >= 2) {
+    return 'Saturation hold';
+  }
+
+  // Trend in progress — AT or SS holding.
+  if ((current.code === 'AT' || current.code === 'SS') && current.count >= 2) {
+    return current.code === 'SS' ? 'Synchronizing' : 'Trend in progress';
+  }
+
+  return null;
 }
