@@ -97,6 +97,15 @@ export interface AiStateHistoryRecord {
     fallback?:     boolean;
     deploymentId?: string | null;
   };
+
+  // v13.8: "Machine Thinking" surface fields. Persist the Engine's own
+  // narrative copy so the new Guru timeline can render the AI's
+  // reasoning at the time of each classification. Older entries
+  // written before v13.8 won't have these; the UI degrades gracefully.
+  reasoningShort?:     string;
+  goldInterpretation?: string;
+  watchNext?:          string[];
+  invalidatorsSnap?:   string[];
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -195,6 +204,12 @@ export interface AiStateHistoryInput {
     fallback?:     boolean;
     deploymentId?: string | null;
   };
+
+  // v13.8: Engine narrative copy persisted on the input side too.
+  reasoningShort?:     string;
+  goldInterpretation?: string;
+  watchNext?:          string[];
+  invalidatorsSnap?:   string[];
 }
 
 // Append a single record. Returns the new history. Dedupes against

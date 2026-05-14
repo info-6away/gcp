@@ -939,6 +939,17 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
                   deploymentId: finalResp._meta.deploymentId,
                 }
               : undefined,
+            // v13.8: Engine narrative snapshot — surfaced by the new
+            // Guru timeline's "Machine Thinking" expansion. Older
+            // entries don't have these and the UI hides the section.
+            reasoningShort:       finalResp.reasoningShort || undefined,
+            goldInterpretation:   finalResp.goldInterpretation || undefined,
+            watchNext:            finalResp.watchNext && finalResp.watchNext.length > 0
+              ? finalResp.watchNext
+              : undefined,
+            invalidatorsSnap:     finalResp.invalidators && finalResp.invalidators.length > 0
+              ? finalResp.invalidators
+              : undefined,
           });
         }
       } else {

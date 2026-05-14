@@ -18,8 +18,13 @@ export type MobilePage =
 // v13.7: Guru removed from bottom nav. Trade is now the primary
 // Guru-powered execution surface and takes the center-hero slot;
 // Patterns fills the freed side slot so we keep 5 visible items.
+// v13.8: Guru restored as a side button — but as the new
+// "Coherence Memory / State Evolution" surface, not the old
+// duplicate execution page. Trade still owns the center hero.
+// Patterns moves back to the drawer (it was the freed slot in
+// v13.7; the drawer already lists it).
 export const BOTTOM_NAV_PAGES: ReadonlySet<MobilePage> = new Set<MobilePage>([
-  'dashboard', 'chart', 'trading', 'research', 'pattern',
+  'dashboard', 'guru', 'trading', 'research', 'chart',
 ]);
 
 export function MobileStatus({
@@ -170,12 +175,27 @@ export function BottomNav({
     </svg>
   );
   // v13.7: Patterns icon added — center hero replaced by Trade.
+  // v13.8: Patterns moved to drawer; kept for any future use.
   const PatternsIcon = () => (
     <svg width={18} height={18} viewBox="0 0 18 18" fill="none">
       <path d="M2 4 L6 4 M2 9 L10 9 M2 14 L14 14" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
       <circle cx={6} cy={4}  r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
       <circle cx={10} cy={9}  r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
       <circle cx={14} cy={14} r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
+    </svg>
+  );
+  void PatternsIcon;     // kept available for the drawer; not used in bottom nav
+
+  // v13.8: Guru icon — a small "node + history" glyph hinting at
+  // state evolution rather than the previous monk silhouette. Guru
+  // is now the memory / timeline surface; the icon needs to read
+  // "history of reads", not "AI thinker".
+  const GuruIcon = () => (
+    <svg width={18} height={18} viewBox="0 0 18 18" fill="none">
+      <circle cx={4}  cy={9}  r={2} stroke="currentColor" strokeWidth={1.4} fill="none" />
+      <circle cx={9}  cy={9}  r={2} stroke="currentColor" strokeWidth={1.4} fill="none" />
+      <circle cx={14} cy={9}  r={2.4} stroke="currentColor" strokeWidth={1.6} fill="rgba(77,217,232,0.18)" />
+      <path d="M6 9 L7 9 M11 9 L11.6 9" stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" />
     </svg>
   );
   // v13.7: Trade replaces Guru as the center hero. Larger glyph
@@ -232,7 +252,7 @@ export function BottomNav({
       flexShrink: 0,
     }}>
       {side('dashboard', 'DASHBOARD', DashboardIcon)}
-      {side('chart',     'CHART',     ChartIcon)}
+      {side('guru',      'GURU',      GuruIcon)}
 
       {/* CENTER HERO — Trade (v13.7). Same circular-pill treatment as
           the previous Guru hero. Freshness pulse fires on recent
@@ -274,7 +294,7 @@ export function BottomNav({
       </div>
 
       {side('research', 'RESEARCH', ResearchIcon)}
-      {side('pattern',  'PATTERNS', PatternsIcon)}
+      {side('chart',    'CHART',    ChartIcon)}
     </div>
   );
 }

@@ -355,13 +355,15 @@ interface LeftRailProps {
 
 function LeftRail({ page, onNav, lastDataDate }: LeftRailProps) {
   // v11.27: Guru tab inserted between Dashboard and Patterns.
-  // v13.7: Guru REMOVED from primary nav — Trade is now the main
-  // Guru-powered execution surface. The GuruView component is kept
-  // in the codebase but not navigable; the ASK GURU button lives in
-  // the Trade header now. Direct URL navigation still works if a
-  // future re-enable is needed.
+  // v13.7: Guru REMOVED from primary nav — Trade became the main
+  // execution surface.
+  // v13.8: Guru RESTORED with a new identity — Coherence Memory +
+  // State Evolution. Trade stays "what should I do now?"; Guru
+  // answers "what is the machine seeing, what changed, how did we
+  // get here?". Different surfaces, different jobs.
   const items = [
     { id: 'dashboard' as const, label: 'Dashboard', hint: 'D' },
+    { id: 'guru'      as const, label: 'Guru',      hint: 'G' },
     { id: 'pattern'   as const, label: 'Patterns',  hint: 'P' },
     { id: 'chart'     as const, label: 'Chart',     hint: 'C' },
     { id: 'research'  as const, label: 'Research',  hint: 'R' },

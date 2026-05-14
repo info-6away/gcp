@@ -36,7 +36,8 @@ import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
-import { stateColor } from '@/lib/aiState';
+import { deriveStateStory } from '@/lib/stateStory';
+import { stateColor, DEFAULT_INTERPRETATION } from '@/lib/aiState';
 import { deriveTradePlan, type TradePlan } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { ladderColor, ladderLabel, type LadderState } from '@/lib/stateTransition';
@@ -1177,6 +1178,161 @@ function WatchNext({
   );
 }
 
+// ════════════════════════════════════════════════════════════════════
+// v13.8: Guru becomes the COHERENCE MEMORY + STATE EVOLUTION surface.
+// Trade owns execution; Guru owns "what is the machine seeing, what
+// changed, how did we get here?".
+//
+// New components below:
+//   - CurrentReadCard   — slim hero (state · stance label · transition
+//                          · one-line interp · metadata)
+//   - StateStoryBanner  — deterministic narrative from recent history
+//   - REPLAY button     — placeholder, "coming soon" toast
+// Plus filter controls added to GuruHistory and a Machine Thinking
+// collapsible inside ExpandedHistoryRow.
+// ════════════════════════════════════════════════════════════════════
+
+function CurrentReadCard({
+  aiState, aiLastSuccess, regime, netVariance,
+}: {
+  aiState:       GcpStateResponse | null;
+  aiLastSuccess: Date | null;
+  regime?:       string | null;
+  netVariance?:  number | null;
+}) {
+  const now = useTick(1000);
+  const accent  = aiState ? stateColor(aiState) : 'var(--fg-3)';
+  const interp  = aiState
+    ? (aiState.reasoningShort?.trim()
+       || DEFAULT_INTERPRETATION[aiState.stateCode]
+       || aiState.goldInterpretation?.trim()
+       || 'No interpretation available.')
+    : 'No Guru read yet — open Trade and click Ask Guru.';
+
+  const stance = aiState ? deriveStance(aiState) : null;
+  const nextState = aiState?.nextLikelyState ?? null;
+  const nextConf = aiState?.transitionConfidence;
+  const stateConfPct = aiState ? Math.round(aiState.confidence * 100) : null;
+
+  const lastUpdate = aiLastSuccess
+    ? relativeTime(aiLastSuccess.getTime(), now)
+    : '—';
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${accent}`,
+      borderRadius: 'var(--r-md)',
+      padding: '16px 20px',
+      display: 'flex', flexDirection: 'column', gap: 10,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        CURRENT READ
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+      }}>
+        <span style={{
+          fontSize: 24, fontWeight: 700, color: accent,
+          letterSpacing: '0.01em', lineHeight: 1.15,
+        }}>
+          {aiState ? aiState.state.toUpperCase() : 'NO READ'}
+        </span>
+        {aiState && (
+          <span style={{
+            fontSize: 16, color: 'var(--fg-3)', letterSpacing: '0.02em',
+          }}>
+            · {aiState.phase}
+          </span>
+        )}
+      </div>
+
+      {/* Stance label — read-only display, NO buttons / NO execution. */}
+      {stance && (
+        <div style={{
+          fontSize: 15, color: 'var(--fg-1)', fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}>
+          {stance.stance}
+        </div>
+      )}
+
+      {/* Transition forecast */}
+      {nextState && nextConf != null && (
+        <div style={{
+          fontSize: 12, color: 'var(--fg-3)',
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+        }}>
+          Transition likely → <span style={{
+            color: ladderColor(nextState as LadderState),
+            fontWeight: 600,
+          }}>
+            {ladderLabel(nextState as LadderState)}
+          </span> · {Math.round(nextConf * 100)}%
+        </div>
+      )}
+
+      <div style={{
+        fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
+      }}>
+        {interp}
+      </div>
+
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 14,
+        fontSize: 9, color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+      }}>
+        {aiLastSuccess && (
+          <span>updated <b style={{ color: 'var(--fg-2)' }}>{lastUpdate}</b></span>
+        )}
+        {stateConfPct != null && (
+          <span>read clarity <b style={{ color: 'var(--fg-2)' }}>{stateConfPct}%</b></span>
+        )}
+        {regime && (
+          <span>regime <b style={{ color: 'var(--fg-2)' }}>{regime}</b></span>
+        )}
+        {netVariance != null && (
+          <span>NV <b style={{ color: 'var(--fg-2)' }}>{netVariance.toFixed(1)}</b></span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// State story banner — deterministic narrative ("CS persisted for 4
+// reads → SH event → recovery into CS …"). Pure helper; no Engine.
+
+function StateStoryBanner({ records }: { records: AiStateHistoryRecord[] }) {
+  const story = useMemo(() => deriveStateStory(records, { window: 8 }), [records]);
+  if (!story) return null;
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600, marginBottom: 6,
+      }}>
+        STATE STORY · last {story.samples} reads
+      </div>
+      <div style={{
+        fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55,
+        fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+      }}>
+        {story.text}
+      </div>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // v13.3: Expandable Guru History snapshot.
 //
@@ -1446,6 +1602,19 @@ function ExpandedHistoryRow({
     );
   }
 
+  // v13.8: Machine Thinking — the AI's own narrative copy.
+  // Collapsible, default collapsed. Surfaces patternStory, reasoning,
+  // gold interpretation, watchNext, invalidators. Reads as
+  // "what the machine actually thought at the time". Older entries
+  // written before v13.8 won't have these fields and the section
+  // hides itself entirely.
+  const hasMachineThinking =
+       !!r.reasoningShort
+    || !!r.goldInterpretation
+    || (r.watchNext && r.watchNext.length > 0)
+    || (r.invalidatorsSnap && r.invalidatorsSnap.length > 0)
+    || (r.patternStorySnap?.posture);
+
   return (
     <div style={{
       marginTop: 6,
@@ -1454,11 +1623,133 @@ function ExpandedHistoryRow({
       border: '1px solid var(--line-1)',
       borderLeft: '2px solid var(--cyan)',
       borderRadius: 3,
+      display: 'flex', flexDirection: 'column', gap: 14,
+    }}>
+    <div style={{
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
       gap: 14,
     }}>
       {sections}
+    </div>
+    {hasMachineThinking && <MachineThinkingSection r={r} />}
+    </div>
+  );
+}
+
+// v13.8: collapsible "Machine Thinking" block inside the expanded
+// history row. Surfaces the AI's own narrative copy without
+// rerunning anything — pure history rendering.
+
+function MachineThinkingSection({ r }: { r: AiStateHistoryRecord }) {
+  const [open, setOpen] = useState(false);
+  const story = r.patternStorySnap;
+  return (
+    <div style={{
+      borderTop: '1px solid var(--line-1)',
+      paddingTop: 10,
+    }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%',
+          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+          background: 'transparent', border: 0, padding: 0,
+          color: 'var(--fg-3)', cursor: 'pointer',
+          fontSize: 9, letterSpacing: '0.18em', fontWeight: 600,
+          fontFamily: 'var(--font-mono)',
+          textTransform: 'uppercase',
+        }}
+      >
+        <span>Machine Thinking</span>
+        <span style={{ fontSize: 10 }}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10,
+          fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.6,
+        }}>
+          {r.reasoningShort && (
+            <div>
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.14em',
+                marginBottom: 3, textTransform: 'uppercase',
+              }}>Reasoning</div>
+              <div style={{ fontStyle: 'italic', color: 'var(--fg-2)' }}>
+                {r.reasoningShort}
+              </div>
+            </div>
+          )}
+          {r.goldInterpretation && (
+            <div>
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.14em',
+                marginBottom: 3, textTransform: 'uppercase',
+              }}>Market Interpretation</div>
+              <div>{r.goldInterpretation}</div>
+            </div>
+          )}
+          {story?.posture && (
+            <div>
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.14em',
+                marginBottom: 3, textTransform: 'uppercase',
+              }}>Pattern Story Posture</div>
+              <div>{story.posture}</div>
+            </div>
+          )}
+          {r.watchNext && r.watchNext.length > 0 && (
+            <div>
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.14em',
+                marginBottom: 3, textTransform: 'uppercase',
+              }}>Watch Next</div>
+              <ul style={{
+                margin: 0, padding: 0, listStyle: 'none',
+                display: 'flex', flexDirection: 'column', gap: 3,
+              }}>
+                {r.watchNext.slice(0, 4).map((w, i) => (
+                  <li key={i} style={{
+                    paddingLeft: 12, position: 'relative',
+                  }}>
+                    <span style={{
+                      position: 'absolute', left: 0, top: 8,
+                      width: 4, height: 4, borderRadius: '50%',
+                      background: 'var(--cyan)',
+                    }} />
+                    {w}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {r.invalidatorsSnap && r.invalidatorsSnap.length > 0 && (
+            <div>
+              <div style={{
+                fontSize: 9, color: '#c45a5a', letterSpacing: '0.14em',
+                marginBottom: 3, textTransform: 'uppercase',
+              }}>Invalidators</div>
+              <ul style={{
+                margin: 0, padding: 0, listStyle: 'none',
+                display: 'flex', flexDirection: 'column', gap: 3,
+              }}>
+                {r.invalidatorsSnap.slice(0, 4).map((inv, i) => (
+                  <li key={i} style={{
+                    paddingLeft: 12, position: 'relative', color: 'var(--fg-1)',
+                  }}>
+                    <span style={{
+                      position: 'absolute', left: 0, top: 8,
+                      width: 4, height: 4, borderRadius: '50%',
+                      background: '#c45a5a',
+                    }} />
+                    {inv}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1473,8 +1764,15 @@ function GuruHistory({
   symbol:  MarketSymbol;
   records: AiStateHistoryRecord[];
 }) {
-  type Filter = 'all' | 'changes';
+  // v13.8: filter set widened. ALL / STATE CHANGES retained;
+  // HIGH CLARITY shows reads with confidence ≥ 60%; FAILED STATES
+  // surfaces FA / SH / CL / DC entries. Pure local filtering of
+  // already-stored history — no Engine calls.
+  type Filter = 'all' | 'changes' | 'clarity' | 'failed';
   const [filter, setFilter] = useState<Filter>('all');
+  const [showReplay, setShowReplay] = useState(false);
+  // Failed / risk state set used by the FAILED STATES filter.
+  const FAILED_STATES = new Set(['FA', 'SH', 'CL', 'DC']);
   // v13.3: single-expand row state. null when no row is expanded.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -1486,9 +1784,12 @@ function GuruHistory({
     const fromState    = older ? older.state : null;
     return { r, isTransition, fromState };
   });
-  const filtered = filter === 'all'
-    ? annotated
-    : annotated.filter(x => x.isTransition);
+  const filtered =
+    filter === 'all'      ? annotated
+  : filter === 'changes'  ? annotated.filter(x => x.isTransition)
+  : filter === 'clarity'  ? annotated.filter(x => (x.r.confidence ?? 0) >= 0.60)
+  : filter === 'failed'   ? annotated.filter(x => FAILED_STATES.has(x.r.stateCode))
+  :                          annotated;
 
   const list = filtered.slice(0, 25);
 
@@ -1506,8 +1807,8 @@ function GuruHistory({
         <div className="hairline">
           Guru history · {symbol} ({list.length})
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {(['all', 'changes'] as Filter[]).map(f => (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {(['all', 'changes', 'clarity', 'failed'] as Filter[]).map(f => (
             <button key={f}
               onClick={() => setFilter(f)}
               style={{
@@ -1521,11 +1822,51 @@ function GuruHistory({
                 cursor: 'pointer',
               }}
             >
-              {f === 'all' ? 'ALL' : 'STATE CHANGES'}
+              {f === 'all'      ? 'ALL'
+             : f === 'changes'  ? 'STATE CHANGES'
+             : f === 'clarity'  ? 'HIGH CLARITY'
+             :                    'FAILED STATES'}
             </button>
           ))}
+          {/* v13.8: REPLAY placeholder. Future: state playback over
+              the chart. For now, surfaces a "coming soon" inline
+              notice without firing any backend calls. */}
+          <button
+            onClick={() => setShowReplay(s => !s)}
+            title="Timeline replay (coming soon)"
+            style={{
+              padding: '2px 8px',
+              fontSize: 8, letterSpacing: '0.12em', fontWeight: 600,
+              fontFamily: 'var(--font-mono)',
+              background: showReplay ? 'var(--bg-3)' : 'transparent',
+              border: `1px solid ${showReplay ? 'var(--cyan)' : 'var(--line-1)'}`,
+              color:  showReplay ? 'var(--cyan)' : 'var(--fg-3)',
+              borderRadius: 2,
+              cursor: 'pointer',
+              marginLeft: 6,
+            }}
+          >
+            ▶ REPLAY
+          </button>
         </div>
       </div>
+      {showReplay && (
+        <div style={{
+          padding: '8px 10px', marginBottom: 10,
+          background: 'rgba(77,217,232,0.05)',
+          border: '1px solid #4dd9e833',
+          borderLeft: '2px solid var(--cyan)',
+          borderRadius: 3,
+          fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.5,
+        }}>
+          <strong style={{ color: 'var(--cyan)', letterSpacing: '0.06em' }}>
+            Timeline replay
+          </strong> coming in a future release. The plan is to scrub
+          this history list and re-render the Chart pane to the
+          selected moment so you can compare what Guru saw vs how
+          price subsequently moved.
+        </div>
+      )}
       {list.length === 0 ? (
         <div style={{ fontSize: 11, color: 'var(--fg-3)', padding: '8px 0' }}>
           {records.length === 0
@@ -1691,78 +2032,57 @@ export default function GuruView(props: GuruViewProps) {
       : newest;
   }, [props.aiState, props.aiLastSuccess, symbolRecords]);
 
-  // Trade plan derived from current state + structure (same inputs the
-  // dashboard / GCPApp use).
-  const tradePlan: TradePlan | null = useMemo(() => {
-    if (!props.aiState || !props.planStructure) return null;
-    return deriveTradePlan({
-      state:          props.aiState,
-      structure:      props.planStructure,
-      latestPattern:  props.latestPattern,
-      symbol:         props.symbol,
-      analysisCandle: props.planAnalysisCandle,
-      analysisTf:     AI_ANALYSIS_TF,
-      currentPrice:   props.symbolPrice,
-    });
-  }, [props.aiState, props.planStructure, props.latestPattern, props.symbol, props.planAnalysisCandle, props.symbolPrice]);
+  // v13.8: Guru is now the COHERENCE MEMORY + STATE EVOLUTION surface.
+  // Trade plan derivation moved out (Trade page owns execution); the
+  // tradePlan helper imports stay for backwards compatibility but are
+  // not consumed in this render. priorRecord stays for the WhatChanged
+  // section (memory-of-deltas), which is still a Guru concern.
+  void priorRecord;
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       height: '100%', overflow: 'hidden',
     }}>
-      <PageHeader crumbs={[{ label: 'Guru' }]} />
+      <PageHeader crumbs={[
+        { label: 'Guru Timeline' },
+      ]} />
 
       <div style={{
         flex: 1, overflow: 'auto',
         padding: 18,
         display: 'flex', flexDirection: 'column', gap: 14,
       }}>
-        <GuruHeader
+        <div style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+        }}>
+          Coherence intelligence history · {props.symbol}
+        </div>
+
+        {/* v13.8 SECTION A — Current Read. Slim hero showing the
+            current state, stance label (display only), transition
+            forecast, one-line interpretation, and metadata. No trade
+            controls; the ASK GURU button lives on Trade. */}
+        <CurrentReadCard
           aiState={props.aiState}
-          aiStatus={props.aiStatus}
           aiLastSuccess={props.aiLastSuccess}
-          aiEnabled={props.aiEnabled}
-          aiRunNow={props.aiRunNow}
-          aiLastError={props.aiLastError ?? null}
           regime={props.regime ?? null}
           netVariance={props.netVariance ?? null}
         />
 
-        {/* Micro-change chip sits between header and the full state
-            block so the user sees the delta without scrolling. */}
-        {props.aiState && (
-          <div>
-            <MicroChange current={props.aiState} prior={priorRecord} />
-          </div>
-        )}
-
-        {/* Current state block — existing AiStateCard. Kept whole so
-            the trade plan / posture / refresh logic stays canonical. */}
-        <div style={{
-          background: 'var(--bg-1)',
-          border: '1px solid var(--line-1)',
-          borderRadius: 'var(--r-md)',
-          overflow: 'hidden',
-        }}>
-          <AiStateCard
-            state={props.aiState}
-            enabled={props.aiEnabled}
-            latestPattern={props.latestPattern}
-            runNow={props.aiRunNow}
-            aiStatus={props.aiStatus}
-            lastSuccessAt={props.aiLastSuccess}
-            planStructure={props.planStructure}
-            planAnalysisCandle={props.planAnalysisCandle}
-            currentPrice={props.symbolPrice}
-            symbol={props.symbol}
-          />
-        </div>
-
+        {/* v13.8 SECTION B — State Evolution. Last 5 anchored states
+            as horizontal chips with arrows + current highlighted. */}
         <StateEvolution records={symbolRecords} currentState={props.aiState} />
-        <WhatChanged current={props.aiState} prior={priorRecord} />
-        <WatchNext plan={tradePlan} symbol={props.symbol} />
 
+        {/* v13.8 — State Story banner. Deterministic narrative from
+            the last 8 anchored records ("CS persisted for 4 reads →
+            SH event → recovery into CS …"). Pure local helper. */}
+        <StateStoryBanner records={symbolRecords} />
+
+        {/* v13.8 SECTION C — Guru History list, now with HIGH CLARITY
+            and FAILED STATES filters, a REPLAY placeholder, and the
+            Machine Thinking expansion baked into each expanded row. */}
         <GuruHistory symbol={props.symbol} records={symbolRecords} />
 
         {/* Reference price footer — useful when scanning history. */}
