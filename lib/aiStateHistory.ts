@@ -106,6 +106,12 @@ export interface AiStateHistoryRecord {
   goldInterpretation?: string;
   watchNext?:          string[];
   invalidatorsSnap?:   string[];
+
+  // v13.9.0: environment-only action state at classification time.
+  // Stored so Guru history rows can render action transitions
+  // (WATCH → READY → GO). Position-aware MANAGE/EXIT NOT stored —
+  // those are computed live on the Trade banner only.
+  actionState?: 'BLOCKED' | 'WATCH' | 'READY' | 'GO';
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -210,6 +216,11 @@ export interface AiStateHistoryInput {
   goldInterpretation?: string;
   watchNext?:          string[];
   invalidatorsSnap?:   string[];
+
+  // v13.9.0: environment-only action state (deriveActionState run
+  // with hasOpenPosition=false). Lets the history surface the
+  // BLOCKED → WATCH → READY → GO progression.
+  actionState?: 'BLOCKED' | 'WATCH' | 'READY' | 'GO';
 }
 
 // Append a single record. Returns the new history. Dedupes against

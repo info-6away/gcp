@@ -2716,6 +2716,22 @@ function GuruHistory({
             const changeLabel = evolution.status;
             const changeColor = evolution.color;
             const changeTail  = evolution.tail;
+            // v13.9.0: action-state transition chip. Annotated list is
+            // newest-first, so the older record sits at [i + 1]. We
+            // only render the chip when both records have an
+            // actionState (older entries written before v13.9 may
+            // not) AND the state changed. Color follows the destination
+            // action's accent so a READY → GO chip reads as green.
+            const olderR        = annotated[i + 1]?.r;
+            const actionPrev    = olderR?.actionState ?? null;
+            const actionNow     = r.actionState ?? null;
+            const actionChanged =
+              actionNow != null && actionPrev != null && actionNow !== actionPrev;
+            const actionColor =
+                actionNow === 'GO'      ? '#22c55e'
+              : actionNow === 'READY'   ? '#4dd9e8'
+              : actionNow === 'WATCH'   ? '#d4a028'
+              :                            '#c45a5a';
             return (
               <div key={r.id} style={{ display: 'flex', flexDirection: 'column' }}>
                 {/* v13.3: each row is now a button-styled clickable.
@@ -2791,6 +2807,26 @@ function GuruHistory({
                         whiteSpace: 'nowrap',
                       }}>
                         {changeTail}
+                      </span>
+                    )}
+                    {/* v13.9.0: action-state transition chip — only
+                        shows when the action state changed between
+                        this row and the older one. Reads as
+                        "WATCH → READY", "READY → GO", etc. Creates
+                        the narrative progression the user can scan. */}
+                    {actionChanged && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700,
+                        letterSpacing: '0.14em', color: actionColor,
+                        padding: '1px 5px',
+                        border: `1px solid ${actionColor}55`,
+                        borderRadius: 2,
+                        background: `${actionColor}11`,
+                        alignSelf: 'flex-start',
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'var(--font-mono)',
+                      }}>
+                        {actionPrev} → {actionNow}
                       </span>
                     )}
                   </div>

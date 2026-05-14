@@ -57,6 +57,7 @@ import {
   type AiAnalysisInterval,
 } from '@/lib/aiAnalysisInterval';
 import { appendAiStateHistory } from '@/lib/aiStateHistory';
+import { deriveActionState } from '@/lib/actionState';
 import { anchorAiState } from '@/lib/aiStateAnchor';
 import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
@@ -950,6 +951,21 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             invalidatorsSnap:     finalResp.invalidators && finalResp.invalidators.length > 0
               ? finalResp.invalidators
               : undefined,
+            // v13.9.0: snapshot the environment-only action state
+            // (deriveActionState run without an open-position context)
+            // so Guru history can render BLOCKED → WATCH → READY → GO
+            // transitions. MANAGE / EXIT are live-only and never
+            // persisted into history.
+            actionState: (() => {
+              const a = deriveActionState({
+                aiState:          finalResp,
+                hasOpenPosition:  false,
+                history:          loadAiStateHistory(),
+              }).state;
+              return a === 'BLOCKED' || a === 'WATCH'
+                  || a === 'READY'   || a === 'GO'
+                ? a : undefined;
+            })(),
           });
         }
       } else {

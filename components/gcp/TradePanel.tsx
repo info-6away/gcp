@@ -71,7 +71,7 @@ import {
 } from '@/lib/pressureSemantics';
 import { useViewMode, type ViewMode } from '@/lib/viewMode';
 import { deriveDirectionalEdge } from '@/lib/directionalEdge';
-import { deriveEntryStatus } from '@/lib/entryStatus';
+import { deriveActionState } from '@/lib/actionState';
 import { deriveThesisStability } from '@/lib/thesisStability';
 import type { AiStatus } from '@/lib/useGcpState';
 import {
@@ -1738,65 +1738,100 @@ function AskGuruButton({
   );
 }
 
-// ── ENTRY STATUS banner — the primary decision badge. Visually
-// dominant in SIMPLE mode; lets the user see BLOCKED / WATCH / READY
-// / MANAGE before they parse pressure or stance separately.
+// ── ACTION STATE banner — v13.9.0 escalation ladder.
+//
+// Replaces the v13.7 EntryStatusBanner. The prior banner collapsed
+// nearly every read to BLOCKED, which made the terminal feel
+// permanently passive. The new ladder lets favorable environments
+// visibly escalate: BLOCKED → WATCH → READY → GO. GO is intentionally
+// rare — the rarity is the value.
+//
+// Pure presentation — deriveActionState is the decision authority.
 
-function EntryStatusBanner({
-  aiState, hasOpenPosition,
+function ActionStateBanner({
+  aiState, hasOpenPosition, history,
 }: {
   aiState:         GcpStateResponse | null;
   hasOpenPosition: boolean;
+  history:         AiStateHistoryRecord[];
 }) {
-  const stance = aiState ? deriveStance(aiState) : null;
-  const entry = deriveEntryStatus({ aiState, stance, hasOpenPosition });
+  const action = deriveActionState({ aiState, hasOpenPosition, history });
+  const isGo = action.state === 'GO';
   return (
     <div style={{
       background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderLeft: `3px solid ${entry.color}`,
+      border: `1px solid ${isGo ? `${action.color}88` : 'var(--line-1)'}`,
+      borderLeft: `${isGo ? 4 : 3}px solid ${action.color}`,
       borderRadius: 'var(--r-md)',
       padding: '12px 16px',
-      display: 'flex', alignItems: 'center', gap: 16,
+      display: 'flex', alignItems: 'flex-start', gap: 16,
       flexWrap: 'wrap',
+      boxShadow: isGo ? `0 0 18px ${action.color}33` : 'none',
+      animation: isGo ? 'gcpro-action-go-pulse 2.6s ease-in-out infinite' : undefined,
+      transition: 'box-shadow 0.4s ease, border-color 0.4s ease',
     }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <style>{`
+        @keyframes gcpro-action-go-pulse {
+          0%, 100% { box-shadow: 0 0 14px ${COLOR_GO_GLOW}33; }
+          50%      { box-shadow: 0 0 22px ${COLOR_GO_GLOW}55; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [data-action-banner="GO"] { animation: none !important; }
+        }
+      `}</style>
+      <div data-action-banner={action.state}
+           style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{
           fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
           fontFamily: 'var(--font-mono)', fontWeight: 600,
         }}>
-          ENTRY STATUS
+          ACTION STATE
         </span>
         <span style={{
-          fontSize: 22, fontWeight: 700, letterSpacing: '0.04em',
-          color: entry.color, lineHeight: 1.1,
+          fontSize: 24, fontWeight: 800, letterSpacing: '0.06em',
+          color: action.color, lineHeight: 1.1,
         }}>
-          {entry.status}
+          {action.state}
         </span>
       </div>
       <div style={{
         flex: 1, minWidth: 0,
-        display: 'flex', flexDirection: 'column', gap: 2,
+        display: 'flex', flexDirection: 'column', gap: 4,
       }}>
-        {entry.stance && (
+        <span style={{
+          fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.45,
+        }}>
+          {action.headline}
+        </span>
+        {action.description && (
           <span style={{
-            fontSize: 10, letterSpacing: '0.08em', color: 'var(--fg-3)',
-            fontFamily: 'var(--font-mono)',
+            fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.4,
+            letterSpacing: '0.02em',
           }}>
-            STANCE <span style={{ color: 'var(--fg-1)', fontWeight: 600 }}>
-              {entry.stance.toUpperCase()}
-            </span>
+            {action.description}
           </span>
         )}
-        <span style={{
-          fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5,
-        }}>
-          {entry.reason}
-        </span>
+        {action.bullets && action.bullets.length > 0 && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 10,
+            marginTop: 2,
+          }}>
+            {action.bullets.map((b, i) => (
+              <span key={i} style={{
+                fontSize: 10, color: action.color,
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+              }}>
+                ✓ {b}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+const COLOR_GO_GLOW = '#22c55e';
 
 // ── DIRECTIONAL EDGE card — SIMPLE-mode summary (no raw %).
 //    Reads as "UP · MOD — Bullish trend intact · skew +14".
@@ -2357,13 +2392,17 @@ function TradePanelImpl({
           )}
         </div>
 
-        {/* v13.7: ENTRY STATUS banner — the primary decision badge,
-            always visible. Tells the user BLOCKED / WATCH / READY /
-            MANAGE before any pressure number. Closes the
-            "LONG 57% but stance WAIT" semantic gap. */}
-        <EntryStatusBanner
+        {/* v13.9.0: ACTION STATE banner — escalation ladder
+            (BLOCKED / WATCH / READY / GO / MANAGE / EXIT). Replaces
+            the v13.7 ENTRY STATUS banner. GO is intentionally rare;
+            strict requirements (state ∈ {IS,AT,SS}, not Late, clarity
+            ≥ threshold, edge ≥ moderate, structure aligned,
+            invalidators ≤ 1, confidence stable/rising, no decay) must
+            all hold before it fires. */}
+        <ActionStateBanner
           aiState={aiState}
           hasOpenPosition={!!acct.open}
+          history={symbolRecords}
         />
 
         {/* v13.7: Decision strip — Directional Edge + Thesis Stability.
