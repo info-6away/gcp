@@ -37,6 +37,10 @@ import {
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
 import { deriveStateStory } from '@/lib/stateStory';
+import {
+  deriveReadEvolution, derivePersistenceSummary,
+  type PersistenceSummary,
+} from '@/lib/readEvolution';
 import { stateColor, DEFAULT_INTERPRETATION } from '@/lib/aiState';
 import { deriveTradePlan, type TradePlan } from '@/lib/tradePlan';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
@@ -1337,6 +1341,112 @@ function PageHeaderRow({
   );
 }
 
+// v13.8.2: hero-side persistence summary. Renders a multi-line block
+// when the current state has held for ≥3 reads — replaces the static
+// reasoningShort interp so a long WAIT no longer reads as dead.
+//
+// Prose variant of PersistenceDeltaBlock — same data, different
+// emphasis. The banner shows it as a structured table; the hero
+// shows it as a sentence stack closer to natural language.
+
+function HeroPersistenceSummary({ p }: { p: PersistenceSummary }) {
+  const lines: React.ReactNode[] = [];
+  // Opening — "X has persisted across N reads."
+  lines.push(
+    <div key="open" style={{
+      fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
+    }}>
+      {p.state} has persisted across <b style={{ color: 'var(--fg-0)' }}>
+        {p.segmentLength}
+      </b> reads.
+    </div>
+  );
+  // Clarity — only when delta is meaningful or both values present.
+  if (p.clarityFirst != null && p.clarityNow != null
+      && p.clarityFirst !== p.clarityNow) {
+    const rose = p.clarityNow > p.clarityFirst;
+    const verb = rose ? 'improved' : 'slipped';
+    lines.push(
+      <div key="clarity" style={{
+        fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.5,
+      }}>
+        Clarity {verb}: <b style={{
+          color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {p.clarityFirst}% → {p.clarityNow}%
+        </b>
+      </div>
+    );
+  }
+  // Pressure — flag the side that's losing/gaining.
+  if (p.pressureFirst && p.pressureNow
+      && (p.pressureFirst.long !== p.pressureNow.long
+         || p.pressureFirst.short !== p.pressureNow.short)) {
+    const skewFirst = p.pressureFirst.long - p.pressureFirst.short;
+    const skewNow   = p.pressureNow.long   - p.pressureNow.short;
+    const verb =
+      Math.abs(skewNow) < Math.abs(skewFirst) ? 'shifted neutral'
+    : skewNow > skewFirst                      ? 'tilted long'
+    : skewNow < skewFirst                      ? 'tilted short'
+    :                                            'shifted';
+    lines.push(
+      <div key="pressure" style={{
+        fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.5,
+      }}>
+        Pressure {verb}: <b style={{
+          color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {p.pressureFirst.long}L / {p.pressureFirst.short}S
+          {' → '}
+          {p.pressureNow.long}L / {p.pressureNow.short}S
+        </b>
+      </div>
+    );
+  }
+  // Transition probability.
+  if (p.transFirst != null && p.transNow != null
+      && p.transFirst !== p.transNow) {
+    const verb = p.transNow > p.transFirst ? 'increased' : 'fell';
+    const target = p.transTarget ? ` toward ${p.transTarget}` : '';
+    lines.push(
+      <div key="trans" style={{
+        fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.5,
+      }}>
+        Transition pressure{target} {verb}: <b style={{
+          color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {p.transFirst}% → {p.transNow}%
+        </b>
+      </div>
+    );
+  }
+  // Temperament — final sentence echoing the banner's classification.
+  const temperamentCopy =
+    p.temperament === 'stabilizing' ? 'Environment is stabilizing.'
+  : p.temperament === 'unresolved'  ? 'Environment remains unresolved.'
+  : p.temperament === 'drifting'    ? 'Environment is drifting.'
+  :                                    'Environment is stable.';
+  lines.push(
+    <div key="temp" style={{
+      fontSize: 12, color: 'var(--fg-3)', lineHeight: 1.5,
+      fontStyle: 'italic',
+    }}>
+      {temperamentCopy}
+    </div>
+  );
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      {lines}
+    </div>
+  );
+}
+
 // v13.8.1: Monk / Watcher silhouette. Stroke-only inline SVG so the
 // figure inherits the surrounding color theme. Three rendering states:
 //   live    — cyan stroke + breathing pulse + halo
@@ -1399,6 +1509,7 @@ function MonkFigure({
 
 function CurrentReadCard({
   aiState, aiLastSuccess, aiStatus, aiEnabled, aiRunNow, regime, netVariance,
+  persistence,
 }: {
   aiState:       GcpStateResponse | null;
   aiLastSuccess: Date | null;
@@ -1407,6 +1518,11 @@ function CurrentReadCard({
   aiRunNow:      (options?: { force?: boolean; source?: string }) => void;
   regime?:       string | null;
   netVariance?:  number | null;
+  // v13.8.2: when the current state has held for several reads, the
+  // hero swaps the static reasoningShort interp for a dynamic
+  // multi-line persistence summary so a long WAIT no longer reads
+  // as "nothing's happening".
+  persistence?:  PersistenceSummary | null;
 }) {
   const now = useTick(1000);
   const accent  = aiState ? stateColor(aiState) : 'var(--fg-3)';
@@ -1575,11 +1691,21 @@ function CurrentReadCard({
           </div>
         )}
 
-        <div style={{
-          fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
-        }}>
-          {interp}
-        </div>
+        {/* v13.8.2: when the current state has held ≥3 reads, swap
+            the static reasoningShort interp for a dynamic persistence
+            summary showing what's actually MOVED across the segment.
+            "WAIT" no longer reads as a dead label — clarity, pressure,
+            and transition probability shifts surface inline. */}
+        {persistence && persistence.segmentLength >= 3
+          ? <HeroPersistenceSummary p={persistence} />
+          : (
+            <div style={{
+              fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
+            }}>
+              {interp}
+            </div>
+          )
+        }
 
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 14,
@@ -1651,27 +1777,124 @@ function CurrentReadCard({
 // reads → SH event → recovery into CS …"). Pure helper; no Engine.
 
 function StateStoryBanner({ records }: { records: AiStateHistoryRecord[] }) {
-  const story = useMemo(() => deriveStateStory(records, { window: 8 }), [records]);
-  if (!story) return null;
+  const story  = useMemo(() => deriveStateStory(records, { window: 8 }), [records]);
+  // v13.8.2: when the current state has held ≥3 reads, surface a
+  // structured "what's moved in this segment" block underneath the
+  // narrative sentence. Walks the head segment and reports first →
+  // latest deltas for clarity, pressure, transition probability.
+  const persistence = useMemo(() => derivePersistenceSummary(records), [records]);
+  if (!story && !persistence) return null;
   return (
     <div style={{
       background: 'var(--bg-1)',
       border: '1px solid var(--line-1)',
       borderRadius: 'var(--r-md)',
       padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 10,
+    }}>
+      {story && (
+        <>
+          <div style={{
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            STATE STORY · last {story.samples} reads
+          </div>
+          <div style={{
+            fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55,
+            fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+          }}>
+            {story.text}
+          </div>
+        </>
+      )}
+      {persistence && persistence.segmentLength >= 3 && (
+        <PersistenceDeltaBlock p={persistence} />
+      )}
+    </div>
+  );
+}
+
+// v13.8.2: structured first → latest delta block for a persistence
+// stretch. Reads existing aiStateHistory only; row hides itself when
+// the underlying field wasn't persisted on the older records.
+
+function PersistenceDeltaBlock({ p }: { p: PersistenceSummary }) {
+  const clarityRow =
+    p.clarityFirst != null && p.clarityNow != null && p.clarityFirst !== p.clarityNow
+      ? `${p.clarityFirst}% → ${p.clarityNow}%`
+      : null;
+  const pressureRow =
+    p.pressureFirst && p.pressureNow
+    && (p.pressureFirst.long !== p.pressureNow.long
+       || p.pressureFirst.short !== p.pressureNow.short)
+      ? `${p.pressureFirst.long}L / ${p.pressureFirst.short}S → ${p.pressureNow.long}L / ${p.pressureNow.short}S`
+      : null;
+  const transRow =
+    p.transFirst != null && p.transNow != null && p.transFirst !== p.transNow
+      ? `${p.transFirst}% → ${p.transNow}%`
+      : null;
+  const temperamentCopy =
+    p.temperament === 'stabilizing' ? 'Environment stabilizing.'
+  : p.temperament === 'unresolved'  ? 'Environment stable but unresolved.'
+  : p.temperament === 'drifting'    ? 'Environment drifting.'
+  :                                    'Environment stable.';
+
+  // Tail target — show the transition target if known so the
+  // transition row reads "toward IS" instead of just %.
+  const transLabel = p.transTarget
+    ? `Transition probability (→ ${p.transTarget})`
+    : 'Transition probability';
+
+  return (
+    <div style={{
+      borderTop: '1px solid var(--line-1)',
+      paddingTop: 10,
+      display: 'flex', flexDirection: 'column', gap: 4,
+      fontFamily: 'var(--font-mono)',
     }}>
       <div style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600, marginBottom: 6,
+        fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.45,
       }}>
-        STATE STORY · last {story.samples} reads
+        {p.state} has held for <b style={{ color: 'var(--fg-0)' }}>{p.segmentLength}</b> reads.
       </div>
+      {clarityRow && (
+        <PersistenceDelta label="Read clarity" value={clarityRow} />
+      )}
+      {pressureRow && (
+        <PersistenceDelta label="Directional pressure" value={pressureRow} />
+      )}
+      {transRow && (
+        <PersistenceDelta label={transLabel} value={transRow} />
+      )}
       <div style={{
-        fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.55,
-        fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+        marginTop: 4, fontSize: 10, color: 'var(--fg-3)',
+        fontStyle: 'italic', letterSpacing: '0.04em',
       }}>
-        {story.text}
+        {temperamentCopy}
       </div>
+    </div>
+  );
+}
+
+function PersistenceDelta({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '170px 1fr',
+      gap: 10, alignItems: 'baseline',
+      fontSize: 10,
+    }}>
+      <span style={{
+        color: 'var(--fg-4)', letterSpacing: '0.06em',
+      }}>
+        {label}:
+      </span>
+      <span style={{
+        color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.02em',
+      }}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -2224,25 +2447,25 @@ function GuruHistory({
             const conf = Math.round(r.confidence * 100);
             const isCurrent  = i === 0;
             const isExpanded = expandedId === r.id;
-            // v13.8.1: change marker. CURRENT (newest row override),
-            // NEW STATE (stateCode differs from previous), HELD /
-            // STRENGTHENED / WEAKENED (same state, confidence trend).
-            // Reads from already-stored data — no Engine calls.
-            const olderRec = list[i + 1]?.r;
-            let changeLabel: 'CURRENT' | 'NEW STATE' | 'HELD' | 'STRENGTHENED' | 'WEAKENED' | null = null;
-            let changeColor = accent;
-            if (isCurrent) {
-              changeLabel = 'CURRENT';
-              changeColor = accent;
-            } else if (isTransition) {
-              changeLabel = 'NEW STATE';
-              changeColor = '#4dd9e8';
-            } else if (olderRec) {
-              const delta = (r.confidence ?? 0) - (olderRec.confidence ?? 0);
-              if (delta >=  0.05) { changeLabel = 'STRENGTHENED'; changeColor = '#22c55e'; }
-              else if (delta <= -0.05) { changeLabel = 'WEAKENED'; changeColor = '#d4a028'; }
-              else { changeLabel = 'HELD'; changeColor = 'var(--fg-3)'; }
-            }
+            // v13.8.2: Read Evolution badge replaces the v13.8.1
+            // change marker. Reads richer than CURRENT/HELD/etc. — when
+            // state code stays the same but underlying signals move,
+            // the badge surfaces STRENGTHENING / WEAKENING / PRESSURE
+            // BUILDING / TRANSITION RISK / AGING / IGNITION BUILDING
+            // / LATE DECAY / EDGE LOST / STABLE with a brief data tail.
+            // History list is newest-first; pass annotated.records as
+            // the comparison context. liveStale only fires for the
+            // newest row when the proxy served from cache.
+            const evolution = deriveReadEvolution({
+              records:      annotated.map(a => a.r),
+              index:        i,
+              isCurrent,
+              isTransition,
+              liveStale:    isCurrent && (r.stale === true),
+            });
+            const changeLabel = evolution.status;
+            const changeColor = evolution.color;
+            const changeTail  = evolution.tail;
             return (
               <div key={r.id} style={{ display: 'flex', flexDirection: 'column' }}>
                 {/* v13.3: each row is now a button-styled clickable.
@@ -2288,23 +2511,36 @@ function GuruHistory({
                     display: 'flex', flexDirection: 'column', gap: 2,
                   }}>
                     <span>{fmtTime(r.timestamp)}</span>
-                    {/* v13.8.1: change marker badge — replaces the old
-                        in-line "· CURRENT" suffix. Always present so
-                        the eye can scan vertically for HELD vs
-                        STRENGTHENED vs WEAKENED vs NEW STATE. */}
+                    {/* v13.8.2: Read Evolution badge. Status + optional
+                        data tail. The tail makes a long stretch of CS
+                        readable — "IS prob 38%" or "skew +24" or "held
+                        7 reads" — instead of being an empty wall of
+                        the same label. */}
                     {changeLabel && (
                       <span style={{
                         fontSize: 8, fontWeight: 700,
                         letterSpacing: '0.14em', color: changeColor,
-                        padding: '1px 4px',
+                        padding: '1px 5px',
                         border: `1px solid ${changeColor === 'var(--fg-3)'
                           ? 'var(--line-2)' : changeColor}55`,
                         borderRadius: 2,
                         background: changeColor === 'var(--fg-3)'
                           ? 'transparent' : `${changeColor}11`,
                         alignSelf: 'flex-start',
+                        whiteSpace: 'nowrap',
                       }}>
                         {changeLabel}
+                      </span>
+                    )}
+                    {changeTail && (
+                      <span style={{
+                        fontSize: 8, color: 'var(--fg-3)',
+                        letterSpacing: '0.06em',
+                        fontFamily: 'var(--font-mono)',
+                        fontVariantNumeric: 'tabular-nums',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {changeTail}
                       </span>
                     )}
                   </div>
@@ -2416,6 +2652,15 @@ export default function GuruView(props: GuruViewProps) {
   // section (memory-of-deltas), which is still a Guru concern.
   void priorRecord;
 
+  // v13.8.2: derive the current-segment persistence summary from the
+  // symbol's history. CurrentReadCard uses it to swap the static
+  // reasoningShort interp for a dynamic multi-line description of
+  // what's been changing across a long-held state.
+  const persistence = useMemo(
+    () => derivePersistenceSummary(symbolRecords),
+    [symbolRecords],
+  );
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
@@ -2451,6 +2696,7 @@ export default function GuruView(props: GuruViewProps) {
           aiRunNow={props.aiRunNow}
           regime={props.regime ?? null}
           netVariance={props.netVariance ?? null}
+          persistence={persistence}
         />
 
         {/* v13.8 SECTION B — State Evolution. Last 5 anchored states
