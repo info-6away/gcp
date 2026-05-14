@@ -975,17 +975,33 @@ function StateEvolution({
   records:      AiStateHistoryRecord[];
   currentState: GcpStateResponse | null;
 }) {
-  // Last 5 entries oldest → newest. If currentState matches the most
-  // recent record, we don't dupe — the latest record IS the current.
-  const tail = records.slice(0, 5).reverse();
-  const items: { code: string; label: string; isCurrent: boolean }[] = tail.map((r, i) => ({
+  // v13.8.1: rail extended from 5 → 8 nodes per spec. Each node now
+  // carries timestamp + phase + clarity + pattern + regime + price so
+  // the hover tooltip can render the full row context without
+  // re-querying. State changes get a thicker arrow; repeats stay subtle.
+  const tail = records.slice(0, 8).reverse();
+  type RailItem = {
+    code:      string;
+    label:     string;
+    isCurrent: boolean;
+    timestamp: number | null;
+    rec?:      AiStateHistoryRecord;
+  };
+  const items: RailItem[] = tail.map((r, i) => ({
     code:      r.stateCode,
     label:     r.state,
     isCurrent: i === tail.length - 1,
+    timestamp: r.timestamp,
+    rec:       r,
   }));
   if (currentState
       && (items.length === 0 || items[items.length - 1].code !== currentState.stateCode)) {
-    items.push({ code: currentState.stateCode, label: currentState.state, isCurrent: true });
+    items.push({
+      code:      currentState.stateCode,
+      label:     currentState.state,
+      isCurrent: true,
+      timestamp: null,
+    });
   } else if (currentState && items.length > 0) {
     items[items.length - 1].isCurrent = true;
   }
@@ -993,32 +1009,61 @@ function StateEvolution({
     return (
       <Section title="STATE EVOLUTION">
         <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
-          No prior states yet — Guru history starts after your first analysis.
+          No prior states yet — click Ask Guru to seed the timeline.
         </div>
       </Section>
     );
   }
+
+  const fmtRelative = (ts: number): string => relativeTime(ts, Date.now());
+
   return (
     <Section title="STATE EVOLUTION">
       <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
+        display: 'flex', alignItems: 'flex-start', gap: 6,
         flexWrap: 'wrap',
       }}>
         {items.map((it, i) => {
           const isLast    = i === items.length - 1;
           const accent    = stateColor({ stateCode: it.code, direction: 'Neutral' } as GcpStateResponse);
           const opacity   = it.isCurrent ? 1 : (0.45 + (i / items.length) * 0.35);
+          const prevCode  = i > 0 ? items[i - 1].code : null;
+          const isChange  = prevCode != null && prevCode !== it.code;
+          // Native HTML title attribute carries the hover detail —
+          // lightweight, accessible, no separate tooltip state needed.
+          const tipParts: string[] = [
+            `${it.code} · ${it.label}`,
+          ];
+          if (it.rec) {
+            tipParts.push(`${it.rec.phase} · ${it.rec.direction}`);
+            tipParts.push(`clarity ${Math.round((it.rec.confidence ?? 0) * 100)}%`);
+            if (it.rec.patternCode) tipParts.push(`pattern ${it.rec.patternCode}`);
+            if (it.rec.regime)      tipParts.push(`regime ${it.rec.regime}`);
+            if (it.rec.priceAtAnalysis != null) {
+              tipParts.push(`@ ${it.rec.priceAtAnalysis.toFixed(2)}`);
+            }
+            if (it.timestamp) tipParts.push(fmtRelative(it.timestamp));
+          } else {
+            tipParts.push('current read');
+          }
           return (
-            <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <span style={{
-                display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
-                padding: '4px 10px',
-                background: it.isCurrent ? `${accent}1f` : `${accent}0d`,
-                border: `1px solid ${accent}${it.isCurrent ? '99' : '44'}`,
-                borderRadius: 3,
-                opacity,
-                transition: 'opacity 0.3s ease',
-              }}>
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+              <span
+                title={tipParts.join(' · ')}
+                style={{
+                  display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
+                  padding: '6px 10px',
+                  background: it.isCurrent ? `${accent}1f` : `${accent}0d`,
+                  border: `1px solid ${accent}${it.isCurrent ? '99' : '44'}`,
+                  borderRadius: 3,
+                  opacity,
+                  cursor: 'help',
+                  transition: 'opacity 0.3s ease',
+                  minWidth: 56,
+                }}
+              >
                 <span style={{
                   fontSize: 11, fontWeight: 700, color: accent,
                   fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
@@ -1026,9 +1071,35 @@ function StateEvolution({
                 <span style={{
                   fontSize: 8, color: 'var(--fg-3)', letterSpacing: '0.06em',
                   marginTop: 1,
-                }}>{it.label.split(' ')[0].toUpperCase()}</span>
+                }}>
+                  {it.rec ? it.rec.phase.slice(0, 4).toUpperCase()
+                          : it.label.split(' ')[0].toUpperCase()}
+                </span>
+                {it.timestamp && (
+                  <span style={{
+                    fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.04em',
+                    marginTop: 2, fontFamily: 'var(--font-mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {fmtRelative(it.timestamp)}
+                  </span>
+                )}
+                {!it.timestamp && it.isCurrent && (
+                  <span style={{
+                    fontSize: 8, color: accent, letterSpacing: '0.14em',
+                    marginTop: 2, fontWeight: 700,
+                  }}>NOW</span>
+                )}
               </span>
-              {!isLast && <span style={{ color: 'var(--fg-4)', fontSize: 12 }}>→</span>}
+              {!isLast && (
+                <span style={{
+                  color: 'var(--fg-4)',
+                  fontSize: isChange ? 14 : 12,
+                  opacity: isChange ? 1 : 0.55,
+                  // Visually stronger arrow on state changes;
+                  // subtle on same-state repeats.
+                }}>→</span>
+              )}
             </span>
           );
         })}
@@ -1192,11 +1263,148 @@ function WatchNext({
 // collapsible inside ExpandedHistoryRow.
 // ════════════════════════════════════════════════════════════════════
 
+// v13.8.1: top-right page metrics — reads today, state changes,
+// average read clarity. Pure derivation from already-stored history;
+// hides when no records exist for the symbol.
+
+function PageHeaderRow({
+  symbol, records,
+}: {
+  symbol:  MarketSymbol;
+  records: AiStateHistoryRecord[];
+}) {
+  const metrics = useMemo(() => {
+    if (records.length === 0) return null;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startMs = startOfDay.getTime();
+    let readsToday = 0;
+    let stateChanges = 0;
+    let confSum = 0;
+    let confCount = 0;
+    // History is newest-first. Iterate once.
+    for (let i = 0; i < records.length; i++) {
+      const r = records[i];
+      if (r.timestamp >= startMs) readsToday++;
+      if (typeof r.confidence === 'number' && r.confidence > 0) {
+        confSum   += r.confidence;
+        confCount += 1;
+      }
+      const older = records[i + 1];
+      if (older && older.stateCode !== r.stateCode) stateChanges++;
+    }
+    const avgClarity = confCount > 0 ? Math.round((confSum / confCount) * 100) : null;
+    return { readsToday, stateChanges, avgClarity };
+  }, [records]);
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+      gap: 16, flexWrap: 'wrap',
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+      }}>
+        Coherence intelligence history · {symbol}
+      </div>
+      {metrics && (
+        <div style={{
+          display: 'flex', gap: 18, flexWrap: 'wrap',
+          fontSize: 9, color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.10em',
+        }}>
+          <span>reads today{' '}
+            <b style={{ color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+              {metrics.readsToday}
+            </b>
+          </span>
+          <span>state changes{' '}
+            <b style={{ color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+              {metrics.stateChanges}
+            </b>
+          </span>
+          {metrics.avgClarity != null && (
+            <span>avg clarity{' '}
+              <b style={{ color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+                {metrics.avgClarity}%
+              </b>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// v13.8.1: Monk / Watcher silhouette. Stroke-only inline SVG so the
+// figure inherits the surrounding color theme. Three rendering states:
+//   live    — cyan stroke + breathing pulse + halo
+//   normal  — soft cyan stroke, no animation
+//   stale   — muted grey stroke, dimmed
+// Built to feel like a calm observer presence, not an emoji.
+
+function MonkFigure({
+  state, accent,
+}: {
+  state:  'live' | 'normal' | 'stale';
+  accent: string;
+}) {
+  const color =
+    state === 'stale' ? 'var(--fg-4)'
+  :                     accent;
+  const halo =
+    state === 'live'   ? `0 0 30px ${accent}66, inset 0 0 18px ${accent}22`
+  : state === 'normal' ? `0 0 18px ${accent}33, inset 0 0 14px ${accent}11`
+  :                       'none';
+
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 84, height: 84, flexShrink: 0,
+        borderRadius: '50%',
+        border: `1px solid ${state === 'stale' ? 'var(--line-2)' : `${accent}44`}`,
+        boxShadow: halo,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'radial-gradient(circle, rgba(13,15,18,0.6), rgba(7,8,10,0.95))',
+        opacity: state === 'stale' ? 0.55 : 1,
+        animation: state === 'live'
+          ? 'gcpro-monk-breathe 4.2s ease-in-out infinite'
+          : undefined,
+        position: 'relative',
+        transition: 'opacity 0.4s ease, box-shadow 0.4s ease, border-color 0.4s ease',
+      }}
+    >
+      <svg width={54} height={54} viewBox="0 0 54 54" fill="none">
+        {/* Head — small oval. */}
+        <ellipse cx={27} cy={18} rx={6.2} ry={7}
+          stroke={color} strokeWidth={1.4} fill="none" />
+        {/* Robe / shoulders — wide-bottomed trapezoid suggesting
+            seated meditation. */}
+        <path
+          d="M11 44 C 13 30 19 24 27 24 C 35 24 41 30 43 44 Z"
+          stroke={color} strokeWidth={1.4} strokeLinejoin="round"
+          fill={state === 'live' ? `${accent}11` : 'transparent'}
+        />
+        {/* Inner contemplation marker — a single dot at the head's
+            third-eye position. Glows on live. */}
+        <circle cx={27} cy={17} r={1.2} fill={color} />
+        {/* Gentle horizon line at the base — grounds the figure. */}
+        <path d="M9 46 H45" stroke={color} strokeWidth={0.6} opacity={0.5} />
+      </svg>
+    </div>
+  );
+}
+
 function CurrentReadCard({
-  aiState, aiLastSuccess, regime, netVariance,
+  aiState, aiLastSuccess, aiStatus, aiEnabled, aiRunNow, regime, netVariance,
 }: {
   aiState:       GcpStateResponse | null;
   aiLastSuccess: Date | null;
+  aiStatus:      AiStatus;
+  aiEnabled:     boolean;
+  aiRunNow:      (options?: { force?: boolean; source?: string }) => void;
   regime?:       string | null;
   netVariance?:  number | null;
 }) {
@@ -1207,98 +1415,233 @@ function CurrentReadCard({
        || DEFAULT_INTERPRETATION[aiState.stateCode]
        || aiState.goldInterpretation?.trim()
        || 'No interpretation available.')
-    : 'No Guru read yet — open Trade and click Ask Guru.';
+    : 'No Guru read yet — click Ask Guru to capture one.';
 
   const stance = aiState ? deriveStance(aiState) : null;
   const nextState = aiState?.nextLikelyState ?? null;
   const nextConf = aiState?.transitionConfidence;
   const stateConfPct = aiState ? Math.round(aiState.confidence * 100) : null;
 
+  const ageMs = aiLastSuccess ? now - aiLastSuccess.getTime() : null;
+  const isFresh = ageMs != null && ageMs < 30_000;
+  const isStale = aiState?.stale === true;
   const lastUpdate = aiLastSuccess
     ? relativeTime(aiLastSuccess.getTime(), now)
     : '—';
 
+  // v13.8.1: monk presence state drives the figure animation + the
+  // hero's outer halo. Live (< 30s fresh) → breathing pulse + glow;
+  // stale (proxy fallback) → dimmed + muted; otherwise neutral.
+  const monkState: 'live' | 'normal' | 'stale' =
+    isStale ? 'stale'
+  : isFresh ? 'live'
+  :           'normal';
+
+  // Ask Guru button state machine.
+  const isRunning = aiStatus === 'running';
+  const buttonLabel =
+    isRunning             ? 'ASKING…'
+  : aiStatus === 'error'  ? 'TRY AGAIN'
+  : aiLastSuccess         ? 'ASK GURU AGAIN'
+  :                          'ASK GURU';
+  const buttonAccent =
+    aiStatus === 'error'  ? 'var(--red)'
+  : isStale               ? '#d4a028'         // amber when stale to draw attention
+  :                          'var(--cyan)';
+  const buttonDisabled = !aiEnabled || isRunning;
+  const onAskClick = () => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[ASK GURU CLICK]', {
+        aiStatus,
+        aiEnabled,
+        hasRunNow: typeof aiRunNow === 'function',
+        force: true,
+        source: 'guru_timeline_button',
+        reason: buttonDisabled ? 'disabled' : 'ok',
+      });
+    }
+    if (buttonDisabled || typeof aiRunNow !== 'function') return;
+    aiRunNow({ force: true, source: 'guru_timeline_button' });
+  };
+
   return (
     <div style={{
       background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
+      border: `1px solid ${isFresh ? `${accent}55` : 'var(--line-1)'}`,
       borderLeft: `3px solid ${accent}`,
       borderRadius: 'var(--r-md)',
-      padding: '16px 20px',
-      display: 'flex', flexDirection: 'column', gap: 10,
+      padding: '18px 22px',
+      display: 'flex', alignItems: 'flex-start', gap: 20,
+      boxShadow: isFresh ? `0 0 22px ${accent}22` : 'none',
+      transition: 'box-shadow 0.6s ease, border-color 0.6s ease',
     }}>
+      {/* v13.8.1: monk breathing keyframes (component-local). */}
+      <style>{`
+        @keyframes gcpro-monk-breathe {
+          0%, 100% { transform: scale(1);    opacity: 0.95; }
+          50%      { transform: scale(1.04); opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [aria-hidden="true"] { animation: none !important; }
+        }
+      `}</style>
+
+      <MonkFigure state={monkState} accent={accent} />
+
       <div style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
+        flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8,
       }}>
-        CURRENT READ
-      </div>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
-      }}>
-        <span style={{
-          fontSize: 24, fontWeight: 700, color: accent,
-          letterSpacing: '0.01em', lineHeight: 1.15,
+        {/* Eyebrow row with section label + live/stale badge */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
         }}>
-          {aiState ? aiState.state.toUpperCase() : 'NO READ'}
-        </span>
-        {aiState && (
           <span style={{
-            fontSize: 16, color: 'var(--fg-3)', letterSpacing: '0.02em',
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
           }}>
-            · {aiState.phase}
+            CURRENT READ
           </span>
-        )}
-      </div>
-
-      {/* Stance label — read-only display, NO buttons / NO execution. */}
-      {stance && (
-        <div style={{
-          fontSize: 15, color: 'var(--fg-1)', fontWeight: 600,
-          letterSpacing: '0.02em',
-        }}>
-          {stance.stance}
+          {isStale && (
+            <span style={{
+              padding: '2px 6px', fontSize: 8, fontWeight: 700,
+              letterSpacing: '0.18em', color: '#d4a028',
+              background: 'rgba(212,160,40,0.10)',
+              border: '1px solid #d4a02855',
+              borderRadius: 2,
+            }}>
+              STALE READ{aiState?.staleReason ? ` · ${aiState.staleReason}` : ''}
+            </span>
+          )}
+          {!isStale && isFresh && (
+            <span style={{
+              padding: '2px 6px', fontSize: 8, fontWeight: 700,
+              letterSpacing: '0.18em', color: 'var(--cyan)',
+              background: 'rgba(77,217,232,0.10)',
+              border: `1px solid ${accent}55`,
+              borderRadius: 2,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+            }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: accent,
+                animation: 'gcpro-monk-breathe 1.6s ease-in-out infinite',
+              }} />
+              WATCHING · LIVE
+            </span>
+          )}
         </div>
-      )}
 
-      {/* Transition forecast */}
-      {nextState && nextConf != null && (
+        {/* State headline */}
         <div style={{
-          fontSize: 12, color: 'var(--fg-3)',
-          fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+          display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
         }}>
-          Transition likely → <span style={{
-            color: ladderColor(nextState as LadderState),
-            fontWeight: 600,
+          <span style={{
+            fontSize: 24, fontWeight: 700, color: accent,
+            letterSpacing: '0.01em', lineHeight: 1.15,
           }}>
-            {ladderLabel(nextState as LadderState)}
-          </span> · {Math.round(nextConf * 100)}%
+            {aiState ? aiState.state.toUpperCase() : 'NO READ'}
+          </span>
+          {aiState && (
+            <span style={{
+              fontSize: 16, color: 'var(--fg-3)', letterSpacing: '0.02em',
+            }}>
+              · {aiState.phase}
+            </span>
+          )}
         </div>
-      )}
 
-      <div style={{
-        fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
-      }}>
-        {interp}
+        {/* Stance label — read-only, no execution controls. */}
+        {stance && (
+          <div style={{
+            fontSize: 15, color: 'var(--fg-1)', fontWeight: 600,
+            letterSpacing: '0.02em',
+          }}>
+            {stance.stance}
+          </div>
+        )}
+
+        {/* Transition forecast */}
+        {nextState && nextConf != null && (
+          <div style={{
+            fontSize: 12, color: 'var(--fg-3)',
+            fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+          }}>
+            Transition likely → <span style={{
+              color: ladderColor(nextState as LadderState),
+              fontWeight: 600,
+            }}>
+              {ladderLabel(nextState as LadderState)}
+            </span> · {Math.round(nextConf * 100)}%
+          </div>
+        )}
+
+        <div style={{
+          fontSize: 13, color: 'var(--fg-1)', lineHeight: 1.55,
+        }}>
+          {interp}
+        </div>
+
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 14,
+          fontSize: 9, color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+        }}>
+          {aiLastSuccess && (
+            <span>updated <b style={{ color: 'var(--fg-2)' }}>{lastUpdate}</b></span>
+          )}
+          {stateConfPct != null && (
+            <span>read clarity <b style={{ color: 'var(--fg-2)' }}>{stateConfPct}%</b></span>
+          )}
+          {regime && (
+            <span>regime <b style={{ color: 'var(--fg-2)' }}>{regime}</b></span>
+          )}
+          {netVariance != null && (
+            <span>NV <b style={{ color: 'var(--fg-2)' }}>{netVariance.toFixed(1)}</b></span>
+          )}
+          {/* Even-dimmer model/provider/latency strip per spec. */}
+          {aiState?._meta?.model && (
+            <span style={{ opacity: 0.6 }}>
+              model <b style={{ color: 'var(--fg-3)' }}>{aiState._meta.model}</b>
+            </span>
+          )}
+          {aiState?._meta?.latencyMs != null && (
+            <span style={{ opacity: 0.6 }}>
+              latency <b style={{ color: 'var(--fg-3)' }}>{aiState._meta.latencyMs}ms</b>
+            </span>
+          )}
+        </div>
       </div>
 
-      <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: 14,
-        fontSize: 9, color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
-      }}>
-        {aiLastSuccess && (
-          <span>updated <b style={{ color: 'var(--fg-2)' }}>{lastUpdate}</b></span>
-        )}
-        {stateConfPct != null && (
-          <span>read clarity <b style={{ color: 'var(--fg-2)' }}>{stateConfPct}%</b></span>
-        )}
-        {regime && (
-          <span>regime <b style={{ color: 'var(--fg-2)' }}>{regime}</b></span>
-        )}
-        {netVariance != null && (
-          <span>NV <b style={{ color: 'var(--fg-2)' }}>{netVariance.toFixed(1)}</b></span>
-        )}
+      {/* Ask Guru button — right side of hero. v13.8.1 promotes it
+          back into the Guru surface because Ask Guru is fundamentally
+          a memory/observer action, not just a Trade action. Same
+          handler signature as the Trade button (force: true, distinct
+          source label so the audit log can tell them apart). */}
+      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <button
+          onClick={onAskClick}
+          aria-disabled={buttonDisabled || undefined}
+          title={!aiEnabled ? 'Guru is disabled in Settings' : undefined}
+          style={{
+            padding: '10px 16px',
+            fontSize: 11, letterSpacing: '0.14em', fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+            background: isRunning ? `${buttonAccent}1f` : 'transparent',
+            border: `1px solid ${buttonDisabled ? 'var(--line-2)' : buttonAccent}`,
+            color: buttonDisabled ? 'var(--fg-3)' : buttonAccent,
+            borderRadius: 4,
+            cursor: buttonDisabled ? 'default' : 'pointer',
+            whiteSpace: 'nowrap',
+            transition: 'background 0.2s ease, border-color 0.2s ease, color 0.2s ease',
+            // Stale promotion: thicker shadow when stale to draw the
+            // user's attention back to the action.
+            boxShadow: isStale && !buttonDisabled
+              ? `0 0 14px ${buttonAccent}55`
+              : 'none',
+          }}
+        >
+          {buttonLabel}
+        </button>
       </div>
     </div>
   );
@@ -1881,6 +2224,25 @@ function GuruHistory({
             const conf = Math.round(r.confidence * 100);
             const isCurrent  = i === 0;
             const isExpanded = expandedId === r.id;
+            // v13.8.1: change marker. CURRENT (newest row override),
+            // NEW STATE (stateCode differs from previous), HELD /
+            // STRENGTHENED / WEAKENED (same state, confidence trend).
+            // Reads from already-stored data — no Engine calls.
+            const olderRec = list[i + 1]?.r;
+            let changeLabel: 'CURRENT' | 'NEW STATE' | 'HELD' | 'STRENGTHENED' | 'WEAKENED' | null = null;
+            let changeColor = accent;
+            if (isCurrent) {
+              changeLabel = 'CURRENT';
+              changeColor = accent;
+            } else if (isTransition) {
+              changeLabel = 'NEW STATE';
+              changeColor = '#4dd9e8';
+            } else if (olderRec) {
+              const delta = (r.confidence ?? 0) - (olderRec.confidence ?? 0);
+              if (delta >=  0.05) { changeLabel = 'STRENGTHENED'; changeColor = '#22c55e'; }
+              else if (delta <= -0.05) { changeLabel = 'WEAKENED'; changeColor = '#d4a028'; }
+              else { changeLabel = 'HELD'; changeColor = 'var(--fg-3)'; }
+            }
             return (
               <div key={r.id} style={{ display: 'flex', flexDirection: 'column' }}>
                 {/* v13.3: each row is now a button-styled clickable.
@@ -1923,12 +2285,27 @@ function GuruHistory({
                   <div style={{
                     color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
                     fontVariantNumeric: 'tabular-nums',
+                    display: 'flex', flexDirection: 'column', gap: 2,
                   }}>
-                    {fmtTime(r.timestamp)}
-                    {isCurrent && (
+                    <span>{fmtTime(r.timestamp)}</span>
+                    {/* v13.8.1: change marker badge — replaces the old
+                        in-line "· CURRENT" suffix. Always present so
+                        the eye can scan vertically for HELD vs
+                        STRENGTHENED vs WEAKENED vs NEW STATE. */}
+                    {changeLabel && (
                       <span style={{
-                        marginLeft: 6, fontSize: 8, color: accent, letterSpacing: '0.14em',
-                      }}>· CURRENT</span>
+                        fontSize: 8, fontWeight: 700,
+                        letterSpacing: '0.14em', color: changeColor,
+                        padding: '1px 4px',
+                        border: `1px solid ${changeColor === 'var(--fg-3)'
+                          ? 'var(--line-2)' : changeColor}55`,
+                        borderRadius: 2,
+                        background: changeColor === 'var(--fg-3)'
+                          ? 'transparent' : `${changeColor}11`,
+                        alignSelf: 'flex-start',
+                      }}>
+                        {changeLabel}
+                      </span>
                     )}
                   </div>
                   <div>
@@ -2053,20 +2430,25 @@ export default function GuruView(props: GuruViewProps) {
         padding: 18,
         display: 'flex', flexDirection: 'column', gap: 14,
       }}>
-        <div style={{
-          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-          fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-        }}>
-          Coherence intelligence history · {props.symbol}
-        </div>
+        {/* v13.8.1: eyebrow + top-right page metrics. The summary
+            is derived purely from already-stored aiStateHistory rows
+            for this symbol — reads today (current local day boundary),
+            state changes in window, and average read clarity. No
+            fake values — when there are no rows yet, the metrics
+            block hides itself. */}
+        <PageHeaderRow symbol={props.symbol} records={symbolRecords} />
 
-        {/* v13.8 SECTION A — Current Read. Slim hero showing the
-            current state, stance label (display only), transition
-            forecast, one-line interpretation, and metadata. No trade
-            controls; the ASK GURU button lives on Trade. */}
+        {/* v13.8 SECTION A — Current Read.
+            v13.8.1: hero now hosts a monk/watcher SVG, a live/stale
+            badge, and the ASK GURU button. Source label is
+            'guru_timeline_button' so the audit log can tell it apart
+            from the Trade-side button. */}
         <CurrentReadCard
           aiState={props.aiState}
           aiLastSuccess={props.aiLastSuccess}
+          aiStatus={props.aiStatus}
+          aiEnabled={props.aiEnabled}
+          aiRunNow={props.aiRunNow}
           regime={props.regime ?? null}
           netVariance={props.netVariance ?? null}
         />
