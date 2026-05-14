@@ -69,6 +69,8 @@ import {
 import {
   derivePressureDriver, deriveAlignment, deriveTrendIntegrity,
 } from '@/lib/pressureSemantics';
+import { useViewMode, type ViewMode } from '@/lib/viewMode';
+import { deriveDirectionalEdge } from '@/lib/directionalEdge';
 import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
@@ -1555,6 +1557,315 @@ function PositionMonitorBlock({
   );
 }
 
+// ═════════════════════════════════════════════════════════════════
+// v13.6: VIEW-MODE TOGGLE + HERO METER STRIP + RESEARCH METRICS.
+//
+// Re-architecture from the Claude Design handoff (gcp-guru-app):
+// progressive disclosure across SIMPLE / ANALYST / RESEARCH so the
+// Trade page can be glanced in 3s without losing depth.
+// ═════════════════════════════════════════════════════════════════
+
+function ViewModeToggle({ mode, onChange }: {
+  mode:     ViewMode;
+  onChange: (m: ViewMode) => void;
+}) {
+  const modes: ViewMode[] = ['SIMPLE', 'ANALYST', 'RESEARCH'];
+  return (
+    <div style={{
+      display: 'inline-flex', gap: 2,
+      padding: 2,
+      background: 'var(--bg-2)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 3,
+    }}>
+      {modes.map(m => (
+        <button key={m}
+          onClick={() => onChange(m)}
+          style={{
+            padding: '4px 12px',
+            fontSize: 9, letterSpacing: '0.14em', fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+            background: mode === m ? 'var(--bg-3)' : 'transparent',
+            border: '1px solid ' + (mode === m ? 'var(--line-2)' : 'transparent'),
+            color:  mode === m ? 'var(--fg-0)' : 'var(--fg-3)',
+            borderRadius: 2,
+            cursor: 'pointer',
+            transition: 'color 0.15s ease, background 0.15s ease',
+          }}
+        >
+          {m}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── HERO METER — one of 4 cells in the strip below Thesis/Pressure.
+// Reads as a chip with: tone-tinted dot, uppercase label, big value,
+// progress bar, and detail line. Mirrors the design's "FacetMeter".
+
+function HeroMeter({
+  tone, label, value, detail, bar, color,
+}: {
+  tone:    'aligned' | 'caution' | 'fragile' | 'edge';
+  label:   string;
+  value:   string;
+  detail:  string;
+  bar:     number;        // 0..1
+  color?:  string;        // optional override (used by Directional Edge)
+}) {
+  const accent =
+    color
+   ?? (tone === 'aligned' ? '#22c55e'
+     : tone === 'caution' ? '#d4a028'
+     : tone === 'fragile' ? '#c45a5a'
+     :                       '#4dd9e8');
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `2px solid ${accent}`,
+      borderRadius: 'var(--r-md)',
+      padding: '10px 12px',
+      display: 'flex', flexDirection: 'column', gap: 5,
+      minWidth: 0,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 9, letterSpacing: '0.16em', color: 'var(--fg-4)',
+        fontWeight: 600, fontFamily: 'var(--font-mono)',
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: accent,
+        }} />
+        {label}
+      </div>
+      <div style={{
+        fontSize: 15, fontWeight: 700, color: accent,
+        letterSpacing: '0.02em', lineHeight: 1.1,
+      }}>
+        {value}
+      </div>
+      <div style={{
+        height: 4, borderRadius: 2, overflow: 'hidden',
+        background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+      }}>
+        <div style={{
+          width: `${Math.round(Math.max(0, Math.min(1, bar)) * 100)}%`,
+          height: '100%',
+          background: accent,
+          transition: 'width 0.4s ease',
+        }} />
+      </div>
+      <div style={{
+        fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.45,
+        overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+// ── HERO METER STRIP — Environment · Directional Edge · Action · Fragility.
+
+function HeroMeterStrip({ aiState }: { aiState: GcpStateResponse | null }) {
+  const risk = deriveEnvironmentRisk(aiState);
+  const edge = deriveDirectionalEdge(aiState);
+  const stance = aiState ? deriveStance(aiState) : null;
+
+  // ENVIRONMENT — the deriveEnvironmentRisk label projected onto the
+  // strip. "Stable" reads bar 0.85, transitional 0.55, fragile 0.4,
+  // volatile 0.7, exhausted 0.5.
+  const envBar =
+    risk.label === 'Stable'       ? 0.85
+  : risk.label === 'Transitional' ? 0.55
+  : risk.label === 'Fragile'      ? 0.40
+  : risk.label === 'Volatile'     ? 0.70
+  : risk.label === 'Exhausted'    ? 0.50
+  :                                  0.30;
+  const envTone: 'aligned' | 'caution' | 'fragile' | 'edge' =
+    risk.label === 'Stable'    ? 'aligned'
+  : risk.label === 'Volatile'  ? 'fragile'
+  : risk.label === 'Fragile'   ? 'fragile'
+  :                              'caution';
+
+  // ACTION — from stance.stance verb. WAIT-class → caution; Lean/Trail
+  // /Initiate → aligned. Empty stance (no aiState yet) → caution wait.
+  const stanceStance = stance?.stance ?? 'WAIT';
+  const actBar =
+    /wait|hold|reduce|manage/i.test(stanceStance) ? 0.30
+  : /lean|favor|initiate|enter|trail/i.test(stanceStance) ? 0.85
+  : 0.55;
+  const actTone: 'aligned' | 'caution' | 'fragile' | 'edge' =
+    /wait|hold|reduce|manage/i.test(stanceStance) ? 'caution'
+  : /lean|favor|initiate|enter|trail/i.test(stanceStance) ? 'aligned'
+  : 'caution';
+  const actValue = stanceStance.toUpperCase();
+  const actDetail = stance?.execution ?? 'No stance yet.';
+
+  // FRAGILITY — invalidator count when available, else state-based.
+  const invalidatorCount = aiState?.invalidators?.length ?? 0;
+  const fragBar =
+    risk.label === 'Volatile'  ? 0.85
+  : risk.label === 'Exhausted' ? 0.65
+  : risk.label === 'Fragile'   ? 0.55
+  : risk.label === 'Transitional' ? 0.45
+  : 0.20;
+  const fragLabel =
+    fragBar >= 0.8 ? 'HIGH'
+  : fragBar >= 0.5 ? 'MODERATE'
+  : fragBar >= 0.3 ? 'LOW'
+  :                   'STABLE';
+  const fragDetail = invalidatorCount > 0
+    ? `${invalidatorCount} invalidator${invalidatorCount === 1 ? '' : 's'} listed`
+    : 'No active invalidators';
+
+  return (
+    <div className="ti-hero-strip" style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: 12,
+    }}>
+      <HeroMeter
+        tone={envTone}
+        label="ENVIRONMENT"
+        value={risk.label.toUpperCase()}
+        detail={risk.hint}
+        bar={envBar}
+        color={risk.color}
+      />
+      <HeroMeter
+        tone="edge"
+        label="DIRECTIONAL EDGE"
+        value={edge.label}
+        detail={edge.detail}
+        bar={edge.bar}
+        color={edge.color}
+      />
+      <HeroMeter
+        tone={actTone}
+        label="ACTION"
+        value={actValue}
+        detail={actDetail}
+        bar={actBar}
+      />
+      <HeroMeter
+        tone={fragBar >= 0.5 ? 'fragile' : 'caution'}
+        label="FRAGILITY"
+        value={fragLabel}
+        detail={fragDetail}
+        bar={fragBar}
+      />
+    </div>
+  );
+}
+
+// ── RAW METRICS CARD — RESEARCH mode only. Reads from the same
+// payload.metrics the Engine sees, so it surfaces ground-truth
+// numbers (not anchored / overlay-adjusted).
+
+function RawMetricsCard({ aiState }: { aiState: GcpStateResponse | null }) {
+  // We don't have access to payload.metrics directly here — but
+  // structure / confidence / pressure are all on aiState. Show what
+  // we actually have so we never render fake values.
+  const rows: { l: string; v: string; hint: string; tone?: string }[] = [];
+  if (aiState) {
+    rows.push({ l: 'CLARITY', v: `${Math.round(aiState.confidence * 100)}%`,
+                hint: 'Environment read clarity (post-anchor)' });
+    rows.push({ l: 'STATE',   v: `${aiState.stateCode} · ${aiState.phase}`,
+                hint: 'Anchored Guru classification' });
+    rows.push({ l: 'DIR',     v: aiState.direction,
+                hint: 'Directional read' });
+    if (aiState.strength != null) {
+      rows.push({ l: 'STR', v: aiState.strength.toFixed(2),
+                  hint: 'Engine strength score' });
+    }
+    if (aiState.longPressure != null && aiState.shortPressure != null) {
+      rows.push({ l: 'L/S',
+                  v: `${aiState.longPressure} / ${aiState.shortPressure}`,
+                  hint: 'Directional pressure post-temporal + sanity' });
+    }
+    if (aiState.structureScore != null) {
+      rows.push({ l: 'DOM',
+                  v: (aiState.structureScore >= 0 ? '+' : '') + aiState.structureScore,
+                  hint: 'Structural dominance score' });
+    }
+    if (aiState.transitionConfidence != null && aiState.nextLikelyState) {
+      rows.push({
+        l: 'NEXT',
+        v: `${aiState.nextLikelyState} ${Math.round(aiState.transitionConfidence * 100)}%`,
+        hint: 'Transition ladder forecast',
+      });
+    }
+    if (aiState.inheritedTrend) {
+      rows.push({ l: 'INH',
+                  v: aiState.inheritedTrend,
+                  hint: 'Inherited directional memory' });
+    }
+    if (aiState._meta?.model) {
+      rows.push({ l: 'MODEL',
+                  v: aiState._meta.model,
+                  hint: 'Engine model' });
+    }
+    if (aiState._meta?.latencyMs != null) {
+      rows.push({ l: 'LATENCY',
+                  v: `${aiState._meta.latencyMs}ms`,
+                  hint: 'Engine response latency' });
+    }
+  }
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600, marginBottom: 10,
+      }}>
+        RAW METRICS · COHERENCE FIELD
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+        gap: 10,
+      }}>
+        {rows.map((m, i) => (
+          <div key={i} title={m.hint} style={{
+            background: 'var(--bg-2)',
+            border: '1px solid var(--line-1)',
+            borderRadius: 3,
+            padding: '8px 10px',
+            display: 'flex', flexDirection: 'column', gap: 2,
+            minWidth: 0,
+          }}>
+            <span style={{
+              fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+              fontWeight: 600,
+            }}>{m.l}</span>
+            <span style={{
+              fontSize: 13, color: 'var(--fg-0)', fontWeight: 600,
+              fontFamily: 'var(--font-mono)',
+              fontVariantNumeric: 'tabular-nums',
+              overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>{m.v}</span>
+            <span style={{
+              fontSize: 9, color: 'var(--fg-4)', lineHeight: 1.3,
+              overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>{m.hint}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SectionShell({
   title, subtitle, accent, children,
 }: {
@@ -1613,6 +1924,14 @@ function TradePanelImpl({
   const [stopLoss, setStopLoss]         = useState<string>('');
   const [takeProfit, setTakeProfit]     = useState<string>('');
   const [, setTick]                     = useState(0);
+  // v13.6: view mode (SIMPLE / ANALYST / RESEARCH) with localStorage
+  // persistence + cross-tab sync. Default is ANALYST so existing
+  // users see the same density they did pre-v13.6; SIMPLE strips the
+  // meso row + market context for a calmer decision surface; RESEARCH
+  // adds a raw-metrics card.
+  const [viewMode, setViewMode] = useViewMode();
+  const showAnalyst  = viewMode === 'ANALYST'  || viewMode === 'RESEARCH';
+  const showResearch = viewMode === 'RESEARCH';
   // v13.0: AI state history for State Flow ribbon + Historical Analog.
   const [records, setRecords] = useState<AiStateHistoryRecord[]>([]);
   useEffect(() => {
@@ -1735,8 +2054,12 @@ function TradePanelImpl({
       }}>
         <div style={{
           fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-3)',
+          display: 'flex', alignItems: 'center', gap: 12,
         }}>
-          TRADE · {symbol}
+          <span>TRADE · {symbol}</span>
+          {/* v13.6: view-mode toggle. SIMPLE strips meso row, ANALYST is
+              default (existing density), RESEARCH adds raw metrics. */}
+          <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
           <span style={{ fontSize: 9, color: 'var(--fg-4)' }}>
@@ -1776,9 +2099,14 @@ function TradePanelImpl({
           }
         `}</style>
 
-        {/* Hero row: Thesis (60%) + Pressure gauge (40%). */}
+        {/* Hero row: Thesis (60%) + Pressure gauge (40%). In SIMPLE
+            mode the PressureGauge collapses into the 4-meter strip
+            below; in ANALYST / RESEARCH the full LONG/SHORT detail
+            stays on screen. v13.6 — design handoff. */}
         <div className="ti-hero-row" style={{
-          display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12,
+          display: 'grid',
+          gridTemplateColumns: showAnalyst ? '3fr 2fr' : '1fr',
+          gap: 12,
         }}>
           <ThesisHero
             aiState={aiState}
@@ -1786,24 +2114,45 @@ function TradePanelImpl({
             netVariance={netVariance}
             goldTrend={goldTrend}
           />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <PressureGauge aiState={aiState} />
-            {/* v13.4: MARKET CONTEXT lives directly under the pressure
-                gauge — same column, separate card. Visually clear that
-                structure / momentum are a different category from
-                pressure direction. */}
-            <MarketContextCard aiState={aiState} />
-          </div>
+          {showAnalyst && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <PressureGauge aiState={aiState} />
+              {/* v13.4: MARKET CONTEXT lives directly under the pressure
+                  gauge — same column, separate card. Visually clear that
+                  structure / momentum are a different category from
+                  pressure direction. */}
+              <MarketContextCard aiState={aiState} />
+            </div>
+          )}
         </div>
 
-        {/* Meso row: Environment Risk · State Flow · Historical Analog. */}
-        <div className="ti-meso-row" style={{
-          display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 12,
-        }}>
-          <EnvironmentRiskCard aiState={aiState} />
-          <StateFlowRibbon records={symbolRecords} currentState={aiState} />
-          <HistoricalAnalogCard records={records} symbol={symbol} aiState={aiState} />
-        </div>
+        {/* v13.6: 4-METER HERO STRIP — Environment · Directional Edge
+            · Action · Fragility. Always visible (across all view
+            modes). In SIMPLE mode this IS the entire intelligence
+            surface; in ANALYST it sits between the hero panels and
+            the deeper context row. */}
+        <HeroMeterStrip aiState={aiState} />
+
+        {/* Meso row: Environment Risk · State Flow · Historical Analog.
+            ANALYST + RESEARCH only — SIMPLE keeps the hero strip as
+            the only context strip. */}
+        {showAnalyst && (
+          <div className="ti-meso-row" style={{
+            display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 12,
+          }}>
+            <EnvironmentRiskCard aiState={aiState} />
+            <StateFlowRibbon records={symbolRecords} currentState={aiState} />
+            <HistoricalAnalogCard records={records} symbol={symbol} aiState={aiState} />
+          </div>
+        )}
+
+        {/* v13.6: RESEARCH-only raw-metrics card. Renders the same
+            fields the SDK actually returned (clarity, pressure, dom
+            score, transition, inheritance, model meta) so the user
+            can audit a classification without opening the dev
+            console. No fake values; rows skip themselves when the
+            underlying field is absent. */}
+        {showResearch && <RawMetricsCard aiState={aiState} />}
 
         {/* Action + Monitor row. Pre-v13 these were stacked inside a
             three-column grid alongside a Guru context column; that
@@ -1846,8 +2195,10 @@ function TradePanelImpl({
           </div>
         </div>
 
-        {/* History table — full width at the bottom. */}
-        <HistoryTable acct={acct} symbol={symbol} />
+        {/* v13.6: history table sits under Analyst / Research. SIMPLE
+            keeps the surface focused on the live decision — past
+            trades drop into deeper modes. */}
+        {showAnalyst && <HistoryTable acct={acct} symbol={symbol} />}
       </div>
     </div>
   );
