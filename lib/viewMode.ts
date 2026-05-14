@@ -14,9 +14,10 @@
 //            the underlying coherence-field numbers (PSS, slope,
 //            curvature, CED, oscillation, regime).
 //
-// Default is ANALYST so existing users see the same density they
-// did pre-v13.6; SIMPLE is opt-in for traders who want the
-// calmer decision surface.
+// v13.7: default flipped from ANALYST → SIMPLE. New users see a
+// 3-second decision surface first; ANALYST / RESEARCH stay one
+// click away. Existing users who explicitly picked a mode get
+// their choice respected (localStorage value wins).
 
 import { useEffect, useState } from 'react';
 
@@ -24,7 +25,7 @@ export type ViewMode = 'SIMPLE' | 'ANALYST' | 'RESEARCH';
 
 const VIEW_MODE_LS_KEY  = 'gcpro-trade-view-mode';
 const VALID_MODES       = new Set<ViewMode>(['SIMPLE', 'ANALYST', 'RESEARCH']);
-const DEFAULT_VIEW_MODE: ViewMode = 'ANALYST';
+const DEFAULT_VIEW_MODE: ViewMode = 'SIMPLE';
 
 export function loadViewMode(): ViewMode {
   if (typeof window === 'undefined') return DEFAULT_VIEW_MODE;

@@ -71,6 +71,9 @@ import {
 } from '@/lib/pressureSemantics';
 import { useViewMode, type ViewMode } from '@/lib/viewMode';
 import { deriveDirectionalEdge } from '@/lib/directionalEdge';
+import { deriveEntryStatus } from '@/lib/entryStatus';
+import { deriveThesisStability } from '@/lib/thesisStability';
+import type { AiStatus } from '@/lib/useGcpState';
 import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
@@ -91,6 +94,13 @@ interface Props {
   // sites that don't have it threaded keep type-checking; falls back
   // to "unknown" inside the panel.
   goldTrend?:    'up' | 'down' | 'sideways' | 'unknown';
+  // v13.7: Ask Guru button props — threaded through from useGcpState.
+  // Optional so legacy call sites that haven't been updated still
+  // type-check. When absent the button hides itself.
+  aiRunNow?:      (options?: { force?: boolean; source?: string }) => void;
+  aiStatus?:      AiStatus;
+  aiLastSuccess?: Date | null;
+  aiEnabled?:     boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1668,6 +1678,215 @@ function HeroMeter({
   );
 }
 
+// ═════════════════════════════════════════════════════════════════
+// v13.7: ASK GURU button, ENTRY STATUS banner, decision-strip cards.
+// ═════════════════════════════════════════════════════════════════
+
+function AskGuruButton({
+  aiStatus, aiEnabled, aiLastSuccess, onClick,
+}: {
+  aiStatus:      AiStatus;
+  aiEnabled:     boolean;
+  aiLastSuccess: Date | null;
+  onClick:       () => void;
+}) {
+  const isRunning = aiStatus === 'running';
+  const label =
+    isRunning             ? 'ASKING…'
+  : aiStatus === 'error'  ? 'TRY AGAIN'
+  : aiLastSuccess         ? 'ASK GURU AGAIN'
+  :                          'ASK GURU';
+  const accent =
+    aiStatus === 'error'  ? 'var(--red)'
+  :                          'var(--cyan)';
+  const disabled = !aiEnabled || isRunning;
+  const sinceMs = aiLastSuccess ? Date.now() - aiLastSuccess.getTime() : null;
+  const ageLabel = sinceMs == null ? null
+    : sinceMs < 60_000   ? `${Math.round(sinceMs / 1000)}s ago`
+    : sinceMs < 3_600_000 ? `${Math.floor(sinceMs / 60_000)}m ago`
+    :                      `${Math.floor(sinceMs / 3_600_000)}h ago`;
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {ageLabel && (
+        <span style={{
+          fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.12em',
+          fontFamily: 'var(--font-mono)',
+        }}>
+          last update <span style={{ color: 'var(--fg-2)' }}>{ageLabel}</span>
+        </span>
+      )}
+      <button
+        onClick={onClick}
+        aria-disabled={disabled || undefined}
+        title={!aiEnabled ? 'Guru is disabled in Settings' : undefined}
+        style={{
+          padding: '6px 12px',
+          fontSize: 10, letterSpacing: '0.14em', fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          background: isRunning ? `${accent}1f` : 'transparent',
+          border: `1px solid ${disabled ? 'var(--line-2)' : accent}`,
+          color: disabled ? 'var(--fg-3)' : accent,
+          borderRadius: 3,
+          cursor: disabled ? 'default' : 'pointer',
+          whiteSpace: 'nowrap',
+          transition: 'background 0.15s, border-color 0.15s, color 0.15s',
+        }}
+      >
+        {label}
+      </button>
+    </div>
+  );
+}
+
+// ── ENTRY STATUS banner — the primary decision badge. Visually
+// dominant in SIMPLE mode; lets the user see BLOCKED / WATCH / READY
+// / MANAGE before they parse pressure or stance separately.
+
+function EntryStatusBanner({
+  aiState, hasOpenPosition,
+}: {
+  aiState:         GcpStateResponse | null;
+  hasOpenPosition: boolean;
+}) {
+  const stance = aiState ? deriveStance(aiState) : null;
+  const entry = deriveEntryStatus({ aiState, stance, hasOpenPosition });
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${entry.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', alignItems: 'center', gap: 16,
+      flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', fontWeight: 600,
+        }}>
+          ENTRY STATUS
+        </span>
+        <span style={{
+          fontSize: 22, fontWeight: 700, letterSpacing: '0.04em',
+          color: entry.color, lineHeight: 1.1,
+        }}>
+          {entry.status}
+        </span>
+      </div>
+      <div style={{
+        flex: 1, minWidth: 0,
+        display: 'flex', flexDirection: 'column', gap: 2,
+      }}>
+        {entry.stance && (
+          <span style={{
+            fontSize: 10, letterSpacing: '0.08em', color: 'var(--fg-3)',
+            fontFamily: 'var(--font-mono)',
+          }}>
+            STANCE <span style={{ color: 'var(--fg-1)', fontWeight: 600 }}>
+              {entry.stance.toUpperCase()}
+            </span>
+          </span>
+        )}
+        <span style={{
+          fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5,
+        }}>
+          {entry.reason}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── DIRECTIONAL EDGE card — SIMPLE-mode summary (no raw %).
+//    Reads as "UP · MOD — Bullish trend intact · skew +14".
+//    Detailed LONG/SHORT bar stays in ANALYST/RESEARCH via PressureGauge.
+
+function DirectionalEdgeCard({ aiState }: { aiState: GcpStateResponse | null }) {
+  const edge = deriveDirectionalEdge(aiState);
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `2px solid ${edge.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        DIRECTIONAL EDGE
+      </div>
+      <div style={{
+        fontSize: 22, fontWeight: 700, letterSpacing: '0.04em',
+        color: edge.color, lineHeight: 1.1,
+      }}>
+        {edge.label}
+      </div>
+      <div style={{
+        height: 4, borderRadius: 2, overflow: 'hidden',
+        background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+      }}>
+        <div style={{
+          width: `${Math.round(edge.bar * 100)}%`, height: '100%',
+          background: edge.color, transition: 'width 0.4s ease',
+        }} />
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.45,
+      }}>
+        {edge.detail}
+      </div>
+    </div>
+  );
+}
+
+// ── THESIS STABILITY card — replaces the v13.6 FRAGILITY meter.
+//    Inverted semantics: HIGH = thesis intact, LOW = unstable.
+
+function ThesisStabilityCard({ aiState }: { aiState: GcpStateResponse | null }) {
+  const stab = deriveThesisStability(aiState);
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `2px solid ${stab.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        THESIS STABILITY
+      </div>
+      <div style={{
+        fontSize: 22, fontWeight: 700, letterSpacing: '0.04em',
+        color: stab.color, lineHeight: 1.1,
+      }}>
+        {stab.level}
+      </div>
+      <div style={{
+        height: 4, borderRadius: 2, overflow: 'hidden',
+        background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+      }}>
+        <div style={{
+          width: `${Math.round(stab.bar * 100)}%`, height: '100%',
+          background: stab.color, transition: 'width 0.4s ease',
+        }} />
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--fg-3)', lineHeight: 1.45,
+      }}>
+        {stab.hint}
+      </div>
+    </div>
+  );
+}
+
 // ── HERO METER STRIP — Environment · Directional Edge · Action · Fragility.
 
 function HeroMeterStrip({ aiState }: { aiState: GcpStateResponse | null }) {
@@ -1772,8 +1991,8 @@ function RawMetricsCard({ aiState }: { aiState: GcpStateResponse | null }) {
   // we actually have so we never render fake values.
   const rows: { l: string; v: string; hint: string; tone?: string }[] = [];
   if (aiState) {
-    rows.push({ l: 'CLARITY', v: `${Math.round(aiState.confidence * 100)}%`,
-                hint: 'Environment read clarity (post-anchor)' });
+    rows.push({ l: 'READ CLARITY', v: `${Math.round(aiState.confidence * 100)}%`,
+                hint: 'How clearly Guru reads the current environment (post-anchor)' });
     rows.push({ l: 'STATE',   v: `${aiState.stateCode} · ${aiState.phase}`,
                 hint: 'Anchored Guru classification' });
     rows.push({ l: 'DIR',     v: aiState.direction,
@@ -1915,6 +2134,7 @@ function TradePanelImpl({
   symbol, timeframe, currentPrice,
   aiState, posture, latestPattern, tradePlan, regime, netVariance,
   goldTrend = 'unknown',
+  aiRunNow, aiStatus = 'idle', aiLastSuccess = null, aiEnabled = true,
 }: Props) {
   const [acct, setAcct]                 = useState<DemoAccount>(() => loadDemoAccount());
   const [side, setSide]                 = useState<Side>('long');
@@ -2057,11 +2277,22 @@ function TradePanelImpl({
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
           <span>TRADE · {symbol}</span>
-          {/* v13.6: view-mode toggle. SIMPLE strips meso row, ANALYST is
-              default (existing density), RESEARCH adds raw metrics. */}
+          {/* v13.6: view-mode toggle. v13.7: SIMPLE is now the default
+              for new users; ANALYST / RESEARCH stay one click away. */}
           <ViewModeToggle mode={viewMode} onChange={setViewMode} />
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {/* v13.7: ASK GURU button — Trade is now the primary Guru
+              execution surface. Hidden when aiRunNow isn't wired
+              through (legacy call sites). */}
+          {aiRunNow && (
+            <AskGuruButton
+              aiStatus={aiStatus}
+              aiEnabled={aiEnabled}
+              aiLastSuccess={aiLastSuccess}
+              onClick={() => aiRunNow({ force: true, source: 'trade_guru_button' })}
+            />
+          )}
           <span style={{ fontSize: 9, color: 'var(--fg-4)' }}>
             Balance{' '}
             <span style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
@@ -2126,21 +2357,35 @@ function TradePanelImpl({
           )}
         </div>
 
-        {/* v13.6: 4-METER HERO STRIP — Environment · Directional Edge
-            · Action · Fragility. Always visible (across all view
-            modes). In SIMPLE mode this IS the entire intelligence
-            surface; in ANALYST it sits between the hero panels and
-            the deeper context row. */}
-        <HeroMeterStrip aiState={aiState} />
+        {/* v13.7: ENTRY STATUS banner — the primary decision badge,
+            always visible. Tells the user BLOCKED / WATCH / READY /
+            MANAGE before any pressure number. Closes the
+            "LONG 57% but stance WAIT" semantic gap. */}
+        <EntryStatusBanner
+          aiState={aiState}
+          hasOpenPosition={!!acct.open}
+        />
 
-        {/* Meso row: Environment Risk · State Flow · Historical Analog.
-            ANALYST + RESEARCH only — SIMPLE keeps the hero strip as
-            the only context strip. */}
+        {/* v13.7: Decision strip — Directional Edge + Thesis Stability.
+            Always visible across all modes; SIMPLE relies on these
+            two cards to communicate "which way" + "how stable" without
+            the full LONG/SHORT gauge. */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
+        }}>
+          <DirectionalEdgeCard aiState={aiState} />
+          <ThesisStabilityCard aiState={aiState} />
+        </div>
+
+        {/* Meso row: State Flow + Historical Analog. v13.7 removed
+            the duplicate EnvironmentRiskCard — the meter strip's
+            ENVIRONMENT label already communicates the same value;
+            having the same chip twice on screen was the "duplicate
+            transitional" bug. ANALYST + RESEARCH only. */}
         {showAnalyst && (
           <div className="ti-meso-row" style={{
-            display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr', gap: 12,
+            display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12,
           }}>
-            <EnvironmentRiskCard aiState={aiState} />
             <StateFlowRibbon records={symbolRecords} currentState={aiState} />
             <HistoricalAnalogCard records={records} symbol={symbol} aiState={aiState} />
           </div>

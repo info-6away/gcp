@@ -34,6 +34,10 @@ interface TradeScreenProps {
   // / divergence line. Optional — defaults to 'unknown' inside the
   // panel when callers don't have it threaded yet.
   goldTrend?:    'up' | 'down' | 'sideways' | 'unknown';
+  // v13.7: ASK GURU button needs to fire runNow from the Trade
+  // header. lastSuccess + status drive the button label + age.
+  aiRunNow?:     (options?: { force?: boolean; source?: string }) => void;
+  aiLastSuccess?: Date | null;
 }
 
 export function TradeScreen(props: TradeScreenProps) {
@@ -66,6 +70,10 @@ export function TradeScreen(props: TradeScreenProps) {
           regime={props.liveRegime}
           netVariance={props.netVariance}
           goldTrend={props.goldTrend ?? 'unknown'}
+          aiRunNow={props.aiRunNow}
+          aiStatus={props.aiStatus}
+          aiLastSuccess={props.aiLastSuccess}
+          aiEnabled={props.aiEnabled}
         />
       </div>
     </div>

@@ -364,7 +364,7 @@ function GuruHeader({
                   width: 4, height: 4, borderRadius: '50%',
                   background: '#d4a028',
                 }} />
-                Low environment clarity — structure still forming.
+                Low read clarity — structure still forming.
               </div>
             )}
           </>
@@ -373,6 +373,9 @@ function GuruHeader({
         {/* v11.34: relabelled CONFIDENCE → STATE CERTAINTY so it
             stops competing semantically with TRANSITION LIKELIHOOD.
             v13.1.1: relabelled again → ENVIRONMENT CLARITY. Reads as
+            v13.7: relabelled once more → READ CLARITY. Tighter, less
+            redundant with the Environment meter on Trade. Same value
+            (aiState.confidence × 100). Reads as
             "how clearly the current environment is resolving" which
             matches what the metric actually communicates better than
             the prior "state certainty" framing. Same value
@@ -388,7 +391,7 @@ function GuruHeader({
             }}
           >
             <span style={{ letterSpacing: '0.14em', color: 'var(--fg-4)' }}>
-              ENVIRONMENT CLARITY
+              READ CLARITY
             </span>
             <span style={{
               color: 'var(--fg-1)', marginLeft: 6,

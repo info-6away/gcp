@@ -180,6 +180,10 @@ export default function MobileApp({
           : goldData.changePct < -0.10  ? 'down'
           :                                'sideways'
           }
+          // v13.7: ASK GURU button props — Trade is now the primary
+          // Guru execution surface on mobile too.
+          aiRunNow={aiRunNow}
+          aiLastSuccess={aiLastSuccess}
         />
       );
       case 'chart': return (

@@ -642,6 +642,10 @@ export default function GCPApp() {
                   regime={lastBase?.r ?? null}
                   netVariance={lastBase?.v ?? null}
                   goldTrend={aiStateInputs?.goldContext?.trend ?? 'unknown'}
+                  aiRunNow={aiState.runNow}
+                  aiStatus={aiState.aiStatus}
+                  aiLastSuccess={aiState.lastSuccessAt}
+                  aiEnabled={aiState.enabled}
                 />
               </div>
             );

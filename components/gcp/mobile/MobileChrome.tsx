@@ -15,8 +15,11 @@ import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 export type MobilePage =
   | 'dashboard' | 'chart' | 'guru' | 'research' | 'trading'
   | 'pattern' | 'settings';
+// v13.7: Guru removed from bottom nav. Trade is now the primary
+// Guru-powered execution surface and takes the center-hero slot;
+// Patterns fills the freed side slot so we keep 5 visible items.
 export const BOTTOM_NAV_PAGES: ReadonlySet<MobilePage> = new Set<MobilePage>([
-  'dashboard', 'chart', 'guru', 'research', 'trading',
+  'dashboard', 'chart', 'trading', 'research', 'pattern',
 ]);
 
 export function MobileStatus({
@@ -166,17 +169,23 @@ export function BottomNav({
       <path d="M12 4 L16 4 L16 8" stroke="currentColor" strokeWidth={1.4} />
     </svg>
   );
-  // Minimal monk silhouette — round head, robe shoulders. No emoji
-  // so it reads professional even at small sizes.
-  const GuruHeroIcon = ({ size = 28 }: { size?: number }) => (
+  // v13.7: Patterns icon added — center hero replaced by Trade.
+  const PatternsIcon = () => (
+    <svg width={18} height={18} viewBox="0 0 18 18" fill="none">
+      <path d="M2 4 L6 4 M2 9 L10 9 M2 14 L14 14" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
+      <circle cx={6} cy={4}  r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
+      <circle cx={10} cy={9}  r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
+      <circle cx={14} cy={14} r={1.4} stroke="currentColor" strokeWidth={1.2} fill="none" />
+    </svg>
+  );
+  // v13.7: Trade replaces Guru as the center hero. Larger glyph
+  // emphasising the new primary IA. Cyan ring + glow when active.
+  const TradeHeroIcon = ({ size = 28 }: { size?: number }) => (
     <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
-      <circle cx={14} cy={9} r={4.2} stroke="currentColor" strokeWidth={1.4} />
-      <path
-        d="M5 22 C 6 16 10 14 14 14 C 18 14 22 16 23 22 Z"
-        stroke="currentColor" strokeWidth={1.4}
-        fill="rgba(77,217,232,0.08)"
-      />
-      <circle cx={14} cy={9} r={1.6} fill="currentColor" />
+      <path d="M4 21 L10 13 L15 18 L24 7" stroke="currentColor" strokeWidth={1.8} strokeLinejoin="round" />
+      <path d="M19 7 L24 7 L24 12" stroke="currentColor" strokeWidth={1.8} strokeLinejoin="round" />
+      <circle cx={10} cy={13} r={1.6} fill="currentColor" />
+      <circle cx={15} cy={18} r={1.6} fill="currentColor" />
     </svg>
   );
 
@@ -206,10 +215,12 @@ export function BottomNav({
     );
   };
 
-  const guruIsActive = active === 'guru';
-  // v11.35: subtle freshness pulse on the Guru hero. Reuses the
-  // global `livepulse` keyframe rather than introducing a new one.
-  const guruRingShadow = guruIsActive
+  // v13.7: center hero is now Trade. Cyan ring + glow when active;
+  // the freshness pulse still fires when a recent Guru classification
+  // landed (< 30 s) so the user sees "Guru just spoke" without
+  // having a separate Guru tab to navigate to.
+  const tradeIsActive = active === 'trading';
+  const tradeRingShadow = tradeIsActive
     ? `0 0 0 4px ${C.bg1}, 0 0 22px ${C.cyan}aa`
     : `0 0 0 4px ${C.bg1}, 0 0 18px ${C.cyan}55`;
 
@@ -223,29 +234,30 @@ export function BottomNav({
       {side('dashboard', 'DASHBOARD', DashboardIcon)}
       {side('chart',     'CHART',     ChartIcon)}
 
-      {/* CENTER HERO — Guru. Larger circular pill, raised above the
-          row, cyan ring + glow when active, freshness pulse when a
-          fresh analysis exists in the last 30 s. */}
+      {/* CENTER HERO — Trade (v13.7). Same circular-pill treatment as
+          the previous Guru hero. Freshness pulse fires on recent
+          classification arrivals so Guru output remains visible from
+          the bottom nav without needing a dedicated tab. */}
       <div style={{
         flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
         marginTop: -26,
       }}>
         <button
-          onClick={() => onNav('guru')}
-          aria-label="Guru"
+          onClick={() => onNav('trading')}
+          aria-label="Trade"
           style={{
             width: 56, height: 56, borderRadius: '50%',
-            background: guruIsActive ? `${C.cyan}1f` : C.bg2,
-            border: `1.5px solid ${guruIsActive ? C.cyan : `${C.cyan}99`}`,
+            background: tradeIsActive ? `${C.cyan}1f` : C.bg2,
+            border: `1.5px solid ${tradeIsActive ? C.cyan : `${C.cyan}99`}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: guruRingShadow,
+            boxShadow: tradeRingShadow,
             cursor: 'pointer', padding: 0,
-            color: guruIsActive ? C.cyan : C.fg0,
+            color: tradeIsActive ? C.cyan : C.fg0,
             transition: 'background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease',
             position: 'relative',
           }}
         >
-          <GuruHeroIcon size={28} />
+          <TradeHeroIcon size={28} />
           {isFresh && (
             <span style={{
               position: 'absolute', top: 4, right: 4,
@@ -257,12 +269,12 @@ export function BottomNav({
         </button>
         <span style={{
           fontFamily: 'inherit', fontSize: 9, letterSpacing: '0.16em',
-          color: guruIsActive ? C.cyan : C.fg1, fontWeight: 600,
-        }}>GURU</span>
+          color: tradeIsActive ? C.cyan : C.fg1, fontWeight: 600,
+        }}>TRADE</span>
       </div>
 
       {side('research', 'RESEARCH', ResearchIcon)}
-      {side('trading',  'TRADE',    TradeIcon)}
+      {side('pattern',  'PATTERNS', PatternsIcon)}
     </div>
   );
 }
