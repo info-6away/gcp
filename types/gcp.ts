@@ -1,4 +1,4 @@
-export type AppPage = 'dashboard' | 'guru' | 'pattern' | 'chart' | 'research' | 'trading' | 'settings';
+export type AppPage = 'dashboard' | 'guru' | 'pattern' | 'chart' | 'research' | 'trading' | 'radar' | 'settings';
 
 export interface GCPEntry {
   t: number;
@@ -36,7 +36,10 @@ export function barDuration(bars: number, tf: Timeframe): string {
   return `${(mins / 1440).toFixed(1).replace('.0', '')}d`;
 }
 
-export type MarketSymbol = 'XAUUSD' | 'BTC' | 'XAGUSD';
+// v14.0: expanded from 3 → 5 to support the Guru Radar multi-asset
+// scanner. EURUSD / USDJPY are FX pairs; price magnitudes differ
+// sharply (EURUSD ~1.08, USDJPY ~150) so decimals are tuned per pair.
+export type MarketSymbol = 'XAUUSD' | 'BTC' | 'XAGUSD' | 'EURUSD' | 'USDJPY';
 
 export interface SymbolMeta {
   id:          MarketSymbol;
@@ -72,6 +75,22 @@ export const SYMBOLS: SymbolMeta[] = [
     decimals:    3,
     color:       'oklch(0.80 0.04 220)',
   },
+  {
+    id:          'EURUSD',
+    label:       'Euro / USD',
+    yahooTicker: 'EURUSD=X',
+    prefix:      '',
+    decimals:    4,
+    color:       'oklch(0.72 0.15 265)',
+  },
+  {
+    id:          'USDJPY',
+    label:       'USD / Yen',
+    yahooTicker: 'USDJPY=X',
+    prefix:      '',
+    decimals:    2,
+    color:       'oklch(0.74 0.13 25)',
+  },
 ];
 
 export function getSymbolMeta(id: MarketSymbol): SymbolMeta {
@@ -86,6 +105,8 @@ const SYMBOL_ENV_LABEL: Record<MarketSymbol, string> = {
   XAUUSD: 'GOLD',
   BTC:    'BTC',
   XAGUSD: 'SILVER',
+  EURUSD: 'EURUSD',
+  USDJPY: 'USDJPY',
 };
 
 export function symbolEnvLabel(id: MarketSymbol): string {

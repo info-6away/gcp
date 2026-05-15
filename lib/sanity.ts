@@ -96,6 +96,10 @@ const NEAR_ZERO_FLOOR: Record<string, number> = {
   'BTC/USD': 1000,
   XAGUSD:    1,      // silver spot floor (rough)
   'XAG/USD': 1,
+  EURUSD:    0.5,    // EUR/USD has not approached parity-halved
+  'EUR/USD': 0.5,
+  USDJPY:    50,     // USD/JPY floor (rough)
+  'USD/JPY': 50,
 };
 
 export function nearZeroFloorFor(symbol: string | undefined): number {

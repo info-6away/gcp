@@ -110,6 +110,7 @@ export function MobileDrawer({
           {/* Pages moved out of the bottom nav. */}
           <Section title="Pages">
             <NavRow label="Patterns" onClick={() => goto('pattern')} />
+            <NavRow label="Radar"    onClick={() => goto('radar')} />
             <NavRow label="Settings" onClick={() => goto('settings')} />
           </Section>
 

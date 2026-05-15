@@ -26,6 +26,8 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
   BTC:    'BTC/USD',
   XAGUSD: 'XAG/USD',
+  EURUSD: 'EUR/USD',
+  USDJPY: 'USD/JPY',
 };
 
 const INIT_SIZE: Record<Timeframe, number> = {

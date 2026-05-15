@@ -10,6 +10,8 @@ import { PatternsScreen }  from './screens/PatternsScreen';
 import { ResearchScreen }  from './screens/ResearchScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
 import { TradeScreen }     from './screens/TradeScreen';
+import GuruRadar           from '../GuruRadar';
+import type { GcpStateInputs } from '@/lib/gcp-state-payload';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GoldState } from '@/lib/useGoldData';
@@ -66,6 +68,8 @@ interface MobileAppProps {
   planStructure:   StructureRead;
   planAnalysisCandle: Candle | null;
   gcpQuality:      GcpQuality;
+  // v14.0: shared coherence-field inputs for the Guru Radar scan.
+  aiStateInputs:   GcpStateInputs | null;
 }
 
 export default function MobileApp({
@@ -73,7 +77,7 @@ export default function MobileApp({
   timeframe, setTimeframe,
   aiState, aiEnabled, aiLastSuccess, aiLastError, aiLastErrorEnvelope = null, aiNextPollAt,
   aiIntervalSec, aiStatus, aiRunNow, planStructure, planAnalysisCandle,
-  gcpQuality,
+  gcpQuality, aiStateInputs,
 }: MobileAppProps) {
   const [page, setPage]       = useState<MobilePage>('dashboard');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -200,6 +204,13 @@ export default function MobileApp({
         <ResearchScreen {...shared}
           series={baseSeries}
           patterns={displayPatterns}
+        />
+      );
+      case 'radar': return (
+        <GuruRadar
+          aiStateInputs={aiStateInputs}
+          currentSymbol={symbol}
+          onPick={(s) => { setSymbol(s); setPage('trading'); }}
         />
       );
       case 'settings': return (

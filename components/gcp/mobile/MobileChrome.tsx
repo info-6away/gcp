@@ -14,7 +14,7 @@ import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 // Patterns and Settings still navigable but only via the top-right drawer.
 export type MobilePage =
   | 'dashboard' | 'chart' | 'guru' | 'research' | 'trading'
-  | 'pattern' | 'settings';
+  | 'pattern' | 'radar' | 'settings';
 // v13.7: Guru removed from bottom nav. Trade is now the primary
 // Guru-powered execution surface and takes the center-hero slot;
 // Patterns fills the freed side slot so we keep 5 visible items.
@@ -107,11 +107,15 @@ export function SymbolBar({
     XAUUSD: ['XAUUSD', 'GOLD · SPOT'],
     BTC:    ['BTC',    'BITCOIN'],
     XAGUSD: ['XAGUSD', 'SILVER · SPOT'],
+    EURUSD: ['EURUSD', 'EUR · USD'],
+    USDJPY: ['USDJPY', 'USD · JPY'],
   };
   const [sym, sub] = labels[symbol];
   const formatPrice = (p: number) =>
     symbol === 'BTC' ? `$${Math.round(p).toLocaleString()}`
     : symbol === 'XAGUSD' ? `$${p.toFixed(3)}`
+    : symbol === 'EURUSD' ? p.toFixed(4)
+    : symbol === 'USDJPY' ? p.toFixed(2)
     : `$${p.toFixed(2)}`;
 
   return (
