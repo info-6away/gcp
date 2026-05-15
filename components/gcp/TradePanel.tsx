@@ -72,6 +72,12 @@ import {
 import { useViewMode, type ViewMode } from '@/lib/viewMode';
 import { deriveDirectionalEdge } from '@/lib/directionalEdge';
 import { deriveActionState } from '@/lib/actionState';
+import {
+  derivePriceStructureConfirmation,
+  type PriceStructureRead,
+} from '@/lib/priceStructureConfirmation';
+import { tdTimeSeries, type Candle } from '@/lib/fetchCandles';
+import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 import { deriveThesisStability } from '@/lib/thesisStability';
 import type { AiStatus } from '@/lib/useGcpState';
 import {
@@ -1738,25 +1744,35 @@ function AskGuruButton({
   );
 }
 
-// ── ACTION STATE banner — v13.9.0 escalation ladder.
-//
-// Replaces the v13.7 EntryStatusBanner. The prior banner collapsed
-// nearly every read to BLOCKED, which made the terminal feel
-// permanently passive. The new ladder lets favorable environments
-// visibly escalate: BLOCKED → WATCH → READY → GO. GO is intentionally
-// rare — the rarity is the value.
-//
-// Pure presentation — deriveActionState is the decision authority.
+// ── ACTION STATE banner — v13.9.1 escalation ladder + price
+// structure confirmation. deriveActionState is the decision authority;
+// this is presentation only. GO is gated by nine checks (one being
+// the new price-structure layer) so favorable environments can
+// escalate without GO becoming common.
 
 function ActionStateBanner({
-  aiState, hasOpenPosition, history,
+  aiState, hasOpenPosition, history, priceStructure,
 }: {
   aiState:         GcpStateResponse | null;
   hasOpenPosition: boolean;
   history:         AiStateHistoryRecord[];
+  priceStructure:  PriceStructureRead | null;
 }) {
-  const action = deriveActionState({ aiState, hasOpenPosition, history });
-  const isGo = action.state === 'GO';
+  const action = deriveActionState({
+    aiState,
+    hasOpenPosition,
+    history,
+    priceStructure,
+  });
+  const isGo = action.actionState === 'GO';
+  // Confirmations / blockers are split into two columns for GO and
+  // READY (the only rungs where the user benefits from seeing what
+  // tipped vs. what's left). MANAGE keeps it minimal; BLOCKED / WATCH
+  // / EXIT show blockers only.
+  const showConfirmations =
+    isGo || action.actionState === 'READY' || action.actionState === 'MANAGE';
+  const showBlockers =
+    !isGo && action.actionState !== 'MANAGE' && action.blockers.length > 0;
   return (
     <div style={{
       background: 'var(--bg-1)',
@@ -1779,7 +1795,7 @@ function ActionStateBanner({
           [data-action-banner="GO"] { animation: none !important; }
         }
       `}</style>
-      <div data-action-banner={action.state}
+      <div data-action-banner={action.actionState}
            style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{
           fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
@@ -1791,37 +1807,60 @@ function ActionStateBanner({
           fontSize: 24, fontWeight: 800, letterSpacing: '0.06em',
           color: action.color, lineHeight: 1.1,
         }}>
-          {action.state}
+          {action.actionState}
+        </span>
+        <span style={{
+          fontSize: 10, color: 'var(--fg-3)', letterSpacing: '0.04em',
+          fontFamily: 'var(--font-mono)', marginTop: 2,
+        }}>
+          {action.label}
         </span>
       </div>
       <div style={{
         flex: 1, minWidth: 0,
-        display: 'flex', flexDirection: 'column', gap: 4,
+        display: 'flex', flexDirection: 'column', gap: 6,
       }}>
         <span style={{
           fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.45,
         }}>
-          {action.headline}
+          <span style={{
+            color: 'var(--fg-4)', letterSpacing: '0.04em',
+            fontFamily: 'var(--font-mono)',
+          }}>Reason · </span>
+          {action.reason}
         </span>
-        {action.description && (
+        {isGo && (
           <span style={{
             fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.4,
-            letterSpacing: '0.02em',
+            letterSpacing: '0.02em', fontStyle: 'italic',
           }}>
-            {action.description}
+            Respect invalidation. No certainty implied — Guru read.
           </span>
         )}
-        {action.bullets && action.bullets.length > 0 && (
+        {showConfirmations && action.confirmations.length > 0 && (
           <div style={{
-            display: 'flex', flexWrap: 'wrap', gap: 10,
-            marginTop: 2,
+            display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2,
           }}>
-            {action.bullets.map((b, i) => (
+            {action.confirmations.slice(0, 6).map((c, i) => (
               <span key={i} style={{
                 fontSize: 10, color: action.color,
-                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
               }}>
-                ✓ {b}
+                ✓ {c}
+              </span>
+            ))}
+          </div>
+        )}
+        {showBlockers && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2,
+          }}>
+            {action.blockers.slice(0, 4).map((b, i) => (
+              <span key={i} style={{
+                fontSize: 10, color: 'var(--fg-3)',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+              }}>
+                · {b}
               </span>
             ))}
           </div>
@@ -2204,6 +2243,39 @@ function TradePanelImpl({
     [records, symbol],
   );
 
+  // v13.9.1: slim candle window for the price-structure confirmation
+  // layer. The Trade page doesn't otherwise consume candles (the
+  // ChartView owns its own fetch loop), but the ACTION STATE banner
+  // needs a recent OHLC window to decide whether price structure
+  // confirms the engine's direction. Fetch 60 bars at the analysis
+  // timeframe; refresh when the analysis cycle reports a new success
+  // (every aiLastSuccess change) so this rides the same cadence as
+  // the engine reads. Errors degrade silently — priceStructure stays
+  // null and the GO gate treats absence as a soft pass.
+  const [priceStructure, setPriceStructure] = useState<PriceStructureRead | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const candles: Candle[] = await tdTimeSeries({
+          symbol,
+          tf:         AI_ANALYSIS_TF,
+          outputsize: 60,
+          signal:     controller.signal,
+        });
+        if (cancelled) return;
+        setPriceStructure(derivePriceStructureConfirmation(candles));
+      } catch {
+        if (!cancelled) setPriceStructure(null);
+      }
+    })();
+    return () => { cancelled = true; controller.abort(); };
+    // aiLastSuccess in dep array makes a fresh classification re-pull
+    // candles so the structure read tracks the same time window the
+    // user just acted on. Mounting / symbol change also re-fetches.
+  }, [symbol, aiLastSuccess]);
+
   // Cross-tab sync.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -2403,6 +2475,7 @@ function TradePanelImpl({
           aiState={aiState}
           hasOpenPosition={!!acct.open}
           history={symbolRecords}
+          priceStructure={priceStructure}
         />
 
         {/* v13.7: Decision strip — Directional Edge + Thesis Stability.

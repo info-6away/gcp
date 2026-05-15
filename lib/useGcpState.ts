@@ -956,12 +956,18 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
             // so Guru history can render BLOCKED → WATCH → READY → GO
             // transitions. MANAGE / EXIT are live-only and never
             // persisted into history.
+            //
+            // v13.9.1: priceStructure is intentionally omitted here.
+            // useGcpState has no candle stream; absent priceStructure
+            // soft-passes the GO price-confirmation check, which is
+            // the right behavior for history (we don't have the
+            // candle context the live banner has).
             actionState: (() => {
               const a = deriveActionState({
                 aiState:          finalResp,
                 hasOpenPosition:  false,
                 history:          loadAiStateHistory(),
-              }).state;
+              }).actionState;
               return a === 'BLOCKED' || a === 'WATCH'
                   || a === 'READY'   || a === 'GO'
                 ? a : undefined;
