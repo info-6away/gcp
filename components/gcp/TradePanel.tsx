@@ -72,6 +72,7 @@ import {
 import { useViewMode, type ViewMode } from '@/lib/viewMode';
 import { deriveDirectionalEdge } from '@/lib/directionalEdge';
 import { deriveActionState } from '@/lib/actionState';
+import { getRadarResult, clearRadarResult } from '@/lib/radarResultStore';
 import {
   derivePriceStructureConfirmation,
   type PriceStructureRead,
@@ -862,13 +863,29 @@ function NextChip({
 // interpretation · gold confirmation/divergence · invalidators ·
 // execution warning. Anchors the whole module.
 
+// v14.0.1: relative age for the RADAR READ badge. Recomputed on each
+// render — TradePanel ticks frequently (price refresh) so the label
+// stays current without a dedicated timer.
+function radarScanAge(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
+}
+
 function ThesisHero({
   aiState, regime, netVariance, goldTrend,
+  hydratedFromRadar = false, radarScannedAt = null,
 }: {
   aiState:     GcpStateResponse | null;
   regime:      string | null;
   netVariance: number | null;
   goldTrend:   'up' | 'down' | 'sideways' | 'unknown';
+  // v14.0.1: true when this read was hydrated from a Radar scan
+  // rather than a live Ask Guru classification.
+  hydratedFromRadar?: boolean;
+  radarScannedAt?:    number | null;
 }) {
   const accent  = aiState ? stateColor(aiState) : 'var(--fg-3)';
   const conf    = aiState ? Math.round(aiState.confidence * 100) : null;
@@ -911,10 +928,35 @@ function ThesisHero({
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
       <div style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
       }}>
-        GURU EXECUTION THESIS
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontFamily: 'var(--font-mono)', fontWeight: 600,
+        }}>
+          GURU EXECUTION THESIS
+        </span>
+        {/* v14.0.1: RADAR READ badge — tells the user this thesis was
+            hydrated from a Radar scan, not a live re-query. Clears the
+            moment a live Ask Guru classification supersedes it. */}
+        {hydratedFromRadar && (
+          <span style={{
+            fontSize: 8, fontWeight: 700, letterSpacing: '0.12em',
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--cyan)',
+            border: '1px solid rgba(77,217,232,0.45)',
+            background: 'rgba(77,217,232,0.10)',
+            borderRadius: 2, padding: '2px 6px',
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+          }}>
+            RADAR READ
+            {radarScannedAt != null && (
+              <span style={{ color: 'var(--fg-3)', fontWeight: 500 }}>
+                · hydrated from scan {radarScanAge(radarScannedAt)}
+              </span>
+            )}
+          </span>
+        )}
       </div>
 
       {/* state · phase headline */}
@@ -2206,10 +2248,28 @@ function SectionShell({
 
 function TradePanelImpl({
   symbol, timeframe, currentPrice,
-  aiState, posture, latestPattern, tradePlan, regime, netVariance,
+  aiState: aiStateLive, posture, latestPattern, tradePlan, regime, netVariance,
   goldTrend = 'unknown',
   aiRunNow, aiStatus = 'idle', aiLastSuccess = null, aiEnabled = true,
 }: Props) {
+  // v14.0.1: Radar → Trade hydration. When there's no LIVE read for
+  // this symbol but Radar scanned it earlier this session, hydrate
+  // the whole Trade surface from the cached scan result. The user
+  // continues analysis from the discovery instead of re-classifying
+  // from zero. A live classification (Ask Guru) always supersedes —
+  // `aiStateLive ?? …` precedence guarantees that, and the stale
+  // cache entry is dropped once a live read lands.
+  const radarResult = useMemo(
+    () => (aiStateLive ? undefined : getRadarResult(symbol)),
+    [aiStateLive, symbol],
+  );
+  const hydratedFromRadar = !aiStateLive && !!radarResult?.aiState;
+  const aiState: GcpStateResponse | null =
+    aiStateLive ?? radarResult?.aiState ?? null;
+  useEffect(() => {
+    if (aiStateLive) clearRadarResult(symbol);
+  }, [aiStateLive, symbol]);
+
   const [acct, setAcct]                 = useState<DemoAccount>(() => loadDemoAccount());
   const [side, setSide]                 = useState<Side>('long');
   const [size, setSize]                 = useState<number>(DEFAULT_NOTIONAL);
@@ -2451,6 +2511,8 @@ function TradePanelImpl({
             regime={regime}
             netVariance={netVariance}
             goldTrend={goldTrend}
+            hydratedFromRadar={hydratedFromRadar}
+            radarScannedAt={radarResult?.scannedAt ?? null}
           />
           {showAnalyst && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

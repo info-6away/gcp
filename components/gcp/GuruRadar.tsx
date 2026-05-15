@@ -18,6 +18,7 @@ import { RADAR_SYMBOLS } from '@/lib/radarSymbols';
 import {
   scanRadar, type RadarResult, type RadarScanProgress,
 } from '@/lib/radarScan';
+import { setRadarResult } from '@/lib/radarResultStore';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -139,7 +140,12 @@ export default function GuruRadar({
       await scanRadar(
         aiStateInputs,
         (p) => setProgress(p),
-        (r) => setResults(prev => [...prev, r]),
+        (r) => {
+          setResults(prev => [...prev, r]);
+          // v14.0.1: cache each result so opening it in Trade
+          // hydrates instantly instead of showing NO READ YET.
+          setRadarResult(r.symbol, r);
+        },
       );
     } finally {
       setScanning(false);
