@@ -23,8 +23,23 @@ const CONFIDENCE_DELTA = 0.05;
 
 export function useStableAiState(
   raw: GcpStateResponse | null,
+  symbol?: string,
 ): GcpStateResponse | null {
   const stableRef = useRef<GcpStateResponse | null>(null);
+  const symbolRef = useRef<string | undefined>(symbol);
+
+  // v14.0.1: symbol changed. The prior stable state belongs to a
+  // DIFFERENT market — keeping it would render one symbol's
+  // classification under another's name across the whole app, and it
+  // also defeats the Radar → Trade hydration (which needs a clean
+  // null to engage). `raw` on this render is still the OLD symbol's
+  // value (useGcpState clears it one render later, in an effect), so
+  // we ignore `raw` here and reset to null.
+  if (symbol !== symbolRef.current) {
+    symbolRef.current = symbol;
+    stableRef.current = null;
+    return null;
+  }
 
   // Engine error path — useGcpState already preserves prior state on
   // failure, but a fresh mount before any success starts at null. Hold

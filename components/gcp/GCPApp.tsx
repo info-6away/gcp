@@ -352,7 +352,7 @@ export default function GCPApp() {
   // the header badge + Dashboard card so it becomes the primary
   // interpretation layer.
   const aiState     = useGcpState(aiStateInputs);
-  const stableState = useStableAiState(aiState.state);
+  const stableState = useStableAiState(aiState.state, symbol);
 
   // v13.1: planCandles / planStructure now hoisted above aiStateInputs
   // (search for "hoisted above aiStateInputs"). Re-using the same

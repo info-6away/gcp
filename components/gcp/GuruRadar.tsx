@@ -241,7 +241,7 @@ export default function GuruRadar({
               fontSize: 10, color: 'var(--fg-3)',
               fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
             }}>
-              Scanning {Math.min(scannedCount + 1, total)}/{total}
+              Scanning {progress ? progress.index + 1 : 1}/{total}
               {progress ? ` · ${getSymbolMeta(progress.symbol).id}` : ''}
             </span>
             <div style={{
