@@ -250,7 +250,14 @@ export function BottomNav({
 
   return (
     <div style={{
-      height: 78, display: 'flex', alignItems: 'flex-start', paddingTop: 10,
+      // v14.1: bottom safe-area inset. The nav keeps its 78px usable
+      // height and extends its own background into the home-indicator
+      // / gesture-bar inset below — so there's no off-colour strip and
+      // no nav content sitting under the gesture bar. env() is 0 on
+      // devices without an inset, so the nav stays exactly 78px there.
+      height: 'calc(78px + env(safe-area-inset-bottom))',
+      paddingBottom: 'env(safe-area-inset-bottom)',
+      display: 'flex', alignItems: 'flex-start', paddingTop: 10,
       background: C.bg1,
       borderTop: `1px solid ${C.cyan}33`,
       flexShrink: 0,

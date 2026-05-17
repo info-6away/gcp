@@ -240,6 +240,12 @@ export default function MobileApp({
       fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
       background: '#07080a',
       position: 'relative',
+      // v14.1: top safe-area inset — pushes all screen chrome below
+      // the notch / Dynamic Island in standalone PWA mode. Applied
+      // once at the root so every screen (incl. Radar, which has no
+      // MobileStatus bar) clears the inset uniformly. env() resolves
+      // to 0 on non-notched devices, so this is inert on desktop.
+      paddingTop: 'env(safe-area-inset-top)',
     }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {screen}
@@ -254,11 +260,19 @@ export default function MobileApp({
         onClick={openMenu}
         aria-label="Open menu"
         style={{
-          position: 'absolute', top: 8, right: 10, zIndex: 50,
+          // v14.1: offset below the safe-area inset so the button
+          // never lands under the notch / Dynamic Island. Absolute
+          // offsets measure from the padding edge, so the root's
+          // paddingTop is not inherited here — add it explicitly.
+          position: 'absolute',
+          top: 'calc(8px + env(safe-area-inset-top))',
+          right: 10, zIndex: 50,
           background: 'rgba(13,15,18,0.85)',
           border: '1px solid #1c2026',
           color: '#aeb4bf',
-          padding: '4px 7px',
+          // v14.1: 44×44 touch target (was 4×7 padding ≈ 26px).
+          minWidth: 44, minHeight: 44,
+          padding: 0,
           borderRadius: 4,
           cursor: 'pointer',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

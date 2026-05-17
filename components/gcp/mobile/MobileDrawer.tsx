@@ -87,7 +87,10 @@ export function MobileDrawer({
         }}
       >
         <div style={{
-          padding: '14px 16px',
+          // v14.1: top safe-area inset — the drawer is a fixed
+          // top:0 panel, so its own header must clear the notch.
+          paddingTop: 'calc(14px + env(safe-area-inset-top))',
+          paddingLeft: 16, paddingRight: 16, paddingBottom: 14,
           borderBottom: `1px solid ${C.line1}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
@@ -99,14 +102,21 @@ export function MobileDrawer({
             aria-label="Close menu"
             style={{
               background: 'transparent', border: `1px solid ${C.line2}`,
-              color: C.fg2, fontSize: 11, padding: '2px 8px',
+              color: C.fg2, fontSize: 11,
+              minWidth: 44, minHeight: 36, padding: '0 10px',
               borderRadius: 3, cursor: 'pointer',
               fontFamily: 'inherit',
             }}
           >ESC</button>
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+        {/* v14.1: bottom safe-area inset on the scroll list so the
+            last menu row clears the home indicator. */}
+        <div style={{
+          flex: 1, overflowY: 'auto',
+          padding: '8px 0',
+          paddingBottom: 'calc(8px + env(safe-area-inset-bottom))',
+        }}>
           {/* Pages moved out of the bottom nav. */}
           <Section title="Pages">
             <NavRow label="Patterns" onClick={() => goto('pattern')} />
@@ -138,7 +148,8 @@ export function MobileDrawer({
                   key={tf}
                   onClick={() => setTimeframe(tf)}
                   style={{
-                    padding: '8px 0',
+                    // v14.1: 44px min touch target (was ~30px tall).
+                    minHeight: 44, padding: '8px 0',
                     fontSize: 11, letterSpacing: '0.08em',
                     fontFamily: 'inherit', fontWeight: 600,
                     background: tf === timeframe ? `${C.cyan}1f` : 'transparent',

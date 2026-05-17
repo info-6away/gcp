@@ -195,86 +195,102 @@ export default function GuruRadar({
           </span>
         </div>
 
-        {/* Action row — SCAN MARKETS button + meta */}
+        {/* v14.1: scan controls + progress + summary chips pinned as
+            a sticky toolbar. On a phone the result list can run long
+            (5 expandable cards) — keeping SCAN MARKETS and the chips
+            in reach avoids a scroll-to-top. Full-bleed background via
+            negative side margins so content scrolls cleanly beneath. */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+          position: 'sticky', top: 0, zIndex: 5,
+          background: 'var(--bg-0)',
+          marginLeft: -18, marginRight: -18,
+          paddingLeft: 18, paddingRight: 18,
+          paddingTop: 4, paddingBottom: 10,
+          borderBottom: '1px solid var(--line-1)',
+          display: 'flex', flexDirection: 'column', gap: 10,
         }}>
-          <button
-            onClick={handleScan}
-            disabled={scanning || !aiStateInputs}
-            style={{
-              padding: '10px 18px',
-              fontSize: 11, letterSpacing: '0.14em', fontWeight: 700,
-              fontFamily: 'var(--font-mono)',
-              background: scanning ? 'rgba(77,217,232,0.10)' : 'transparent',
-              border: `1px solid ${
-                scanning || !aiStateInputs ? 'var(--line-2)' : 'var(--cyan)'
-              }`,
-              color: scanning || !aiStateInputs ? 'var(--fg-3)' : 'var(--cyan)',
-              borderRadius: 4,
-              cursor: scanning || !aiStateInputs ? 'default' : 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'border-color 0.2s ease, color 0.2s ease',
-            }}
-          >
-            {scanning ? 'SCANNING…' : 'SCAN MARKETS'}
-          </button>
+          {/* Action row — SCAN MARKETS button + meta */}
           <div style={{
-            display: 'flex', flexDirection: 'column', gap: 1,
-            fontSize: 9, color: 'var(--fg-4)',
-            fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+            display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
           }}>
-            <span>manual only</span>
-            <span>{total} symbols</span>
+            <button
+              onClick={handleScan}
+              disabled={scanning || !aiStateInputs}
+              style={{
+                // v14.1: 44px min touch target.
+                minHeight: 44, padding: '10px 18px',
+                fontSize: 11, letterSpacing: '0.14em', fontWeight: 700,
+                fontFamily: 'var(--font-mono)',
+                background: scanning ? 'rgba(77,217,232,0.10)' : 'transparent',
+                border: `1px solid ${
+                  scanning || !aiStateInputs ? 'var(--line-2)' : 'var(--cyan)'
+                }`,
+                color: scanning || !aiStateInputs ? 'var(--fg-3)' : 'var(--cyan)',
+                borderRadius: 4,
+                cursor: scanning || !aiStateInputs ? 'default' : 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'border-color 0.2s ease, color 0.2s ease',
+              }}
+            >
+              {scanning ? 'SCANNING…' : 'SCAN MARKETS'}
+            </button>
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 1,
+              fontSize: 9, color: 'var(--fg-4)',
+              fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+            }}>
+              <span>manual only</span>
+              <span>{total} symbols</span>
+            </div>
+            {!aiStateInputs && (
+              <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
+                Coherence field not ready — wait for the GCP feed.
+              </span>
+            )}
           </div>
-          {!aiStateInputs && (
-            <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-              Coherence field not ready — wait for the GCP feed.
-            </span>
+
+          {/* Progress bar — only while scanning */}
+          {scanning && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{
+                fontSize: 10, color: 'var(--fg-3)',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+              }}>
+                Scanning {progress ? progress.index + 1 : 1}/{total}
+                {progress ? ` · ${getSymbolMeta(progress.symbol).id}` : ''}
+              </span>
+              <div style={{
+                height: 4, borderRadius: 2, overflow: 'hidden',
+                background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+              }}>
+                <div style={{
+                  width: `${(scannedCount / total) * 100}%`, height: '100%',
+                  background: 'var(--cyan)', transition: 'width 0.3s ease',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* Summary chips */}
+          {results.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {(['GO', 'READY', 'WATCH', 'BLOCKED', 'MANAGE', 'EXIT'] as ActionState[])
+                .filter(s => (counts[s] ?? 0) > 0)
+                .map(s => (
+                  <span key={s} style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: '0.12em',
+                    fontFamily: 'var(--font-mono)',
+                    color: ACTION_COLOR[s],
+                    border: `1px solid ${ACTION_COLOR[s]}55`,
+                    background: `${ACTION_COLOR[s]}11`,
+                    borderRadius: 3, padding: '3px 8px',
+                  }}>
+                    {s}: {counts[s]}
+                  </span>
+                ))}
+            </div>
           )}
         </div>
-
-        {/* Progress bar — only while scanning */}
-        {scanning && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{
-              fontSize: 10, color: 'var(--fg-3)',
-              fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
-            }}>
-              Scanning {progress ? progress.index + 1 : 1}/{total}
-              {progress ? ` · ${getSymbolMeta(progress.symbol).id}` : ''}
-            </span>
-            <div style={{
-              height: 4, borderRadius: 2, overflow: 'hidden',
-              background: 'var(--bg-2)', border: '1px solid var(--line-2)',
-            }}>
-              <div style={{
-                width: `${(scannedCount / total) * 100}%`, height: '100%',
-                background: 'var(--cyan)', transition: 'width 0.3s ease',
-              }} />
-            </div>
-          </div>
-        )}
-
-        {/* Summary chips */}
-        {results.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {(['GO', 'READY', 'WATCH', 'BLOCKED', 'MANAGE', 'EXIT'] as ActionState[])
-              .filter(s => (counts[s] ?? 0) > 0)
-              .map(s => (
-                <span key={s} style={{
-                  fontSize: 9, fontWeight: 700, letterSpacing: '0.12em',
-                  fontFamily: 'var(--font-mono)',
-                  color: ACTION_COLOR[s],
-                  border: `1px solid ${ACTION_COLOR[s]}55`,
-                  background: `${ACTION_COLOR[s]}11`,
-                  borderRadius: 3, padding: '3px 8px',
-                }}>
-                  {s}: {counts[s]}
-                </span>
-              ))}
-          </div>
-        )}
 
         {/* Empty state */}
         {results.length === 0 && !scanning && (
@@ -482,7 +498,7 @@ function RadarCard({
             onClick={(e) => { e.stopPropagation(); onOpenTrade(); }}
             style={{
               marginTop: 6,
-              padding: '7px 12px',
+              minHeight: 44, padding: '8px 12px',
               fontSize: 10, letterSpacing: '0.12em', fontWeight: 700,
               fontFamily: 'var(--font-mono)',
               background: 'transparent',
