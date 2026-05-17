@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
 
 // ── RSS sources ─────────────────────────────────────────────────────
+// v14.3.1: Reuters + AP public RSS endpoints were discontinued
+// (feeds.reuters.com / feeds.apnews.com no longer resolve). Replaced
+// with NPR World + two finance-focused feeds (CNBC, MarketWatch) —
+// better macro/markets coverage for a trading terminal.
 const FEEDS = [
-  { name: 'Reuters World',  url: 'https://feeds.reuters.com/reuters/worldNews' },
-  { name: 'AP Top News',    url: 'https://feeds.apnews.com/rss/apf-topnews' },
+  { name: 'BBC World',      url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
   { name: 'Al Jazeera',     url: 'https://www.aljazeera.com/xml/rss/all.xml' },
   { name: 'Guardian World', url: 'https://www.theguardian.com/world/rss' },
-  { name: 'BBC World',      url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
+  { name: 'NPR World',      url: 'https://feeds.npr.org/1004/rss.xml' },
+  { name: 'CNBC',           url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+  { name: 'MarketWatch',    url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories' },
 ];
 
 // ── Brave News Search ───────────────────────────────────────────────
@@ -135,29 +140,41 @@ function parseBraveResults(json: unknown): NewsItem[] {
 let braveCache:    { items: NewsItem[]; at: number } | null = null;
 let braveInflight: Promise<NewsItem[]> | null = null;
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+async function braveQuery(key: string, q: string): Promise<NewsItem[]> {
+  const url = `${BRAVE_ENDPOINT}?q=${encodeURIComponent(q)}`
+    + `&count=12&country=us&search_lang=en&freshness=pd`;
+  const headers = {
+    'Accept':               'application/json',
+    'Accept-Encoding':      'gzip',
+    'X-Subscription-Token': key,
+  };
+  let res = await fetch(url, { headers, signal: AbortSignal.timeout(7_000), cache: 'no-store' });
+  // One backoff retry on 429 — the free tier's 1 req/sec limiter can
+  // still trip on burst, even with the inter-query spacing below.
+  if (res.status === 429) {
+    await sleep(1_500);
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(7_000), cache: 'no-store' });
+  }
+  if (!res.ok) throw new Error(`brave ${res.status}`);
+  return parseBraveResults(await res.json());
+}
+
 async function fetchBraveOnce(key: string): Promise<NewsItem[]> {
-  const settled = await Promise.allSettled(
-    BRAVE_QUERIES.map(async q => {
-      const url = `${BRAVE_ENDPOINT}?q=${encodeURIComponent(q)}`
-        + `&count=12&country=us&search_lang=en&freshness=pd`;
-      const res = await fetch(url, {
-        headers: {
-          'Accept':                'application/json',
-          'Accept-Encoding':       'gzip',
-          'X-Subscription-Token':  key,
-        },
-        signal: AbortSignal.timeout(7_000),
-        cache:  'no-store',
-      });
-      if (!res.ok) throw new Error(`brave ${res.status}`);
-      return parseBraveResults(await res.json());
-    }),
-  );
+  // SEQUENTIAL, not parallel. Brave's free tier allows ~1 request per
+  // second — firing all queries concurrently makes every one but the
+  // first return 429. Space them ~1.2 s apart. This whole pass runs
+  // only on a cache miss (every 20 min), so the ~9 s cost is fine.
   const items: NewsItem[] = [];
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') items.push(...r.value);
-    else console.warn(`[news] Brave query "${BRAVE_QUERIES[i]}" failed:`, r.reason);
-  });
+  for (let i = 0; i < BRAVE_QUERIES.length; i++) {
+    if (i > 0) await sleep(1_200);
+    try {
+      items.push(...await braveQuery(key, BRAVE_QUERIES[i]));
+    } catch (e) {
+      console.warn(`[news] Brave query "${BRAVE_QUERIES[i]}" failed:`, e);
+    }
+  }
   return items;
 }
 
