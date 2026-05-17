@@ -331,6 +331,14 @@ function NewsRow({
           <span>{item.source}</span>
           <span>{fmtTime(item.publishedAt)} · {relAge(item.publishedAt)}</span>
           <span style={{ color: 'var(--fg-4)' }}>{CATEGORY_LABEL[category]}</span>
+          {/* v14.3: candidate source — RSS feed vs Brave search. */}
+          <span style={{
+            color: 'var(--fg-4)',
+            border: '1px solid var(--line-2)', borderRadius: 2,
+            padding: '0 4px', fontSize: 8, letterSpacing: '0.1em',
+          }}>
+            {(item.provider ?? 'rss').toUpperCase()}
+          </span>
         </div>
 
         {/* the two distinct reads */}

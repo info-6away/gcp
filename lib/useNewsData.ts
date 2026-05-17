@@ -10,6 +10,9 @@ export interface NewsItem {
   link:        string;
   regime:      string | null;
   nv:          number | null;
+  // v14.3: which candidate source supplied this headline (RSS feed
+  // vs Brave search). Optional so older shapes still validate.
+  provider?:   'rss' | 'brave';
 }
 
 interface RawNewsItem {
@@ -17,6 +20,7 @@ interface RawNewsItem {
   source:      string;
   publishedAt: number;
   link:        string;
+  provider?:   'rss' | 'brave';
 }
 
 function findRegimeAtTime(series: DataPoint[], ts: number): { regime: string; nv: number } | null {
