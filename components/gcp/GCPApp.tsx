@@ -29,6 +29,7 @@ import ChartView from './ChartView';
 import ResearchView from './ResearchView';
 import TradePanel from './TradePanel';
 import GuruRadar from './GuruRadar';
+import NewsView from './NewsView';
 import { derivePosture } from '@/lib/aiAction';
 import { deriveTradePlan } from '@/lib/tradePlan';
 import { useAiPlanMemory } from '@/lib/useAiPlanMemory';
@@ -432,6 +433,7 @@ export default function GCPApp() {
       if (e.key === 'r') setPage('research');
       if (e.key === 't') setPage('trading');
       if (e.key === 'a') setPage('radar');
+      if (e.key === 'n') setPage('news');
       if (e.key === 's') setPage('settings');
       if (e.key === ' ') { e.preventDefault(); setLive(l => !l); }
       if (e.key === 'ArrowLeft') setCursor(c => Math.max(0, c - 10));
@@ -659,6 +661,9 @@ export default function GCPApp() {
               currentSymbol={symbol}
               onPick={(s) => { setSymbol(s); setPage('trading'); }}
             />
+          )}
+          {page === 'news' && (
+            <NewsView series={baseSeries} patterns={displayPatterns} />
           )}
           {page === 'settings' && (
             <SettingsPanel

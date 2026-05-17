@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { C, regimeColor } from '../colors';
 import { MobileStatus, SymbolBar } from '../MobileChrome';
 import type { DataPoint, Pattern, MarketSymbol } from '@/types/gcp';
@@ -8,6 +8,7 @@ import { symbolEnvLabel } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import { useNewsData } from '@/lib/useNewsData';
+import { classifyNews, deriveNewsReactionScore } from '@/lib/newsAnalysis';
 import {
   directionArrow, stateColor, DEFAULT_INTERPRETATION,
 } from '@/lib/aiState';
@@ -41,6 +42,7 @@ export function DashboardScreen({
   aiState, aiEnabled, aiStatus = 'idle',
   aiRunNow, aiLastSuccess = null,
   planStructure, planAnalysisCandle = null,
+  onOpenNews,
 }: {
   series: DataPoint[]; patterns: Pattern[];
   liveNV: number | null; liveRegime: string | null; connected: boolean;
@@ -52,6 +54,8 @@ export function DashboardScreen({
   aiLastSuccess?: Date | null;
   planStructure?: StructureRead;
   planAnalysisCandle?: Candle | null;
+  // v14.2: opens the dedicated News tab from the summary card.
+  onOpenNews?:    () => void;
 }) {
   // v11.23.2: 'running' is the only status that should surface
   // analyzing copy. Manual mode rests in 'idle' until the user clicks.
@@ -63,6 +67,24 @@ export function DashboardScreen({
   const pss      = activePat ? pssOf(activePat) : 0;
 
   const { items: newsItems } = useNewsData(series);
+  // v14.2: compact news summary — full feed lives on the News tab.
+  const newsSummary = useMemo(() => {
+    let major = 0, reactions = 0;
+    let latest: typeof newsItems[number] | null = null;
+    for (const it of newsItems) {
+      if (classifyNews(it.title).importance === 'high') {
+        major += 1;
+        if (!latest || it.publishedAt > latest.publishedAt) latest = it;
+      }
+      const r = deriveNewsReactionScore({
+        newsTimestamp: it.publishedAt, gcpSeries: series, patterns: [],
+      });
+      if (r.label === 'moderate' || r.label === 'high' || r.label === 'extreme') {
+        reactions += 1;
+      }
+    }
+    return { total: newsItems.length, major, reactions, latest };
+  }, [newsItems, series]);
 
   const [showExplainer, setShowExplainer] = useState(false);
 
@@ -501,37 +523,41 @@ export function DashboardScreen({
           </div>
         )}
 
-        <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 6 }}>NEWS · COHERENCE TAGGED</div>
-        <div style={{ background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3 }}>
-          {newsItems.slice(0, 8).map((item, i, arr) => {
-            const tagColor = item.regime ? regimeColor(item.regime) : C.fg3;
-            return (
-              <div key={i} style={{
-                padding: '10px 12px',
-                borderBottom: i < arr.length - 1 ? `1px solid ${C.line0}` : 'none',
-                display: 'flex', gap: 10, alignItems: 'flex-start',
-              }}>
-                <div style={{ fontSize: 10, color: C.fg3, fontVariantNumeric: 'tabular-nums', minWidth: 36 }}>
-                  {new Date(item.publishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: C.fg1, lineHeight: 1.4 }}>
-                    {item.title.slice(0, 80)}{item.title.length > 80 ? '…' : ''}
-                    {item.regime && (
-                      <span style={{
-                        display: 'inline-block', padding: '1px 4px', borderRadius: 2,
-                        fontSize: 7, letterSpacing: '0.08em', marginLeft: 5, verticalAlign: 'middle',
-                        background: `${tagColor}22`, color: tagColor, border: `1px solid ${tagColor}44`,
-                      }}>
-                        {item.regime}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 8, color: C.fg4, marginTop: 2 }}>{item.source.toUpperCase()}</div>
-                </div>
-              </div>
-            );
-          })}
+        {/* v14.2: news summary — full feed moved to the News tab. */}
+        <div style={{ fontSize: 8, letterSpacing: '0.15em', color: C.fg3, marginBottom: 6 }}>NEWS / EVENTS</div>
+        <div style={{
+          background: C.bg1, border: `1px solid ${C.line1}`, borderRadius: 3,
+          padding: '12px', display: 'flex', flexDirection: 'column', gap: 8,
+        }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 11, color: C.fg2 }}>
+            <span><b style={{ color: C.fg0 }}>{newsSummary.major}</b> major</span>
+            <span><b style={{ color: C.fg0 }}>{newsSummary.total}</b> headlines</span>
+            <span>
+              <b style={{ color: newsSummary.reactions > 0 ? C.cyan : C.fg1 }}>
+                {newsSummary.reactions}
+              </b> coherence reaction{newsSummary.reactions === 1 ? '' : 's'}
+            </span>
+          </div>
+          {newsSummary.latest && (
+            <div style={{ fontSize: 10, color: C.fg3, lineHeight: 1.5 }}>
+              <span style={{ color: C.fg4 }}>Latest: </span>
+              {newsSummary.latest.title.slice(0, 84)}
+              {newsSummary.latest.title.length > 84 ? '…' : ''}
+            </div>
+          )}
+          <button
+            onClick={() => onOpenNews?.()}
+            style={{
+              alignSelf: 'flex-start',
+              minHeight: 40, padding: '8px 14px',
+              fontSize: 9, letterSpacing: '0.12em', fontWeight: 700,
+              fontFamily: 'inherit',
+              background: 'transparent', border: `1px solid ${C.cyan}`,
+              color: C.cyan, borderRadius: 3, cursor: 'pointer',
+            }}
+          >
+            OPEN NEWS →
+          </button>
         </div>
       </div>
       <AiStateExplainer

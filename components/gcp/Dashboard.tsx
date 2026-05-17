@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { DataPoint, Pattern, MarketSymbol, AppPage } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
@@ -9,6 +9,7 @@ import type { StructureRead } from '@/lib/priceStructure';
 import type { Candle } from '@/lib/fetchCandles';
 import { symbolEnvLabel, formatPrice } from '@/types/gcp';
 import { useNewsData, type NewsItem } from '@/lib/useNewsData';
+import { classifyNews, deriveNewsReactionScore } from '@/lib/newsAnalysis';
 import {
   DEFAULT_INTERPRETATION, directionArrow, stateColor,
 } from '@/lib/aiState';
@@ -67,27 +68,6 @@ function regimeOfPattern(p: Pattern, series: DataPoint[]): string | null {
 
 function barsOfPattern(p: Pattern): number {
   return p.end - p.start;
-}
-
-function RegimeTag({ regime }: { regime: string }) {
-  const meta = REGIME_META[regime];
-  if (!meta) return null;
-  return (
-    <span style={{
-      display: 'inline-block',
-      padding: '1px 5px',
-      borderRadius: 2,
-      fontSize: 7,
-      letterSpacing: '0.08em',
-      background: meta.bg,
-      color: meta.color,
-      marginLeft: 6,
-      verticalAlign: 'middle',
-      border: `1px solid ${meta.color}44`,
-    }}>
-      {REGIME_TAG_LABEL[regime]}
-    </span>
-  );
 }
 
 function NVSparkline({ series }: { series: DataPoint[] }) {
@@ -251,65 +231,97 @@ function PatternCard({
   );
 }
 
-function NewsRow({ item }: { item: NewsItem }) {
-  const date    = new Date(item.publishedAt);
-  const now     = new Date();
-  const yest    = new Date(now);
-  yest.setDate(yest.getDate() - 1);
-
-  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
-  const isToday     = sameDay(date, now);
-  const isYesterday = sameDay(date, yest);
-
-  const timeStr  = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const dayLabel = isToday ? '' : isYesterday ? 'YEST'
-    : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-
-  const titleColor =
-    item.regime === 'F' ? '#e24b4a' :
-    item.regime === 'D' || item.regime === 'E' ? '#d4a028' :
-    'var(--fg-1)';
+// v14.2: NEWS SUMMARY card. The full feed moved to the dedicated
+// News tab; the Dashboard keeps only a compact summary — counts,
+// the latest major headline, and an OPEN NEWS button.
+function NewsSummaryCard({
+  items, loading, series, onOpen,
+}: {
+  items:   NewsItem[];
+  loading: boolean;
+  series:  DataPoint[];
+  onOpen?: () => void;
+}) {
+  const summary = useMemo(() => {
+    let major = 0, reactions = 0;
+    let latestMajor: NewsItem | null = null;
+    for (const it of items) {
+      const { importance } = classifyNews(it.title);
+      if (importance === 'high') {
+        major += 1;
+        if (!latestMajor || it.publishedAt > latestMajor.publishedAt) {
+          latestMajor = it;
+        }
+      }
+      const r = deriveNewsReactionScore({
+        newsTimestamp: it.publishedAt,
+        gcpSeries:     series,
+        patterns:      [],
+      });
+      if (r.label === 'moderate' || r.label === 'high' || r.label === 'extreme') {
+        reactions += 1;
+      }
+    }
+    return { total: items.length, major, reactions, latestMajor };
+  }, [items, series]);
 
   return (
-    <a
-      href={item.link}
-      target="_blank"
-      rel="noopener noreferrer"
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '58px 1fr',
-        gap: 10,
-        padding: '9px 16px',
-        borderBottom: '1px solid var(--bg-0)',
-        textDecoration: 'none',
-      }}
-    >
-      <div style={{ paddingTop: 1 }}>
-        <div style={{
-          fontSize: 11,
-          color: 'var(--fg-2)',
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '0.02em',
-        }}>
-          {timeStr}
-        </div>
-        {dayLabel && (
-          <div style={{ fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.08em', marginTop: 1 }}>
-            {dayLabel}
+    <div style={{
+      flexShrink: 0, borderBottom: '1px solid var(--line-0)',
+      background: 'var(--bg-1)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{
+        fontSize: 8, letterSpacing: '0.14em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--fg-3)' }} />
+        NEWS / EVENTS
+      </div>
+
+      {loading && items.length === 0 ? (
+        <div style={{ fontSize: 10, color: 'var(--fg-4)' }}>Loading headlines…</div>
+      ) : (
+        <>
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 18,
+            fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+          }}>
+            <span><b style={{ color: 'var(--fg-0)' }}>{summary.major}</b> major events</span>
+            <span><b style={{ color: 'var(--fg-0)' }}>{summary.total}</b> total headlines</span>
+            <span>
+              <b style={{ color: summary.reactions > 0 ? 'var(--cyan)' : 'var(--fg-1)' }}>
+                {summary.reactions}
+              </b> coherence reaction{summary.reactions === 1 ? '' : 's'} detected
+            </span>
           </div>
-        )}
-      </div>
-      <div>
-        <div style={{ fontSize: 10, color: titleColor, lineHeight: 1.45, letterSpacing: '0.01em' }}>
-          {item.title}
-          {item.regime && <RegimeTag regime={item.regime} />}
-        </div>
-        <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2, letterSpacing: '0.06em' }}>
-          {item.source.toUpperCase()}
-          {item.nv != null && ` · NV ${item.nv}`}
-        </div>
-      </div>
-    </a>
+          {summary.latestMajor && (
+            <div style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+              <span style={{ color: 'var(--fg-4)' }}>Latest: </span>
+              {summary.latestMajor.title.length > 90
+                ? summary.latestMajor.title.slice(0, 89) + '…'
+                : summary.latestMajor.title}
+            </div>
+          )}
+        </>
+      )}
+
+      <button
+        onClick={() => onOpen?.()}
+        style={{
+          alignSelf: 'flex-start',
+          fontSize: 9, letterSpacing: '0.12em', fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          background: 'transparent',
+          border: '1px solid var(--cyan)', color: 'var(--cyan)',
+          borderRadius: 3, padding: '8px 14px', cursor: 'pointer',
+        }}
+      >
+        OPEN NEWS →
+      </button>
+    </div>
   );
 }
 
@@ -725,18 +737,9 @@ export default function Dashboard({
   // TS6133 if the linter ever flips on it.
   void planStructure; void planAnalysisCandle;
   void aiRunNow;       void aiStatus;       void aiLastSuccess;
+  // v14.2: news data feeds only the compact Dashboard summary now —
+  // the full feed lives on the dedicated News tab.
   const { items: newsItems, loading: newsLoading } = useNewsData(series);
-
-  const [nextRefresh, setNextRefresh] = useState(180);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setNextRefresh(s => (s <= 1 ? 180 : s - 1));
-    }, 1_000);
-    return () => clearInterval(id);
-  }, []);
-  const refreshLabel = nextRefresh >= 60
-    ? `${Math.floor(nextRefresh / 60)}m ${String(nextRefresh % 60).padStart(2, '0')}s`
-    : `${nextRefresh}s`;
 
   // v11.16: compact horizontal stat row used in the right column of the
   // primary-focus area. Replaces the bulky NV / Regime / PSS cards in
@@ -814,47 +817,17 @@ export default function Dashboard({
           <PatternCard patterns={patterns} series={series} flash={pssFlash} />
         </div>
 
-        {/* News feed (lower visual weight) */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-          <div style={{
-            padding: '6px 16px',
-            borderBottom: '1px solid var(--line-0)',
-            fontSize: 8, letterSpacing: '0.1em', color: 'var(--fg-4)',
-            display: 'flex', alignItems: 'center', gap: 8,
-            flexShrink: 0,
-          }}>
-            <div style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--fg-3)' }} />
-            GLOBAL EVENTS · COHERENCE-TAGGED
-            <span style={{ marginLeft: 'auto', color: 'var(--fg-4)' }}>
-              next refresh{' '}
-              <span style={{ color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
-                {refreshLabel}
-              </span>
-            </span>
-          </div>
+        {/* v14.2: News summary — the full feed moved to the News tab. */}
+        <NewsSummaryCard
+          items={newsItems}
+          loading={newsLoading}
+          series={series}
+          onOpen={() => onNav?.('news')}
+        />
 
-          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
-            {newsLoading && (
-              <div style={{
-                padding: 24, textAlign: 'center',
-                fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.08em',
-              }}>
-                LOADING FEED…
-              </div>
-            )}
-            {!newsLoading && newsItems.length === 0 && (
-              <div style={{
-                padding: 24, textAlign: 'center',
-                fontSize: 10, color: 'var(--fg-4)',
-              }}>
-                No recent items — feed may be temporarily unavailable
-              </div>
-            )}
-            {newsItems.map((item, i) => (
-              <NewsRow key={i} item={item} />
-            ))}
-          </div>
-        </div>
+        {/* Dashboard is a summary surface — remaining space is left
+            calm rather than packed with a scrolling feed. */}
+        <div style={{ flex: 1 }} />
       </div>
 
       <div style={{

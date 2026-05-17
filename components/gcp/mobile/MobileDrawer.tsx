@@ -121,6 +121,7 @@ export function MobileDrawer({
           <Section title="Pages">
             <NavRow label="Patterns" onClick={() => goto('pattern')} />
             <NavRow label="Radar"    onClick={() => goto('radar')} />
+            <NavRow label="News"     onClick={() => goto('news')} />
             <NavRow label="Settings" onClick={() => goto('settings')} />
           </Section>
 

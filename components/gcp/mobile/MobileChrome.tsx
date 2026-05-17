@@ -14,7 +14,7 @@ import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 // Patterns and Settings still navigable but only via the top-right drawer.
 export type MobilePage =
   | 'dashboard' | 'chart' | 'guru' | 'research' | 'trading'
-  | 'pattern' | 'radar' | 'settings';
+  | 'pattern' | 'radar' | 'news' | 'settings';
 // v13.7: Guru removed from bottom nav. Trade is now the primary
 // Guru-powered execution surface and takes the center-hero slot;
 // Patterns fills the freed side slot so we keep 5 visible items.

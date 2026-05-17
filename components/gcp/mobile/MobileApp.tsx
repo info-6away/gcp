@@ -11,6 +11,7 @@ import { ResearchScreen }  from './screens/ResearchScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
 import { TradeScreen }     from './screens/TradeScreen';
 import GuruRadar           from '../GuruRadar';
+import NewsView            from '../NewsView';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
 import type { DataPoint, Pattern, MarketSymbol, Timeframe } from '@/types/gcp';
 import type { GCPDataState } from '@/lib/useGCPData';
@@ -141,6 +142,7 @@ export default function MobileApp({
           aiLastSuccess={aiLastSuccess}
           planStructure={planStructure}
           planAnalysisCandle={planAnalysisCandle}
+          onOpenNews={() => setPage('news')}
         />
       );
       case 'guru': return (
@@ -212,6 +214,9 @@ export default function MobileApp({
           currentSymbol={symbol}
           onPick={(s) => { setSymbol(s); setPage('trading'); }}
         />
+      );
+      case 'news': return (
+        <NewsView series={baseSeries} patterns={displayPatterns} />
       );
       case 'settings': return (
         <SettingsScreen {...shared}
