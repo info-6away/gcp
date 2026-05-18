@@ -23,6 +23,9 @@ import {
   deriveFieldDispersion,
   type FieldDispersion, type DispersionLevel,
 } from '@/lib/fieldDispersion';
+import {
+  deriveSymbolIndividuality, type SymbolIndividuality,
+} from '@/lib/symbolIndividuality';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -175,6 +178,26 @@ export default function GuruRadar({
   // scan. Evidence only; touches no action thresholds.
   const dispersion = useMemo(() => deriveFieldDispersion(results), [results]);
 
+  // v14.5: symbol individuality audit — field-weight vs symbol-weight
+  // per asset, and the scan-wide field-dominance summary.
+  const dominance = useMemo(() => {
+    const inds = results
+      .filter(r => r.ok)
+      .map(r => ({ symbol: r.symbol, ind: deriveSymbolIndividuality(r) }))
+      .filter((x): x is { symbol: MarketSymbol; ind: SymbolIndividuality } =>
+        x.ind != null);
+    if (inds.length === 0) return null;
+    const avgField = Math.round(
+      inds.reduce((s, x) => s + x.ind.fieldWeight, 0) / inds.length);
+    const ranked = inds.slice()
+      .sort((a, b) => b.ind.individuality - a.ind.individuality);
+    return {
+      avgField,
+      highest: ranked[0],
+      lowest:  ranked[ranked.length - 1],
+    };
+  }, [results]);
+
   // Dev log once per completed scan.
   useEffect(() => {
     if (scanning || !dispersion) return;
@@ -186,8 +209,20 @@ export default function GuruRadar({
         action:    dispersion.dominantAction,
         diversity: dispersion.diversity,
       });
+      for (const r of results) {
+        if (!r.ok) continue;
+        const ind = deriveSymbolIndividuality(r);
+        if (!ind) continue;
+        console.log('[INDIVIDUALITY AUDIT]', r.symbol, {
+          field:         ind.fieldWeight,
+          symbol:        ind.symbolWeight,
+          verdict:       ind.verdict,
+          fieldDrivers:  ind.fieldDrivers,
+          symbolDrivers: ind.symbolDrivers,
+        });
+      }
     }
-  }, [scanning, dispersion]);
+  }, [scanning, dispersion, results]);
 
   const scannedCount = progress
     ? Math.min(progress.index + (progress.step === 'done' ? 1 : 0), progress.total)
@@ -326,8 +361,10 @@ export default function GuruRadar({
           </div>
         )}
 
-        {/* v14.4: FIELD DISPERSION — is the field unified or fragmented? */}
-        {dispersion && <FieldDispersionCard d={dispersion} />}
+        {/* v14.4: FIELD DISPERSION — is the field unified or fragmented?
+            v14.5: + FIELD DOMINANCE — how much of the read is shared
+            coherence vs each symbol's own price. */}
+        {dispersion && <FieldDispersionCard d={dispersion} dominance={dominance} />}
 
         {/* Result grid */}
         {sorted.length > 0 && (
@@ -371,7 +408,18 @@ const DISPERSION_COLOR: Record<DispersionLevel, string> = {
   extreme:  'var(--magenta)',
 };
 
-function FieldDispersionCard({ d }: { d: FieldDispersion }) {
+interface DominanceSummary {
+  avgField: number;
+  highest:  { symbol: MarketSymbol; ind: SymbolIndividuality };
+  lowest:   { symbol: MarketSymbol; ind: SymbolIndividuality };
+}
+
+function FieldDispersionCard({
+  d, dominance,
+}: {
+  d:          FieldDispersion;
+  dominance:  DominanceSummary | null;
+}) {
   const color = DISPERSION_COLOR[d.level];
   const levelLabel = d.level.replace('_', ' ').toUpperCase();
   return (
@@ -418,6 +466,44 @@ function FieldDispersionCard({ d }: { d: FieldDispersion }) {
       }}>
         diversity {d.diversity} · {Object.keys(d.stateCounts).length} distinct states
       </div>
+
+      {/* v14.5: FIELD DOMINANCE — shared-coherence vs symbol-price split. */}
+      {dominance && (
+        <div style={{
+          borderTop: '1px solid var(--line-1)',
+          paddingTop: 8, marginTop: 2,
+          display: 'flex', flexDirection: 'column', gap: 3,
+        }}>
+          <span style={{
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            FIELD DOMINANCE
+          </span>
+          <div style={{
+            fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+          }}>
+            Average field weight{' '}
+            <b style={{ color: 'var(--fg-0)' }}>{dominance.avgField}%</b>
+          </div>
+          <div style={{
+            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+          }}>
+            Highest individuality ·{' '}
+            <span style={{ color: 'var(--fg-1)' }}>
+              {getSymbolMeta(dominance.highest.symbol).id} {dominance.highest.ind.individuality}%
+            </span>
+          </div>
+          <div style={{
+            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+          }}>
+            Lowest individuality ·{' '}
+            <span style={{ color: 'var(--fg-1)' }}>
+              {getSymbolMeta(dominance.lowest.symbol).id} {dominance.lowest.ind.individuality}%
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -466,6 +552,8 @@ function RadarCard({
   const edge   = edgeLabel(result);
   const clarity = Math.round((ai.confidence ?? 0) * 100);
   const isGo   = action.actionState === 'GO';
+  // v14.5: shared-coherence vs symbol-price split for this asset.
+  const ind = deriveSymbolIndividuality(result);
 
   return (
     <div style={{
@@ -600,6 +688,53 @@ function RadarCard({
             <span style={{ color: 'var(--fg-4)' }}>Reason · </span>
             {action.reason}
           </div>
+
+          {/* v14.5: INDIVIDUALITY — shared field vs this symbol's price. */}
+          {ind && (
+            <div style={{
+              borderTop: '1px solid var(--line-1)',
+              paddingTop: 7, marginTop: 3,
+              display: 'flex', flexDirection: 'column', gap: 4,
+            }}>
+              <span style={{
+                fontSize: 8, letterSpacing: '0.16em', color: 'var(--fg-4)',
+                fontWeight: 600,
+              }}>
+                INDIVIDUALITY
+              </span>
+              <div style={{ display: 'flex', gap: 14, fontSize: 11 }}>
+                <span>FIELD <b style={{ color: 'var(--cyan)' }}>{ind.fieldWeight}%</b></span>
+                <span>PRICE <b style={{ color: 'var(--magenta)' }}>{ind.symbolWeight}%</b></span>
+              </div>
+              <div style={{
+                display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden',
+                background: 'var(--bg-2)',
+              }}>
+                <div style={{ width: `${ind.fieldWeight}%`,  background: 'var(--cyan)' }} />
+                <div style={{ width: `${ind.symbolWeight}%`, background: 'var(--magenta)' }} />
+              </div>
+              {ind.fieldDrivers.length > 0 && (
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.4 }}>
+                  <span style={{ color: 'var(--cyan)' }}>Field · </span>
+                  {ind.fieldDrivers.join(', ')}
+                </div>
+              )}
+              {ind.symbolDrivers.length > 0 && (
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.4 }}>
+                  <span style={{ color: 'var(--magenta)' }}>Price · </span>
+                  {ind.symbolDrivers.join(', ')}
+                </div>
+              )}
+              <div style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+                color: ind.verdict === 'field_dominant'  ? 'var(--cyan)'
+                     : ind.verdict === 'symbol_dominant' ? 'var(--magenta)'
+                     :                                     'var(--fg-2)',
+              }}>
+                VERDICT · {ind.verdict.replace('_', ' ').toUpperCase()}
+              </div>
+            </div>
+          )}
 
           {/* Open Trade — switches the active symbol + navigates */}
           <button
