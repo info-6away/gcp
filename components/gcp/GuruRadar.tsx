@@ -26,6 +26,7 @@ import {
 import {
   deriveSymbolIndividuality, type SymbolIndividuality,
 } from '@/lib/symbolIndividuality';
+import { deriveRadarReasoning } from '@/lib/radarReasoning';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -554,6 +555,11 @@ function RadarCard({
   const isGo   = action.actionState === 'GO';
   // v14.5: shared-coherence vs symbol-price split for this asset.
   const ind = deriveSymbolIndividuality(result);
+  // v14.6: reasoning layer — why this verdict.
+  const reasoning = deriveRadarReasoning(result);
+  const showConfirms =
+    action.actionState === 'GO' || action.actionState === 'READY'
+    || action.actionState === 'MANAGE';
 
   return (
     <div style={{
@@ -618,6 +624,18 @@ function RadarCard({
           {action.actionState}
         </div>
 
+        {/* v14.6: reasoning chips — why this verdict. Confirmations
+            for GO/READY/MANAGE, blockers for WATCH/BLOCKED/EXIT.
+            Muted, tiny — diagnostic, not dominant. */}
+        {reasoning && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {(showConfirms ? reasoning.confirmations : reasoning.blockers)
+              .map((c, i) => (
+                <ReasonLine key={i} ok={showConfirms} text={c} />
+              ))}
+          </div>
+        )}
+
         {/* Edge · clarity · structure strip */}
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 10,
@@ -653,6 +671,46 @@ function RadarCard({
           display: 'flex', flexDirection: 'column', gap: 5,
           fontSize: 10, fontFamily: 'var(--font-mono)',
         }}>
+          {/* v14.6: WHY THIS READ — the synthesis, shown first. */}
+          {reasoning && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 5,
+              paddingBottom: 8, marginBottom: 1,
+              borderBottom: '1px solid var(--line-1)',
+            }}>
+              <span style={{
+                fontSize: 8, letterSpacing: '0.16em', color: 'var(--fg-4)',
+                fontWeight: 600,
+              }}>
+                WHY THIS READ
+              </span>
+              {reasoning.confirmations.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {reasoning.confirmations.map((c, i) => (
+                    <ReasonLine key={i} ok text={c} />
+                  ))}
+                </div>
+              )}
+              {reasoning.blockers.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {reasoning.blockers.map((b, i) => (
+                    <ReasonLine key={i} ok={false} text={b} />
+                  ))}
+                </div>
+              )}
+              <div style={{
+                fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.5,
+                fontFamily: 'var(--font-sans, inherit)',
+              }}>
+                {reasoning.summary}
+              </div>
+              <div style={{
+                fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.04em',
+              }}>
+                {reasoning.confidenceReason}
+              </div>
+            </div>
+          )}
           <DetailRow label="State"      value={`${ai.stateCode} · ${ai.state}`} />
           <DetailRow label="Phase"      value={ai.phase} />
           <DetailRow
@@ -755,6 +813,23 @@ function RadarCard({
         </div>
       )}
     </div>
+  );
+}
+
+// v14.6: a single reasoning line — ✓ confirmation / ✗ blocker.
+// Deliberately muted: small text, the mark carries the only colour.
+function ReasonLine({ ok, text }: { ok: boolean; text: string }) {
+  return (
+    <span style={{
+      fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+      color: 'var(--fg-3)',
+      display: 'flex', gap: 5, alignItems: 'baseline',
+    }}>
+      <span style={{ color: ok ? 'var(--green)' : '#d4a028' }}>
+        {ok ? '✓' : '✗'}
+      </span>
+      {text}
+    </span>
   );
 }
 
