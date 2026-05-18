@@ -26,7 +26,14 @@ import {
 import {
   deriveSymbolIndividuality, type SymbolIndividuality,
 } from '@/lib/symbolIndividuality';
-import { deriveRadarReasoning } from '@/lib/radarReasoning';
+import {
+  deriveRadarReasoning,
+  type ReasonCue, REASON_CATEGORY_ORDER,
+} from '@/lib/radarReasoning';
+import { deriveRadarThesisSummary } from '@/lib/radarThesisSummary';
+import {
+  deriveFieldMood, type FieldMood, type FieldMoodSentiment,
+} from '@/lib/fieldMood';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -199,6 +206,20 @@ export default function GuruRadar({
     };
   }, [results]);
 
+  // v14.6.1: field mood — the "coherence weather" line for the scan.
+  const mood = useMemo<FieldMood | null>(() => {
+    const okCount = results.filter(r => r.ok).length;
+    if (okCount === 0) return null;
+    return deriveFieldMood({
+      ready:         counts.READY   ?? 0,
+      watch:         counts.WATCH   ?? 0,
+      blocked:       counts.BLOCKED ?? 0,
+      total:         okCount,
+      dispersion:    dispersion?.level ?? null,
+      dominantState: dispersion?.dominantState ?? null,
+    });
+  }, [results, counts, dispersion]);
+
   // Dev log once per completed scan.
   useEffect(() => {
     if (scanning || !dispersion) return;
@@ -365,7 +386,9 @@ export default function GuruRadar({
         {/* v14.4: FIELD DISPERSION — is the field unified or fragmented?
             v14.5: + FIELD DOMINANCE — how much of the read is shared
             coherence vs each symbol's own price. */}
-        {dispersion && <FieldDispersionCard d={dispersion} dominance={dominance} />}
+        {dispersion && (
+          <FieldDispersionCard d={dispersion} dominance={dominance} mood={mood} />
+        )}
 
         {/* Result grid */}
         {sorted.length > 0 && (
@@ -415,11 +438,20 @@ interface DominanceSummary {
   lowest:   { symbol: MarketSymbol; ind: SymbolIndividuality };
 }
 
+const MOOD_COLOR: Record<FieldMoodSentiment, string> = {
+  opportunity:  'var(--green)',
+  defensive:    '#c45a5a',
+  fragmented:   'var(--magenta)',
+  synchronized: 'var(--cyan)',
+  neutral:      'var(--fg-2)',
+};
+
 function FieldDispersionCard({
-  d, dominance,
+  d, dominance, mood,
 }: {
   d:          FieldDispersion;
   dominance:  DominanceSummary | null;
+  mood:       FieldMood | null;
 }) {
   const color = DISPERSION_COLOR[d.level];
   const levelLabel = d.level.replace('_', ' ').toUpperCase();
@@ -505,6 +537,31 @@ function FieldDispersionCard({
           </div>
         </div>
       )}
+
+      {/* v14.6.1: FIELD MOOD — the coherence-weather line for the scan. */}
+      {mood && (
+        <div style={{
+          borderTop: '1px solid var(--line-1)',
+          paddingTop: 8, marginTop: 2,
+          display: 'flex', flexDirection: 'column', gap: 3,
+        }}>
+          <span style={{
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            FIELD MOOD
+          </span>
+          <span style={{
+            fontSize: 13, fontWeight: 700, color: MOOD_COLOR[mood.sentiment],
+            letterSpacing: '0.02em',
+          }}>
+            {mood.title}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.4 }}>
+            {mood.description}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -557,6 +614,8 @@ function RadarCard({
   const ind = deriveSymbolIndividuality(result);
   // v14.6: reasoning layer — why this verdict.
   const reasoning = deriveRadarReasoning(result);
+  // v14.6.1: one-line thesis personality layer.
+  const thesis = deriveRadarThesisSummary(result);
   const showConfirms =
     action.actionState === 'GO' || action.actionState === 'READY'
     || action.actionState === 'MANAGE';
@@ -626,12 +685,13 @@ function RadarCard({
 
         {/* v14.6: reasoning chips — why this verdict. Confirmations
             for GO/READY/MANAGE, blockers for WATCH/BLOCKED/EXIT.
-            Muted, tiny — diagnostic, not dominant. */}
+            Muted, tiny — diagnostic, not dominant. Collapsed stays
+            flat (≤3 chips); grouping is an expanded-card affordance. */}
         {reasoning && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {(showConfirms ? reasoning.confirmations : reasoning.blockers)
               .map((c, i) => (
-                <ReasonLine key={i} ok={showConfirms} text={c} />
+                <ReasonLine key={i} ok={showConfirms} text={c.text} />
               ))}
           </div>
         )}
@@ -661,6 +721,18 @@ function RadarCard({
               : 'Δ field · diverges from field'}
           </div>
         )}
+
+        {/* v14.6.1: thesis summary — one-line personality layer so
+            ten cards stay scannable without parsing each diagnostic. */}
+        {thesis && (
+          <div style={{
+            marginTop: 1,
+            fontSize: 9, color: 'var(--fg-3)', lineHeight: 1.4,
+            fontStyle: 'italic',
+          }}>
+            {thesis}
+          </div>
+        )}
       </div>
 
       {/* Expansion */}
@@ -685,18 +757,10 @@ function RadarCard({
                 WHY THIS READ
               </span>
               {reasoning.confirmations.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {reasoning.confirmations.map((c, i) => (
-                    <ReasonLine key={i} ok text={c} />
-                  ))}
-                </div>
+                <ReasonGroup cues={reasoning.confirmations} ok />
               )}
               {reasoning.blockers.length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {reasoning.blockers.map((b, i) => (
-                    <ReasonLine key={i} ok={false} text={b} />
-                  ))}
-                </div>
+                <ReasonGroup cues={reasoning.blockers} ok={false} />
               )}
               <div style={{
                 fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.5,
@@ -830,6 +894,37 @@ function ReasonLine({ ok, text }: { ok: boolean; text: string }) {
       </span>
       {text}
     </span>
+  );
+}
+
+// v14.6.1: grouped reasoning. Single category → flat (density
+// preserved). Multiple → tiny grey category labels (RISK / STRUCTURE
+// / STATE …) so a long diagnostic list stays scannable.
+function ReasonGroup({ cues, ok }: { cues: ReasonCue[]; ok: boolean }) {
+  const cats = new Set(cues.map(c => c.category));
+  if (cats.size <= 1) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {cues.map((c, i) => <ReasonLine key={i} ok={ok} text={c.text} />)}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {REASON_CATEGORY_ORDER.filter(cat => cats.has(cat)).map(cat => (
+        <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <span style={{
+            fontSize: 7.5, letterSpacing: '0.14em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            {cat}
+          </span>
+          {cues.filter(c => c.category === cat).map((c, i) => (
+            <ReasonLine key={i} ok={ok} text={c.text} />
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
