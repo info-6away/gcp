@@ -100,6 +100,16 @@ const NEAR_ZERO_FLOOR: Record<string, number> = {
   'EUR/USD': 0.5,
   USDJPY:    50,     // USD/JPY floor (rough)
   'USD/JPY': 50,
+  ETH:       50,     // ETH has not been below $50 since 2017
+  'ETH/USD': 50,
+  GBPUSD:    0.5,
+  'GBP/USD': 0.5,
+  AUDUSD:    0.3,
+  'AUD/USD': 0.3,
+  USDCAD:    0.5,
+  'USD/CAD': 0.5,
+  USDCHF:    0.3,
+  'USD/CHF': 0.3,
 };
 
 export function nearZeroFloorFor(symbol: string | undefined): number {

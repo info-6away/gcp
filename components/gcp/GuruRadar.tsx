@@ -19,6 +19,10 @@ import {
   scanRadar, type RadarResult, type RadarScanProgress,
 } from '@/lib/radarScan';
 import { setRadarResult } from '@/lib/radarResultStore';
+import {
+  deriveFieldDispersion,
+  type FieldDispersion, type DispersionLevel,
+} from '@/lib/fieldDispersion';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -167,6 +171,24 @@ export default function GuruRadar({
     return c;
   }, [results]);
 
+  // v14.4: field dispersion — agreement vs fragmentation across the
+  // scan. Evidence only; touches no action thresholds.
+  const dispersion = useMemo(() => deriveFieldDispersion(results), [results]);
+
+  // Dev log once per completed scan.
+  useEffect(() => {
+    if (scanning || !dispersion) return;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[RADAR DISPERSION]', {
+        agreement: dispersion.agreementPct,
+        level:     dispersion.level,
+        dominant:  dispersion.dominantState,
+        action:    dispersion.dominantAction,
+        diversity: dispersion.diversity,
+      });
+    }
+  }, [scanning, dispersion]);
+
   const scannedCount = progress
     ? Math.min(progress.index + (progress.step === 'done' ? 1 : 0), progress.total)
     : results.length;
@@ -304,6 +326,9 @@ export default function GuruRadar({
           </div>
         )}
 
+        {/* v14.4: FIELD DISPERSION — is the field unified or fragmented? */}
+        {dispersion && <FieldDispersionCard d={dispersion} />}
+
         {/* Result grid */}
         {sorted.length > 0 && (
           <div style={{
@@ -323,6 +348,7 @@ export default function GuruRadar({
                 }
                 onOpenTrade={() => onPick(r.symbol)}
                 patternSeq={aiStateInputs?.patternStory?.seq ?? null}
+                dominantAction={dispersion?.dominantAction ?? null}
               />
             ))}
           </div>
@@ -332,18 +358,85 @@ export default function GuruRadar({
   );
 }
 
+// ── Field dispersion card ───────────────────────────────────────────
+
+// Dispersion has no good/bad valence — a very unified field could be
+// genuine synchronization OR over-anchoring. Colour is an intensity
+// ramp (cyan = unified, magenta = fragmented), not a verdict.
+const DISPERSION_COLOR: Record<DispersionLevel, string> = {
+  very_low: '#4dd9e8',
+  low:      '#4dd9e8',
+  moderate: '#d4a028',
+  high:     '#d4a028',
+  extreme:  'var(--magenta)',
+};
+
+function FieldDispersionCard({ d }: { d: FieldDispersion }) {
+  const color = DISPERSION_COLOR[d.level];
+  const levelLabel = d.level.replace('_', ' ').toUpperCase();
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: `1px solid ${color}55`,
+      borderLeft: `3px solid ${color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        FIELD DISPERSION
+      </span>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
+      }}>
+        <span style={{
+          fontSize: 22, fontWeight: 800, color, letterSpacing: '0.05em',
+        }}>
+          {levelLabel}
+        </span>
+        <span style={{
+          fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+        }}>
+          {d.agreeCount}/{d.total} symbols agree · {d.agreementPct}%
+        </span>
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+      }}>
+        <span style={{ color: 'var(--fg-4)' }}>Dominant · </span>
+        {d.dominantState} → <span style={{ color, fontWeight: 600 }}>{d.dominantAction}</span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5 }}>
+        {d.summary}
+      </div>
+      <div style={{
+        fontSize: 9, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.06em',
+      }}>
+        diversity {d.diversity} · {Object.keys(d.stateCounts).length} distinct states
+      </div>
+    </div>
+  );
+}
+
 // ── Result card ─────────────────────────────────────────────────────
 
 function RadarCard({
   result, now, isCurrent, expanded, onToggle, onOpenTrade, patternSeq,
+  dominantAction,
 }: {
-  result:      RadarResult;
-  now:         number;
-  isCurrent:   boolean;
-  expanded:    boolean;
-  onToggle:    () => void;
-  onOpenTrade: () => void;
-  patternSeq:  string[] | null;
+  result:         RadarResult;
+  now:            number;
+  isCurrent:      boolean;
+  expanded:       boolean;
+  onToggle:       () => void;
+  onOpenTrade:    () => void;
+  patternSeq:     string[] | null;
+  /** Most common action state across the scan, for the Δ field line. */
+  dominantAction: string | null;
 }) {
   const meta = getSymbolMeta(result.symbol);
 
@@ -447,6 +540,21 @@ function RadarCard({
           <span>{clarity}% clarity</span>
           <span>{structureLabel(result)}</span>
         </div>
+
+        {/* v14.4: Δ field — does this symbol agree with the dominant
+            field action, or diverge from it? Small, muted. */}
+        {dominantAction && (
+          <div style={{
+            fontSize: 8, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.04em',
+            color: action.actionState === dominantAction
+              ? 'var(--fg-4)' : 'var(--cyan)',
+          }}>
+            {action.actionState === dominantAction
+              ? 'Δ field · aligned with dominant field'
+              : 'Δ field · diverges from field'}
+          </div>
+        )}
       </div>
 
       {/* Expansion */}

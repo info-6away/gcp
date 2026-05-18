@@ -13,9 +13,14 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
   EURUSD: 'EUR/USD',
   USDJPY: 'USD/JPY',
+  ETH:    'ETH/USD',
+  GBPUSD: 'GBP/USD',
+  AUDUSD: 'AUD/USD',
+  USDCAD: 'USD/CAD',
+  USDCHF: 'USD/CHF',
 };
 
-// gold-api.com only serves metals/crypto. EUR / JPY entries here are
+// gold-api.com only serves metals/crypto. FX entries here are
 // placeholders — tryGoldApi will 404 for them and the polling loop
 // falls through to Twelve Data (which does support FX pairs).
 const GOLD_API_SYMBOLS: Record<MarketSymbol, string> = {
@@ -24,6 +29,11 @@ const GOLD_API_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG',
   EURUSD: 'EUR',
   USDJPY: 'JPY',
+  ETH:    'ETH',
+  GBPUSD: 'GBP',
+  AUDUSD: 'AUD',
+  USDCAD: 'CAD',
+  USDCHF: 'CHF',
 };
 
 export interface GoldState {

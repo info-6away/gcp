@@ -4,6 +4,7 @@ import * as React from 'react';
 import { MiniLogo } from './MiniLogo';
 import { C, regimeColor } from './colors';
 import type { MarketSymbol } from '@/types/gcp';
+import { getSymbolMeta } from '@/types/gcp';
 import type { GcpStateResponse } from '@/lib/engine-gcp';
 import type { AiStatus } from '@/lib/useGcpState';
 import AiStateBadge from '../AiStateBadge';
@@ -109,14 +110,22 @@ export function SymbolBar({
     XAGUSD: ['XAGUSD', 'SILVER · SPOT'],
     EURUSD: ['EURUSD', 'EUR · USD'],
     USDJPY: ['USDJPY', 'USD · JPY'],
+    ETH:    ['ETH',    'ETHEREUM'],
+    GBPUSD: ['GBPUSD', 'GBP · USD'],
+    AUDUSD: ['AUDUSD', 'AUD · USD'],
+    USDCAD: ['USDCAD', 'USD · CAD'],
+    USDCHF: ['USDCHF', 'USD · CHF'],
   };
   const [sym, sub] = labels[symbol];
-  const formatPrice = (p: number) =>
-    symbol === 'BTC' ? `$${Math.round(p).toLocaleString()}`
-    : symbol === 'XAGUSD' ? `$${p.toFixed(3)}`
-    : symbol === 'EURUSD' ? p.toFixed(4)
-    : symbol === 'USDJPY' ? p.toFixed(2)
-    : `$${p.toFixed(2)}`;
+  // v14.4: generic formatter off SymbolMeta decimals/prefix — scales
+  // to the full 10-symbol set without a per-symbol branch.
+  const formatPrice = (p: number) => {
+    const m = getSymbolMeta(symbol);
+    return m.prefix + p.toLocaleString('en-US', {
+      minimumFractionDigits: m.decimals,
+      maximumFractionDigits: m.decimals,
+    });
+  };
 
   return (
     <div

@@ -9,10 +9,18 @@
 
 import type { MarketSymbol } from '@/types/gcp';
 
+// v14.4: expanded 5 → 10. A wider universe is needed to tell true
+// field synchronization apart from a too-narrow asset set — see
+// lib/fieldDispersion.ts. Scan stays manual + sequential.
 export const RADAR_SYMBOLS: MarketSymbol[] = [
   'XAUUSD',
   'XAGUSD',
   'BTC',
+  'ETH',
   'EURUSD',
+  'GBPUSD',
   'USDJPY',
+  'AUDUSD',
+  'USDCAD',
+  'USDCHF',
 ];

@@ -29,6 +29,11 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAGUSD: 'XAG/USD',
   EURUSD: 'EUR/USD',
   USDJPY: 'USD/JPY',
+  ETH:    'ETH/USD',
+  GBPUSD: 'GBP/USD',
+  AUDUSD: 'AUD/USD',
+  USDCAD: 'USD/CAD',
+  USDCHF: 'USD/CHF',
 };
 
 type ChartTF = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';

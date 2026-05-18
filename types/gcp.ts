@@ -36,10 +36,14 @@ export function barDuration(bars: number, tf: Timeframe): string {
   return `${(mins / 1440).toFixed(1).replace('.0', '')}d`;
 }
 
-// v14.0: expanded from 3 → 5 to support the Guru Radar multi-asset
-// scanner. EURUSD / USDJPY are FX pairs; price magnitudes differ
-// sharply (EURUSD ~1.08, USDJPY ~150) so decimals are tuned per pair.
-export type MarketSymbol = 'XAUUSD' | 'BTC' | 'XAGUSD' | 'EURUSD' | 'USDJPY';
+// v14.0: expanded 3 → 5 for the Guru Radar multi-asset scanner.
+// v14.4: expanded 5 → 10 — adds ETH + the remaining FX majors so the
+// Radar has a wide enough universe to tell true field synchronization
+// apart from a too-narrow asset set. All symbols are treated equally;
+// no special-cased logic. Decimals are tuned per price magnitude.
+export type MarketSymbol =
+  | 'XAUUSD' | 'XAGUSD' | 'BTC'    | 'ETH'
+  | 'EURUSD' | 'GBPUSD' | 'USDJPY' | 'AUDUSD' | 'USDCAD' | 'USDCHF';
 
 export interface SymbolMeta {
   id:          MarketSymbol;
@@ -91,6 +95,46 @@ export const SYMBOLS: SymbolMeta[] = [
     decimals:    2,
     color:       'oklch(0.74 0.13 25)',
   },
+  {
+    id:          'ETH',
+    label:       'Ethereum',
+    yahooTicker: 'ETH-USD',
+    prefix:      '$',
+    decimals:    2,
+    color:       'oklch(0.70 0.14 290)',
+  },
+  {
+    id:          'GBPUSD',
+    label:       'Pound / USD',
+    yahooTicker: 'GBPUSD=X',
+    prefix:      '',
+    decimals:    4,
+    color:       'oklch(0.72 0.13 160)',
+  },
+  {
+    id:          'AUDUSD',
+    label:       'Aussie / USD',
+    yahooTicker: 'AUDUSD=X',
+    prefix:      '',
+    decimals:    4,
+    color:       'oklch(0.78 0.14 95)',
+  },
+  {
+    id:          'USDCAD',
+    label:       'USD / Loonie',
+    yahooTicker: 'USDCAD=X',
+    prefix:      '',
+    decimals:    4,
+    color:       'oklch(0.70 0.15 35)',
+  },
+  {
+    id:          'USDCHF',
+    label:       'USD / Franc',
+    yahooTicker: 'USDCHF=X',
+    prefix:      '',
+    decimals:    4,
+    color:       'oklch(0.72 0.10 235)',
+  },
 ];
 
 export function getSymbolMeta(id: MarketSymbol): SymbolMeta {
@@ -107,6 +151,11 @@ const SYMBOL_ENV_LABEL: Record<MarketSymbol, string> = {
   XAGUSD: 'SILVER',
   EURUSD: 'EURUSD',
   USDJPY: 'USDJPY',
+  ETH:    'ETH',
+  GBPUSD: 'GBPUSD',
+  AUDUSD: 'AUDUSD',
+  USDCAD: 'USDCAD',
+  USDCHF: 'USDCHF',
 };
 
 export function symbolEnvLabel(id: MarketSymbol): string {
