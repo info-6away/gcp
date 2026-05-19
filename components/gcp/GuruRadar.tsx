@@ -34,6 +34,10 @@ import { deriveRadarThesisSummary } from '@/lib/radarThesisSummary';
 import {
   deriveFieldMood, type FieldMood, type FieldMoodSentiment,
 } from '@/lib/fieldMood';
+import {
+  deriveFieldDiagnosis,
+  type FieldDiagnosis, type DiagnosisSeverity,
+} from '@/lib/fieldDiagnosis';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -205,6 +209,10 @@ export default function GuruRadar({
       lowest:  ranked[ranked.length - 1],
     };
   }, [results]);
+
+  // v14.6.2: field diagnosis — repeated card-level blockers rolled
+  // up into one field-level story.
+  const diagnosis = useMemo(() => deriveFieldDiagnosis(results), [results]);
 
   // v14.6.1: field mood — the "coherence weather" line for the scan.
   const mood = useMemo<FieldMood | null>(() => {
@@ -387,7 +395,10 @@ export default function GuruRadar({
             v14.5: + FIELD DOMINANCE — how much of the read is shared
             coherence vs each symbol's own price. */}
         {dispersion && (
-          <FieldDispersionCard d={dispersion} dominance={dominance} mood={mood} />
+          <FieldDispersionCard
+            d={dispersion} dominance={dominance}
+            mood={mood} diagnosis={diagnosis}
+          />
         )}
 
         {/* Result grid */}
@@ -446,12 +457,20 @@ const MOOD_COLOR: Record<FieldMoodSentiment, string> = {
   neutral:      'var(--fg-2)',
 };
 
+const DIAGNOSIS_COLOR: Record<DiagnosisSeverity, string> = {
+  calm:    'var(--green)',
+  watch:   'var(--cyan)',
+  warning: '#d4a028',
+  risk:    '#c45a5a',
+};
+
 function FieldDispersionCard({
-  d, dominance, mood,
+  d, dominance, mood, diagnosis,
 }: {
   d:          FieldDispersion;
   dominance:  DominanceSummary | null;
   mood:       FieldMood | null;
+  diagnosis:  FieldDiagnosis | null;
 }) {
   const color = DISPERSION_COLOR[d.level];
   const levelLabel = d.level.replace('_', ' ').toUpperCase();
@@ -560,6 +579,49 @@ function FieldDispersionCard({
           <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.4 }}>
             {mood.description}
           </span>
+        </div>
+      )}
+
+      {/* v14.6.2: FIELD DIAGNOSIS — repeated card blockers as one
+          field-level story. Readable in under 3 seconds. */}
+      {diagnosis && (
+        <div style={{
+          borderTop: '1px solid var(--line-1)',
+          paddingTop: 8, marginTop: 2,
+          display: 'flex', flexDirection: 'column', gap: 4,
+        }}>
+          <span style={{
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            FIELD DIAGNOSIS
+          </span>
+          <span style={{
+            fontSize: 13, fontWeight: 700,
+            color: DIAGNOSIS_COLOR[diagnosis.severity],
+            letterSpacing: '0.02em',
+          }}>
+            {diagnosis.title}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45 }}>
+            {diagnosis.summary}
+          </span>
+          {diagnosis.bullets.length > 0 && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 2, marginTop: 1,
+            }}>
+              {diagnosis.bullets.map((b, i) => (
+                <span key={i} style={{
+                  fontSize: 9, color: 'var(--fg-3)',
+                  fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
+                  display: 'flex', gap: 5, alignItems: 'baseline',
+                }}>
+                  <span style={{ color: 'var(--fg-4)' }}>·</span>
+                  {b}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -880,7 +942,30 @@ function RadarCard({
   );
 }
 
-// v14.6: a single reasoning line — ✓ confirmation / ✗ blocker.
+// v14.6.2: marks are drawn as inline SVG, not text glyphs. The ✗
+// (U+2717) glyph is missing from IBM Plex Mono and was rendering as
+// a plain "X" via font fallback — an SVG check / cross always paints
+// crisply regardless of the font.
+function Mark({ ok }: { ok: boolean }) {
+  const color = ok ? 'var(--green)' : '#d4a028';
+  return (
+    <svg width={8} height={8} viewBox="0 0 10 10" aria-hidden="true"
+         style={{ flexShrink: 0, transform: 'translateY(1px)' }}>
+      {ok ? (
+        <path d="M1.8 5.4 L4.1 7.7 L8.2 2.6"
+          stroke={color} strokeWidth={1.7} fill="none"
+          strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <>
+          <path d="M2.4 2.4 L7.6 7.6" stroke={color} strokeWidth={1.7} strokeLinecap="round" />
+          <path d="M7.6 2.4 L2.4 7.6" stroke={color} strokeWidth={1.7} strokeLinecap="round" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+// A single reasoning line — check confirmation / cross blocker.
 // Deliberately muted: small text, the mark carries the only colour.
 function ReasonLine({ ok, text }: { ok: boolean; text: string }) {
   return (
@@ -889,9 +974,7 @@ function ReasonLine({ ok, text }: { ok: boolean; text: string }) {
       color: 'var(--fg-3)',
       display: 'flex', gap: 5, alignItems: 'baseline',
     }}>
-      <span style={{ color: ok ? 'var(--green)' : '#d4a028' }}>
-        {ok ? '✓' : '✗'}
-      </span>
+      <Mark ok={ok} />
       {text}
     </span>
   );
