@@ -38,6 +38,10 @@ import {
   deriveFieldDiagnosis,
   type FieldDiagnosis, type DiagnosisSeverity,
 } from '@/lib/fieldDiagnosis';
+import {
+  deriveSessionContext, deriveFieldParticipation,
+  type FieldParticipation, type LiquidityLevel,
+} from '@/lib/sessionContext';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -214,6 +218,13 @@ export default function GuruRadar({
   // up into one field-level story.
   const diagnosis = useMemo(() => deriveFieldDiagnosis(results), [results]);
 
+  // v14.7: market participation — which sessions are live right now.
+  // Time-derived, scan-independent; recomputes on the 20s tick.
+  const participation = useMemo(
+    () => deriveFieldParticipation(RADAR_SYMBOLS, now),
+    [now],
+  );
+
   // v14.6.1: field mood — the "coherence weather" line for the scan.
   const mood = useMemo<FieldMood | null>(() => {
     const okCount = results.filter(r => r.ok).length;
@@ -249,6 +260,11 @@ export default function GuruRadar({
           verdict:       ind.verdict,
           fieldDrivers:  ind.fieldDrivers,
           symbolDrivers: ind.symbolDrivers,
+        });
+        const sess = deriveSessionContext(r.symbol);
+        console.log('[RADAR SESSION]', r.symbol, {
+          session:   sess.sessionName,
+          liquidity: sess.liquidity,
         });
       }
     }
@@ -379,6 +395,11 @@ export default function GuruRadar({
           )}
         </div>
 
+        {/* v14.7: MARKET PARTICIPATION — time-derived, shown always
+            (even pre-scan) so the session context is visible before
+            reading any verdict. */}
+        <FieldParticipationCard p={participation} />
+
         {/* Empty state */}
         {results.length === 0 && !scanning && (
           <div style={{
@@ -426,6 +447,59 @@ export default function GuruRadar({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Market participation card ───────────────────────────────────────
+
+const LIQUIDITY_COLOR: Record<LiquidityLevel, string> = {
+  low:      '#c45a5a',
+  moderate: '#d4a028',
+  high:     'var(--green)',
+};
+
+// v14.7: time-derived session context — shown always so a 05:00 UTC
+// thin-market scan reads as such, not as a coherence failure.
+function FieldParticipationCard({ p }: { p: FieldParticipation }) {
+  const color = LIQUIDITY_COLOR[p.level];
+  const label = p.level === 'low' ? 'Low' : p.level === 'high' ? 'High' : 'Moderate';
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: `1px solid ${color}55`,
+      borderLeft: `3px solid ${color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 5,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        MARKET PARTICIPATION
+      </span>
+      <span style={{
+        fontSize: 18, fontWeight: 800, color, letterSpacing: '0.04em',
+      }}>
+        {label} liquidity
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {p.lines.map((line, i) => (
+          <span key={i} style={{
+            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.02em',
+          }}>
+            {line}
+          </span>
+        ))}
+      </div>
+      <span style={{
+        fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.04em',
+        fontStyle: 'italic',
+      }}>
+        Context only — not applied to any read.
+      </span>
     </div>
   );
 }
@@ -678,6 +752,8 @@ function RadarCard({
   const reasoning = deriveRadarReasoning(result);
   // v14.6.1: one-line thesis personality layer.
   const thesis = deriveRadarThesisSummary(result);
+  // v14.7: session context — display only, never affects the read.
+  const session = deriveSessionContext(result.symbol, now);
   const showConfirms =
     action.actionState === 'GO' || action.actionState === 'READY'
     || action.actionState === 'MANAGE';
@@ -783,6 +859,18 @@ function RadarCard({
               : 'Δ field · diverges from field'}
           </div>
         )}
+
+        {/* v14.7: session context — which trading session this symbol
+            is in and the liquidity estimate. Display only. */}
+        <div style={{
+          fontSize: 8, fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.04em', color: 'var(--fg-4)',
+        }}>
+          session · {session.sessionName} ·{' '}
+          <span style={{ color: LIQUIDITY_COLOR[session.liquidity] }}>
+            {session.liquidity} liquidity
+          </span>
+        </div>
 
         {/* v14.6.1: thesis summary — one-line personality layer so
             ten cards stay scannable without parsing each diagnostic. */}
