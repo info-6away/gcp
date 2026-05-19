@@ -19,10 +19,10 @@ import {
   scanRadar, type RadarResult, type RadarScanProgress,
 } from '@/lib/radarScan';
 import { setRadarResult } from '@/lib/radarResultStore';
-import {
-  deriveFieldDispersion,
-  type FieldDispersion, type DispersionLevel,
-} from '@/lib/fieldDispersion';
+// v15.1: the field-diagnostic derivations are still computed here and
+// passed to FieldAnalysisPanel; only the helpers + the two types
+// GuruRadar itself names are imported (the panel owns the rest).
+import { deriveFieldDispersion } from '@/lib/fieldDispersion';
 import {
   deriveSymbolIndividuality, type SymbolIndividuality,
 } from '@/lib/symbolIndividuality';
@@ -31,35 +31,27 @@ import {
   type ReasonCue, REASON_CATEGORY_ORDER,
 } from '@/lib/radarReasoning';
 import { deriveRadarThesisSummary } from '@/lib/radarThesisSummary';
-import {
-  deriveFieldMood, type FieldMood, type FieldMoodSentiment,
-} from '@/lib/fieldMood';
-import {
-  deriveFieldDiagnosis,
-  type FieldDiagnosis, type DiagnosisSeverity,
-} from '@/lib/fieldDiagnosis';
+import { deriveFieldMood, type FieldMood } from '@/lib/fieldMood';
+import { deriveFieldDiagnosis } from '@/lib/fieldDiagnosis';
 import {
   deriveSessionContext, deriveFieldParticipation,
-  type FieldParticipation, type LiquidityLevel,
+  type LiquidityLevel,
 } from '@/lib/sessionContext';
 import {
   loadFieldMemory, recordFieldScan, deriveFieldRecurrence,
   type FieldSignature, type FieldRecurrence,
 } from '@/lib/fieldMemory';
-import {
-  deriveActionLadderAudit, type ActionLadderAudit,
-} from '@/lib/actionLadderAudit';
+import { deriveActionLadderAudit } from '@/lib/actionLadderAudit';
 import {
   deriveOpportunityDistance, deriveOpportunityWeather,
-  type OpportunityWeather, type OpportunityStatus,
+  type OpportunityStatus,
 } from '@/lib/opportunityDistance';
 import {
   deriveFamilyParticipation, deriveFamilyDivergence,
-  FAMILY_LABEL,
-  type FamilyParticipation, type FamilyMood, type FamilyDivergence,
 } from '@/lib/marketFamilies';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
+import FieldAnalysisPanel from '@/components/gcp/FieldAnalysisPanel';
 
 // ── Action-state palette + sort priority ────────────────────────────
 
@@ -492,11 +484,6 @@ export default function GuruRadar({
           )}
         </div>
 
-        {/* v14.7: MARKET PARTICIPATION — time-derived, shown always
-            (even pre-scan) so the session context is visible before
-            reading any verdict. */}
-        <FieldParticipationCard p={participation} />
-
         {/* Empty state */}
         {results.length === 0 && !scanning && (
           <div style={{
@@ -509,31 +496,25 @@ export default function GuruRadar({
           </div>
         )}
 
-        {/* v14.4: FIELD DISPERSION — is the field unified or fragmented?
-            v14.5: + FIELD DOMINANCE — how much of the read is shared
-            coherence vs each symbol's own price. */}
-        {dispersion && (
-          <FieldDispersionCard
-            d={dispersion} dominance={dominance}
-            mood={mood} diagnosis={diagnosis}
-          />
-        )}
-
-        {/* v15.0: MARKET FAMILIES — the field as an ecosystem. */}
-        {families.length > 0 && (
-          <MarketFamiliesCard families={families} divergence={familyDivergence} />
-        )}
-
-        {/* v14.8: FIELD MEMORY — has this field state happened before? */}
-        {recurrence && <FieldMemoryCard r={recurrence} />}
-
-        {/* v14.9: ACTION LADDER AUDIT — which GO check is doing the
-            blocking across the field. */}
-        {ladderAudit && <ActionLadderAuditCard a={ladderAudit} />}
-
-        {/* v14.10: OPPORTUNITY WEATHER — how close the field is to
-            READY/GO. */}
-        {oppWeather && <OpportunityWeatherCard w={oppWeather} />}
+        {/* v15.1: unified FIELD ANALYSIS panel — every field
+            diagnostic (dispersion, dominance, mood, diagnosis,
+            families, memory, ladder audit, opportunity, session)
+            consolidated into one collapsible surface so the scan
+            results sit immediately below it instead of after a
+            stack of cards. */}
+        <FieldAnalysisPanel
+          participation={participation}
+          dispersion={dispersion}
+          dominance={dominance}
+          mood={mood}
+          diagnosis={diagnosis}
+          families={families}
+          familyDivergence={familyDivergence}
+          recurrence={recurrence}
+          ladderAudit={ladderAudit}
+          oppWeather={oppWeather}
+          counts={counts}
+        />
 
         {/* Result grid */}
         {sorted.length > 0 && (
@@ -564,206 +545,16 @@ export default function GuruRadar({
   );
 }
 
-// ── Market participation card ───────────────────────────────────────
+// ── Radar palette (used by the per-result cards) ────────────────────
+// v15.1: the field-diagnostic cards were consolidated into
+// FieldAnalysisPanel; only these two colour maps are still needed
+// here, by the per-symbol RadarCard.
 
 const LIQUIDITY_COLOR: Record<LiquidityLevel, string> = {
   low:      '#c45a5a',
   moderate: '#d4a028',
   high:     'var(--green)',
 };
-
-// v14.7: time-derived session context — shown always so a 05:00 UTC
-// thin-market scan reads as such, not as a coherence failure.
-function FieldParticipationCard({ p }: { p: FieldParticipation }) {
-  const color = LIQUIDITY_COLOR[p.level];
-  const label = p.level === 'low' ? 'Low' : p.level === 'high' ? 'High' : 'Moderate';
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: `1px solid ${color}55`,
-      borderLeft: `3px solid ${color}`,
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 5,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        MARKET PARTICIPATION
-      </span>
-      <span style={{
-        fontSize: 18, fontWeight: 800, color, letterSpacing: '0.04em',
-      }}>
-        {label} liquidity
-      </span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {p.lines.map((line, i) => (
-          <span key={i} style={{
-            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.02em',
-          }}>
-            {line}
-          </span>
-        ))}
-      </div>
-      <span style={{
-        fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.04em',
-        fontStyle: 'italic',
-      }}>
-        Context only — not applied to any read.
-      </span>
-    </div>
-  );
-}
-
-// ── Field memory card ───────────────────────────────────────────────
-
-function fmtMemDate(ts: number): string {
-  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-function fmtResolution(hours: number): string {
-  return hours < 48
-    ? `${hours.toFixed(1)} hours`
-    : `${(hours / 24).toFixed(1)} days`;
-}
-
-// v14.8: recurrence read — what happened the last time the field
-// looked like this. Cyan accent — informational, not a verdict.
-function FieldMemoryCard({ r }: { r: FieldRecurrence }) {
-  const cm = r.closestMatch;
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderLeft: '3px solid var(--cyan)',
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 5,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        FIELD MEMORY
-      </span>
-
-      {r.totalScans === 0 ? (
-        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-          First scan recorded — recurrence builds as you scan.
-        </span>
-      ) : r.matches === 0 ? (
-        <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.5 }}>
-          No close precedent yet · {r.totalScans} scan
-          {r.totalScans === 1 ? '' : 's'} in memory · closest {r.similarity}% similar
-        </span>
-      ) : (
-        <>
-          <span style={{
-            fontSize: 18, fontWeight: 800, color: 'var(--cyan)',
-            letterSpacing: '0.03em',
-          }}>
-            Seen before: {r.matches}×
-          </span>
-          {cm && (
-            <div style={{
-              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-            }}>
-              <span style={{ color: 'var(--fg-4)' }}>Closest · </span>
-              {fmtMemDate(cm.timestamp)} · {cm.blockedCount}/{cm.total} {cm.dominantAction}
-              {' · '}Regime {cm.regime} · NV {cm.nv}
-            </div>
-          )}
-          {r.commonTransition && (
-            <div style={{
-              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-            }}>
-              <span style={{ color: 'var(--fg-4)' }}>Typical transition · </span>
-              {r.commonTransition}
-            </div>
-          )}
-          {r.averageDuration != null && (
-            <div style={{
-              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-            }}>
-              <span style={{ color: 'var(--fg-4)' }}>Average resolution · </span>
-              {fmtResolution(r.averageDuration)}
-            </div>
-          )}
-          <span style={{
-            fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.04em',
-            fontStyle: 'italic',
-          }}>
-            Memory only — {r.totalScans} scans recorded · context, not a forecast.
-          </span>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── Action ladder audit card ────────────────────────────────────────
-
-// v14.9: which GO check fails across the field. Amber accent — a
-// diagnostic of where the ladder is gating, not a verdict.
-function ActionLadderAuditCard({ a }: { a: ActionLadderAudit }) {
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderLeft: '3px solid #d4a028',
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 6,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        ACTION LADDER AUDIT
-      </span>
-
-      {a.topBlockers.length === 0 ? (
-        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-          No GO check failing — the field is entry-eligible.
-        </span>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-          {a.topBlockers.slice(0, 6).map(b => (
-            <div key={b.name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <div style={{
-                display: 'flex', justifyContent: 'space-between',
-                fontSize: 10, fontFamily: 'var(--font-mono)',
-              }}>
-                <span style={{ color: 'var(--fg-2)' }}>{b.label}</span>
-                <span style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
-                  {b.count}/{a.total}
-                </span>
-              </div>
-              <div style={{
-                height: 3, borderRadius: 2, overflow: 'hidden',
-                background: 'var(--bg-2)',
-              }}>
-                <div style={{
-                  width: `${b.pct}%`, height: '100%', background: '#d4a028',
-                }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{
-        fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45,
-        fontStyle: 'italic', marginTop: 1,
-      }}>
-        {a.interpretation}
-      </div>
-    </div>
-  );
-}
-
-// ── Opportunity weather card ────────────────────────────────────────
 
 const OPP_STATUS_COLOR: Record<OpportunityStatus, string> = {
   far:      'var(--fg-3)',
@@ -772,324 +563,6 @@ const OPP_STATUS_COLOR: Record<OpportunityStatus, string> = {
   imminent: 'var(--green)',
   go:       'var(--green)',
 };
-
-// v14.10: how close the field is to READY/GO — distinguishes hard
-// BLOCKED from almost-READY.
-function OpportunityWeatherCard({ w }: { w: OpportunityWeather }) {
-  const rows: { label: string; status: OpportunityStatus }[] = [
-    ...(w.counts.go > 0 ? [{ label: 'GO', status: 'go' as OpportunityStatus }] : []),
-    { label: 'Imminent', status: 'imminent' },
-    { label: 'Near',     status: 'near' },
-    { label: 'Building', status: 'building' },
-    { label: 'Far',      status: 'far' },
-  ];
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderLeft: '3px solid var(--cyan)',
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 6,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        OPPORTUNITY WEATHER
-      </span>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
-        {rows.map(r => (
-          <span key={r.status} style={{
-            fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fg-3)',
-          }}>
-            {r.label}{' '}
-            <b style={{ color: OPP_STATUS_COLOR[r.status], fontVariantNumeric: 'tabular-nums' }}>
-              {w.counts[r.status]}
-            </b>
-          </span>
-        ))}
-      </div>
-      <div style={{
-        fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45, fontStyle: 'italic',
-      }}>
-        {w.interpretation}
-      </div>
-    </div>
-  );
-}
-
-// ── Market families card ────────────────────────────────────────────
-
-const FAMILY_MOOD_COLOR: Record<FamilyMood, string> = {
-  strong:    'var(--green)',
-  improving: 'var(--cyan)',
-  mixed:     '#d4a028',
-  weak:      '#c45a5a',
-  blocked:   '#c45a5a',
-};
-
-// v15.0: the field read as an ecosystem — which families lead, lag,
-// or diverge. Contextual grouping only.
-function MarketFamiliesCard({
-  families, divergence,
-}: {
-  families:   FamilyParticipation[];
-  divergence: FamilyDivergence;
-}) {
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderLeft: `3px solid ${divergence.detected ? '#d4a028' : 'var(--cyan)'}`,
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 6,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        MARKET FAMILIES
-      </span>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {families.map(f => {
-          const counts = [
-            f.go      ? `${f.go}GO` : '',
-            f.ready   ? `${f.ready}R` : '',
-            f.watch   ? `${f.watch}W` : '',
-            f.blocked ? `${f.blocked}B` : '',
-          ].filter(Boolean).join(' ');
-          return (
-            <div key={f.family} style={{
-              display: 'flex', alignItems: 'baseline', gap: 8,
-              fontSize: 11, fontFamily: 'var(--font-mono)',
-            }}>
-              <span style={{
-                color: 'var(--fg-1)', fontWeight: 600, minWidth: 78,
-              }}>
-                {FAMILY_LABEL[f.family]}
-              </span>
-              <span style={{ color: 'var(--fg-3)', flex: 1 }}>{counts}</span>
-              <span style={{
-                color: FAMILY_MOOD_COLOR[f.mood], fontWeight: 700,
-                letterSpacing: '0.04em',
-              }}>
-                {f.mood}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={{
-        fontSize: 10, lineHeight: 1.45, fontStyle: 'italic',
-        color: divergence.detected ? '#d4a028' : 'var(--fg-3)',
-      }}>
-        {divergence.detected ? `⚠ ${divergence.summary}` : divergence.summary}
-      </div>
-    </div>
-  );
-}
-
-// ── Field dispersion card ───────────────────────────────────────────
-
-// Dispersion has no good/bad valence — a very unified field could be
-// genuine synchronization OR over-anchoring. Colour is an intensity
-// ramp (cyan = unified, magenta = fragmented), not a verdict.
-const DISPERSION_COLOR: Record<DispersionLevel, string> = {
-  very_low: '#4dd9e8',
-  low:      '#4dd9e8',
-  moderate: '#d4a028',
-  high:     '#d4a028',
-  extreme:  'var(--magenta)',
-};
-
-interface DominanceSummary {
-  avgField: number;
-  highest:  { symbol: MarketSymbol; ind: SymbolIndividuality };
-  lowest:   { symbol: MarketSymbol; ind: SymbolIndividuality };
-}
-
-const MOOD_COLOR: Record<FieldMoodSentiment, string> = {
-  opportunity:  'var(--green)',
-  defensive:    '#c45a5a',
-  fragmented:   'var(--magenta)',
-  synchronized: 'var(--cyan)',
-  neutral:      'var(--fg-2)',
-};
-
-const DIAGNOSIS_COLOR: Record<DiagnosisSeverity, string> = {
-  calm:    'var(--green)',
-  watch:   'var(--cyan)',
-  warning: '#d4a028',
-  risk:    '#c45a5a',
-};
-
-function FieldDispersionCard({
-  d, dominance, mood, diagnosis,
-}: {
-  d:          FieldDispersion;
-  dominance:  DominanceSummary | null;
-  mood:       FieldMood | null;
-  diagnosis:  FieldDiagnosis | null;
-}) {
-  const color = DISPERSION_COLOR[d.level];
-  const levelLabel = d.level.replace('_', ' ').toUpperCase();
-  return (
-    <div style={{
-      background: 'var(--bg-1)',
-      border: `1px solid ${color}55`,
-      borderLeft: `3px solid ${color}`,
-      borderRadius: 'var(--r-md)',
-      padding: '12px 16px',
-      display: 'flex', flexDirection: 'column', gap: 6,
-    }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontFamily: 'var(--font-mono)', fontWeight: 600,
-      }}>
-        FIELD DISPERSION
-      </span>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
-      }}>
-        <span style={{
-          fontSize: 22, fontWeight: 800, color, letterSpacing: '0.05em',
-        }}>
-          {levelLabel}
-        </span>
-        <span style={{
-          fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-        }}>
-          {d.agreeCount}/{d.total} symbols agree · {d.agreementPct}%
-        </span>
-      </div>
-      <div style={{
-        fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-      }}>
-        <span style={{ color: 'var(--fg-4)' }}>Dominant · </span>
-        {d.dominantState} → <span style={{ color, fontWeight: 600 }}>{d.dominantAction}</span>
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--fg-1)', lineHeight: 1.5 }}>
-        {d.summary}
-      </div>
-      <div style={{
-        fontSize: 9, color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.06em',
-      }}>
-        diversity {d.diversity} · {Object.keys(d.stateCounts).length} distinct states
-      </div>
-
-      {/* v14.5: FIELD DOMINANCE — shared-coherence vs symbol-price split. */}
-      {dominance && (
-        <div style={{
-          borderTop: '1px solid var(--line-1)',
-          paddingTop: 8, marginTop: 2,
-          display: 'flex', flexDirection: 'column', gap: 3,
-        }}>
-          <span style={{
-            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-            fontFamily: 'var(--font-mono)', fontWeight: 600,
-          }}>
-            FIELD DOMINANCE
-          </span>
-          <div style={{
-            fontSize: 11, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
-          }}>
-            Average field weight{' '}
-            <b style={{ color: 'var(--fg-0)' }}>{dominance.avgField}%</b>
-          </div>
-          <div style={{
-            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
-          }}>
-            Highest individuality ·{' '}
-            <span style={{ color: 'var(--fg-1)' }}>
-              {getSymbolMeta(dominance.highest.symbol).id} {dominance.highest.ind.individuality}%
-            </span>
-          </div>
-          <div style={{
-            fontSize: 10, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)',
-          }}>
-            Lowest individuality ·{' '}
-            <span style={{ color: 'var(--fg-1)' }}>
-              {getSymbolMeta(dominance.lowest.symbol).id} {dominance.lowest.ind.individuality}%
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* v14.6.1: FIELD MOOD — the coherence-weather line for the scan. */}
-      {mood && (
-        <div style={{
-          borderTop: '1px solid var(--line-1)',
-          paddingTop: 8, marginTop: 2,
-          display: 'flex', flexDirection: 'column', gap: 3,
-        }}>
-          <span style={{
-            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-            fontFamily: 'var(--font-mono)', fontWeight: 600,
-          }}>
-            FIELD MOOD
-          </span>
-          <span style={{
-            fontSize: 13, fontWeight: 700, color: MOOD_COLOR[mood.sentiment],
-            letterSpacing: '0.02em',
-          }}>
-            {mood.title}
-          </span>
-          <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.4 }}>
-            {mood.description}
-          </span>
-        </div>
-      )}
-
-      {/* v14.6.2: FIELD DIAGNOSIS — repeated card blockers as one
-          field-level story. Readable in under 3 seconds. */}
-      {diagnosis && (
-        <div style={{
-          borderTop: '1px solid var(--line-1)',
-          paddingTop: 8, marginTop: 2,
-          display: 'flex', flexDirection: 'column', gap: 4,
-        }}>
-          <span style={{
-            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-            fontFamily: 'var(--font-mono)', fontWeight: 600,
-          }}>
-            FIELD DIAGNOSIS
-          </span>
-          <span style={{
-            fontSize: 13, fontWeight: 700,
-            color: DIAGNOSIS_COLOR[diagnosis.severity],
-            letterSpacing: '0.02em',
-          }}>
-            {diagnosis.title}
-          </span>
-          <span style={{ fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45 }}>
-            {diagnosis.summary}
-          </span>
-          {diagnosis.bullets.length > 0 && (
-            <div style={{
-              display: 'flex', flexDirection: 'column', gap: 2, marginTop: 1,
-            }}>
-              {diagnosis.bullets.map((b, i) => (
-                <span key={i} style={{
-                  fontSize: 9, color: 'var(--fg-3)',
-                  fontFamily: 'var(--font-mono)', letterSpacing: '0.02em',
-                  display: 'flex', gap: 5, alignItems: 'baseline',
-                }}>
-                  <span style={{ color: 'var(--fg-4)' }}>·</span>
-                  {b}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ── Result card ─────────────────────────────────────────────────────
 
