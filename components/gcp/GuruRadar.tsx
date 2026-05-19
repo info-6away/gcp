@@ -9,7 +9,7 @@
 // Manual only. One Engine call per symbol, fired sequentially when
 // the user clicks SCAN MARKETS. No background loops, no auto-polling.
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { MarketSymbol } from '@/types/gcp';
 import { getSymbolMeta } from '@/types/gcp';
 import type { GcpStateInputs } from '@/lib/gcp-state-payload';
@@ -42,6 +42,10 @@ import {
   deriveSessionContext, deriveFieldParticipation,
   type FieldParticipation, type LiquidityLevel,
 } from '@/lib/sessionContext';
+import {
+  loadFieldMemory, recordFieldScan, deriveFieldRecurrence,
+  type FieldSignature, type FieldRecurrence,
+} from '@/lib/fieldMemory';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -239,9 +243,53 @@ export default function GuruRadar({
     });
   }, [results, counts, dispersion]);
 
-  // Dev log once per completed scan.
+  // v14.8: field memory — recurrence of this field state vs history.
+  const [recurrence, setRecurrence] = useState<FieldRecurrence | null>(null);
+  // Guards record-once-per-scan: holds the newest scannedAt recorded.
+  const recordedRef = useRef(0);
+
+  // Runs once per completed scan: records the field signature to
+  // memory and derives how often this state has occurred before.
   useEffect(() => {
     if (scanning || !dispersion) return;
+    const okResults = results.filter(r => r.ok && r.aiState);
+    if (okResults.length < 2) return;
+
+    // One scan key — the newest result timestamp. Guards against the
+    // effect re-running (incl. React strict-mode double-invoke).
+    const scanKey = results.reduce((m, r) => Math.max(m, r.scannedAt), 0);
+    if (scanKey === 0 || scanKey <= recordedRef.current) return;
+    recordedRef.current = scanKey;
+
+    const avgClarity = Math.round(
+      (okResults.reduce((s, r) => s + (r.aiState!.confidence ?? 0), 0)
+        / okResults.length) * 100,
+    );
+    const series = aiStateInputs?.series ?? [];
+    const nv = series.length ? series[series.length - 1].v : 0;
+    const sig: FieldSignature = {
+      timestamp:      Date.now(),
+      dispersion:     dispersion.level,
+      mood:           mood?.sentiment ?? 'neutral',
+      dominantState:  dispersion.dominantState,
+      dominantAction: dispersion.dominantAction,
+      blockedCount:   counts.BLOCKED ?? 0,
+      watchCount:     counts.WATCH   ?? 0,
+      readyCount:     counts.READY   ?? 0,
+      total:          okResults.length,
+      avgClarity,
+      regime:         aiStateInputs?.regime?.code ?? '—',
+      nv:             +nv.toFixed(1),
+      participation:  participation?.level ?? 'moderate',
+    };
+
+    // Derive recurrence against history BEFORE appending this scan,
+    // so the current scan never matches itself.
+    const history = loadFieldMemory();
+    const rec = deriveFieldRecurrence(sig, history);
+    setRecurrence(rec);
+    recordFieldScan(sig);
+
     if (process.env.NODE_ENV !== 'production') {
       console.log('[RADAR DISPERSION]', {
         agreement: dispersion.agreementPct,
@@ -249,6 +297,13 @@ export default function GuruRadar({
         dominant:  dispersion.dominantState,
         action:    dispersion.dominantAction,
         diversity: dispersion.diversity,
+      });
+      console.log('[FIELD MEMORY]', {
+        similarity:   rec.similarity,
+        matches:      rec.matches,
+        closestMatch: rec.closestMatch
+          ? new Date(rec.closestMatch.timestamp).toISOString()
+          : null,
       });
       for (const r of results) {
         if (!r.ok) continue;
@@ -268,7 +323,7 @@ export default function GuruRadar({
         });
       }
     }
-  }, [scanning, dispersion, results]);
+  }, [scanning, dispersion, results, mood, participation, counts, aiStateInputs]);
 
   const scannedCount = progress
     ? Math.min(progress.index + (progress.step === 'done' ? 1 : 0), progress.total)
@@ -422,6 +477,9 @@ export default function GuruRadar({
           />
         )}
 
+        {/* v14.8: FIELD MEMORY — has this field state happened before? */}
+        {recurrence && <FieldMemoryCard r={recurrence} />}
+
         {/* Result grid */}
         {sorted.length > 0 && (
           <div style={{
@@ -500,6 +558,91 @@ function FieldParticipationCard({ p }: { p: FieldParticipation }) {
       }}>
         Context only — not applied to any read.
       </span>
+    </div>
+  );
+}
+
+// ── Field memory card ───────────────────────────────────────────────
+
+function fmtMemDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function fmtResolution(hours: number): string {
+  return hours < 48
+    ? `${hours.toFixed(1)} hours`
+    : `${(hours / 24).toFixed(1)} days`;
+}
+
+// v14.8: recurrence read — what happened the last time the field
+// looked like this. Cyan accent — informational, not a verdict.
+function FieldMemoryCard({ r }: { r: FieldRecurrence }) {
+  const cm = r.closestMatch;
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '3px solid var(--cyan)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 5,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        FIELD MEMORY
+      </span>
+
+      {r.totalScans === 0 ? (
+        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
+          First scan recorded — recurrence builds as you scan.
+        </span>
+      ) : r.matches === 0 ? (
+        <span style={{ fontSize: 10, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+          No close precedent yet · {r.totalScans} scan
+          {r.totalScans === 1 ? '' : 's'} in memory · closest {r.similarity}% similar
+        </span>
+      ) : (
+        <>
+          <span style={{
+            fontSize: 18, fontWeight: 800, color: 'var(--cyan)',
+            letterSpacing: '0.03em',
+          }}>
+            Seen before: {r.matches}×
+          </span>
+          {cm && (
+            <div style={{
+              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ color: 'var(--fg-4)' }}>Closest · </span>
+              {fmtMemDate(cm.timestamp)} · {cm.blockedCount}/{cm.total} {cm.dominantAction}
+              {' · '}Regime {cm.regime} · NV {cm.nv}
+            </div>
+          )}
+          {r.commonTransition && (
+            <div style={{
+              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ color: 'var(--fg-4)' }}>Typical transition · </span>
+              {r.commonTransition}
+            </div>
+          )}
+          {r.averageDuration != null && (
+            <div style={{
+              fontSize: 10, color: 'var(--fg-2)', fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{ color: 'var(--fg-4)' }}>Average resolution · </span>
+              {fmtResolution(r.averageDuration)}
+            </div>
+          )}
+          <span style={{
+            fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.04em',
+            fontStyle: 'italic',
+          }}>
+            Memory only — {r.totalScans} scans recorded · context, not a forecast.
+          </span>
+        </>
+      )}
     </div>
   );
 }
