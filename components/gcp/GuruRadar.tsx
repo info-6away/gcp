@@ -46,6 +46,9 @@ import {
   loadFieldMemory, recordFieldScan, deriveFieldRecurrence,
   type FieldSignature, type FieldRecurrence,
 } from '@/lib/fieldMemory';
+import {
+  deriveActionLadderAudit, type ActionLadderAudit,
+} from '@/lib/actionLadderAudit';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -222,6 +225,10 @@ export default function GuruRadar({
   // up into one field-level story.
   const diagnosis = useMemo(() => deriveFieldDiagnosis(results), [results]);
 
+  // v14.9: action-ladder calibration audit — which GO checks fail
+  // across the field. Evidence only; no threshold change.
+  const ladderAudit = useMemo(() => deriveActionLadderAudit(results), [results]);
+
   // v14.7: market participation — which sessions are live right now.
   // Time-derived, scan-independent; recomputes on the 20s tick.
   const participation = useMemo(
@@ -305,6 +312,13 @@ export default function GuruRadar({
           ? new Date(rec.closestMatch.timestamp).toISOString()
           : null,
       });
+      if (ladderAudit) {
+        console.log('[RADAR LADDER AUDIT]', {
+          interpretation: ladderAudit.interpretation,
+          topBlockers: ladderAudit.topBlockers.map(
+            b => `${b.label} ${b.count}/${ladderAudit.total}`),
+        });
+      }
       for (const r of results) {
         if (!r.ok) continue;
         const ind = deriveSymbolIndividuality(r);
@@ -323,7 +337,7 @@ export default function GuruRadar({
         });
       }
     }
-  }, [scanning, dispersion, results, mood, participation, counts, aiStateInputs]);
+  }, [scanning, dispersion, results, mood, participation, counts, aiStateInputs, ladderAudit]);
 
   const scannedCount = progress
     ? Math.min(progress.index + (progress.step === 'done' ? 1 : 0), progress.total)
@@ -479,6 +493,10 @@ export default function GuruRadar({
 
         {/* v14.8: FIELD MEMORY — has this field state happened before? */}
         {recurrence && <FieldMemoryCard r={recurrence} />}
+
+        {/* v14.9: ACTION LADDER AUDIT — which GO check is doing the
+            blocking across the field. */}
+        {ladderAudit && <ActionLadderAuditCard a={ladderAudit} />}
 
         {/* Result grid */}
         {sorted.length > 0 && (
@@ -643,6 +661,67 @@ function FieldMemoryCard({ r }: { r: FieldRecurrence }) {
           </span>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Action ladder audit card ────────────────────────────────────────
+
+// v14.9: which GO check fails across the field. Amber accent — a
+// diagnostic of where the ladder is gating, not a verdict.
+function ActionLadderAuditCard({ a }: { a: ActionLadderAudit }) {
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '3px solid #d4a028',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        ACTION LADDER AUDIT
+      </span>
+
+      {a.topBlockers.length === 0 ? (
+        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>
+          No GO check failing — the field is entry-eligible.
+        </span>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {a.topBlockers.slice(0, 6).map(b => (
+            <div key={b.name} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 10, fontFamily: 'var(--font-mono)',
+              }}>
+                <span style={{ color: 'var(--fg-2)' }}>{b.label}</span>
+                <span style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+                  {b.count}/{a.total}
+                </span>
+              </div>
+              <div style={{
+                height: 3, borderRadius: 2, overflow: 'hidden',
+                background: 'var(--bg-2)',
+              }}>
+                <div style={{
+                  width: `${b.pct}%`, height: '100%', background: '#d4a028',
+                }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{
+        fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45,
+        fontStyle: 'italic', marginTop: 1,
+      }}>
+        {a.interpretation}
+      </div>
     </div>
   );
 }
