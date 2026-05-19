@@ -53,6 +53,11 @@ import {
   deriveOpportunityDistance, deriveOpportunityWeather,
   type OpportunityWeather, type OpportunityStatus,
 } from '@/lib/opportunityDistance';
+import {
+  deriveFamilyParticipation, deriveFamilyDivergence,
+  FAMILY_LABEL,
+  type FamilyParticipation, type FamilyMood, type FamilyDivergence,
+} from '@/lib/marketFamilies';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -236,6 +241,11 @@ export default function GuruRadar({
   // v14.10: opportunity weather — how close the field is to READY/GO.
   const oppWeather = useMemo(() => deriveOpportunityWeather(results), [results]);
 
+  // v15.0: market families — read the field as an ecosystem.
+  const families = useMemo(() => deriveFamilyParticipation(results), [results]);
+  const familyDivergence = useMemo(
+    () => deriveFamilyDivergence(families), [families]);
+
   // v14.7: market participation — which sessions are live right now.
   // Time-derived, scan-independent; recomputes on the 20s tick.
   const participation = useMemo(
@@ -331,6 +341,11 @@ export default function GuruRadar({
         const od = deriveOpportunityDistance(r);
         if (od) console.log('[RADAR OPPORTUNITY]', r.symbol, od.score, od.status);
       }
+      console.log('[RADAR FAMILIES]', {
+        families: families.map(
+          f => `${f.family} ${f.ready}R/${f.watch}W/${f.blocked}B ${f.mood}`),
+        divergence: familyDivergence.detected ? familyDivergence.summary : 'none',
+      });
       for (const r of results) {
         if (!r.ok) continue;
         const ind = deriveSymbolIndividuality(r);
@@ -349,7 +364,8 @@ export default function GuruRadar({
         });
       }
     }
-  }, [scanning, dispersion, results, mood, participation, counts, aiStateInputs, ladderAudit]);
+  }, [scanning, dispersion, results, mood, participation, counts,
+      aiStateInputs, ladderAudit, families, familyDivergence]);
 
   const scannedCount = progress
     ? Math.min(progress.index + (progress.step === 'done' ? 1 : 0), progress.total)
@@ -501,6 +517,11 @@ export default function GuruRadar({
             d={dispersion} dominance={dominance}
             mood={mood} diagnosis={diagnosis}
           />
+        )}
+
+        {/* v15.0: MARKET FAMILIES — the field as an ecosystem. */}
+        {families.length > 0 && (
+          <MarketFamiliesCard families={families} divergence={familyDivergence} />
         )}
 
         {/* v14.8: FIELD MEMORY — has this field state happened before? */}
@@ -793,6 +814,80 @@ function OpportunityWeatherCard({ w }: { w: OpportunityWeather }) {
         fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45, fontStyle: 'italic',
       }}>
         {w.interpretation}
+      </div>
+    </div>
+  );
+}
+
+// ── Market families card ────────────────────────────────────────────
+
+const FAMILY_MOOD_COLOR: Record<FamilyMood, string> = {
+  strong:    'var(--green)',
+  improving: 'var(--cyan)',
+  mixed:     '#d4a028',
+  weak:      '#c45a5a',
+  blocked:   '#c45a5a',
+};
+
+// v15.0: the field read as an ecosystem — which families lead, lag,
+// or diverge. Contextual grouping only.
+function MarketFamiliesCard({
+  families, divergence,
+}: {
+  families:   FamilyParticipation[];
+  divergence: FamilyDivergence;
+}) {
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${divergence.detected ? '#d4a028' : 'var(--cyan)'}`,
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        MARKET FAMILIES
+      </span>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {families.map(f => {
+          const counts = [
+            f.go      ? `${f.go}GO` : '',
+            f.ready   ? `${f.ready}R` : '',
+            f.watch   ? `${f.watch}W` : '',
+            f.blocked ? `${f.blocked}B` : '',
+          ].filter(Boolean).join(' ');
+          return (
+            <div key={f.family} style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              fontSize: 11, fontFamily: 'var(--font-mono)',
+            }}>
+              <span style={{
+                color: 'var(--fg-1)', fontWeight: 600, minWidth: 78,
+              }}>
+                {FAMILY_LABEL[f.family]}
+              </span>
+              <span style={{ color: 'var(--fg-3)', flex: 1 }}>{counts}</span>
+              <span style={{
+                color: FAMILY_MOOD_COLOR[f.mood], fontWeight: 700,
+                letterSpacing: '0.04em',
+              }}>
+                {f.mood}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{
+        fontSize: 10, lineHeight: 1.45, fontStyle: 'italic',
+        color: divergence.detected ? '#d4a028' : 'var(--fg-3)',
+      }}>
+        {divergence.detected ? `⚠ ${divergence.summary}` : divergence.summary}
       </div>
     </div>
   );
