@@ -49,6 +49,10 @@ import {
 import {
   deriveActionLadderAudit, type ActionLadderAudit,
 } from '@/lib/actionLadderAudit';
+import {
+  deriveOpportunityDistance, deriveOpportunityWeather,
+  type OpportunityWeather, type OpportunityStatus,
+} from '@/lib/opportunityDistance';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 
@@ -229,6 +233,9 @@ export default function GuruRadar({
   // across the field. Evidence only; no threshold change.
   const ladderAudit = useMemo(() => deriveActionLadderAudit(results), [results]);
 
+  // v14.10: opportunity weather — how close the field is to READY/GO.
+  const oppWeather = useMemo(() => deriveOpportunityWeather(results), [results]);
+
   // v14.7: market participation — which sessions are live right now.
   // Time-derived, scan-independent; recomputes on the 20s tick.
   const participation = useMemo(
@@ -318,6 +325,11 @@ export default function GuruRadar({
           topBlockers: ladderAudit.topBlockers.map(
             b => `${b.label} ${b.count}/${ladderAudit.total}`),
         });
+      }
+      for (const r of results) {
+        if (!r.ok) continue;
+        const od = deriveOpportunityDistance(r);
+        if (od) console.log('[RADAR OPPORTUNITY]', r.symbol, od.score, od.status);
       }
       for (const r of results) {
         if (!r.ok) continue;
@@ -497,6 +509,10 @@ export default function GuruRadar({
         {/* v14.9: ACTION LADDER AUDIT — which GO check is doing the
             blocking across the field. */}
         {ladderAudit && <ActionLadderAuditCard a={ladderAudit} />}
+
+        {/* v14.10: OPPORTUNITY WEATHER — how close the field is to
+            READY/GO. */}
+        {oppWeather && <OpportunityWeatherCard w={oppWeather} />}
 
         {/* Result grid */}
         {sorted.length > 0 && (
@@ -721,6 +737,62 @@ function ActionLadderAuditCard({ a }: { a: ActionLadderAudit }) {
         fontStyle: 'italic', marginTop: 1,
       }}>
         {a.interpretation}
+      </div>
+    </div>
+  );
+}
+
+// ── Opportunity weather card ────────────────────────────────────────
+
+const OPP_STATUS_COLOR: Record<OpportunityStatus, string> = {
+  far:      'var(--fg-3)',
+  building: '#d4a028',
+  near:     'var(--cyan)',
+  imminent: 'var(--green)',
+  go:       'var(--green)',
+};
+
+// v14.10: how close the field is to READY/GO — distinguishes hard
+// BLOCKED from almost-READY.
+function OpportunityWeatherCard({ w }: { w: OpportunityWeather }) {
+  const rows: { label: string; status: OpportunityStatus }[] = [
+    ...(w.counts.go > 0 ? [{ label: 'GO', status: 'go' as OpportunityStatus }] : []),
+    { label: 'Imminent', status: 'imminent' },
+    { label: 'Near',     status: 'near' },
+    { label: 'Building', status: 'building' },
+    { label: 'Far',      status: 'far' },
+  ];
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: '3px solid var(--cyan)',
+      borderRadius: 'var(--r-md)',
+      padding: '12px 16px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontFamily: 'var(--font-mono)', fontWeight: 600,
+      }}>
+        OPPORTUNITY WEATHER
+      </span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+        {rows.map(r => (
+          <span key={r.status} style={{
+            fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--fg-3)',
+          }}>
+            {r.label}{' '}
+            <b style={{ color: OPP_STATUS_COLOR[r.status], fontVariantNumeric: 'tabular-nums' }}>
+              {w.counts[r.status]}
+            </b>
+          </span>
+        ))}
+      </div>
+      <div style={{
+        fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.45, fontStyle: 'italic',
+      }}>
+        {w.interpretation}
       </div>
     </div>
   );
@@ -976,6 +1048,8 @@ function RadarCard({
   const thesis = deriveRadarThesisSummary(result);
   // v14.7: session context — display only, never affects the read.
   const session = deriveSessionContext(result.symbol, now);
+  // v14.10: opportunity distance — how close to READY/GO.
+  const opp = deriveOpportunityDistance(result);
   const showConfirms =
     action.actionState === 'GO' || action.actionState === 'READY'
     || action.actionState === 'MANAGE';
@@ -1066,6 +1140,30 @@ function RadarCard({
           <span>{clarity}% clarity</span>
           <span>{structureLabel(result)}</span>
         </div>
+
+        {/* v14.10: opportunity distance — how close to READY/GO, and
+            the single closest blocker. Evidence only. */}
+        {opp && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{
+              fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+              color: 'var(--fg-3)',
+            }}>
+              opportunity ·{' '}
+              <b style={{ color: OPP_STATUS_COLOR[opp.status] }}>
+                {opp.status.toUpperCase()}
+              </b>{' '}· {opp.score}%
+            </span>
+            {opp.status !== 'go' && (
+              <span style={{
+                fontSize: 8, fontFamily: 'var(--font-mono)',
+                letterSpacing: '0.04em', color: 'var(--fg-4)',
+              }}>
+                closest · {opp.nearestBlocker}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* v14.4: Δ field — does this symbol agree with the dominant
             field action, or diverge from it? Small, muted. */}
