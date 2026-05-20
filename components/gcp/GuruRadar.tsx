@@ -50,24 +50,34 @@ import {
   deriveFamilyParticipation, deriveFamilyDivergence,
 } from '@/lib/marketFamilies';
 import { deriveFieldAnchoring } from '@/lib/classificationInfluence';
+import {
+  deriveRadarOpportunityState, WAIT_COLOR, WAIT_SUBTITLE,
+  type RadarOpportunityState,
+} from '@/lib/radarOpportunityState';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 import FieldAnalysisPanel from '@/components/gcp/FieldAnalysisPanel';
 
 // ── Action-state palette + sort priority ────────────────────────────
 
-const ACTION_COLOR: Record<ActionState, string> = {
+// v15.2: WAIT is a display-only state — a softer relabel of BLOCKED
+// when the field is COMPRESSING rather than dead. The action ladder
+// still produces BLOCKED; this palette and the rank map cover both
+// the underlying ladder states AND the display reskin.
+const ACTION_COLOR: Record<RadarOpportunityState, string> = {
   GO:      '#22c55e',
   READY:   '#4dd9e8',
   WATCH:   '#d4a028',
+  WAIT:    WAIT_COLOR,
   BLOCKED: '#c45a5a',
   MANAGE:  '#5a8fc4',
   EXIT:    '#c45a5a',
 };
 
-// Sort buckets — lower wins. Mirrors the spec's GO→EXIT order.
-const ACTION_RANK: Record<ActionState, number> = {
-  GO: 1, READY: 2, WATCH: 3, BLOCKED: 4, MANAGE: 5, EXIT: 6,
+// Sort buckets — lower wins. WAIT sits between WATCH and BLOCKED:
+// the field is preparing, but no directional pressure has formed yet.
+const ACTION_RANK: Record<RadarOpportunityState, number> = {
+  GO: 1, READY: 2, WATCH: 3, WAIT: 4, BLOCKED: 5, MANAGE: 6, EXIT: 7,
 };
 
 const BAND_RANK: Record<string, number> = { strong: 3, moderate: 2, weak: 1 };
@@ -124,8 +134,10 @@ function sortResults(results: RadarResult[]): RadarResult[] {
     // Failed scans sink to the bottom.
     if (a.ok !== b.ok) return a.ok ? -1 : 1;
     if (!a.ok || !b.ok) return 0;
-    const ra = ACTION_RANK[a.action?.actionState ?? 'BLOCKED'];
-    const rb = ACTION_RANK[b.action?.actionState ?? 'BLOCKED'];
+    // v15.2: sort by display state so WAIT groups separately from
+    // BLOCKED. Falls back to the raw action state for safety.
+    const ra = ACTION_RANK[deriveRadarOpportunityState(a)];
+    const rb = ACTION_RANK[deriveRadarOpportunityState(b)];
     if (ra !== rb) return ra - rb;
     // Within a bucket: clarity desc.
     const ca = a.aiState?.confidence ?? 0;
@@ -188,12 +200,29 @@ export default function GuruRadar({
 
   const sorted = useMemo(() => sortResults(results), [results]);
 
-  // Summary chip counts by action state.
+  // Summary chip counts by action state. Kept exactly as the ladder
+  // produces them — feeds deriveFieldMood so mood thresholds remain
+  // identical to v15.1 (presentation-only spec for Phase 15.2).
   const counts = useMemo(() => {
     const c: Partial<Record<ActionState, number>> = {};
     for (const r of results) {
       if (r.ok && r.action) {
         c[r.action.actionState] = (c[r.action.actionState] ?? 0) + 1;
+      }
+    }
+    return c;
+  }, [results]);
+
+  // v15.2: display-state counts — BLOCKED is split into WAIT (field
+  // building) and BLOCKED (field dead). Used by the chip strip, the
+  // field-analysis pills, and per-card headlines. Never fed into mood
+  // / dispersion / families — those still see the raw action ladder.
+  const displayCounts = useMemo(() => {
+    const c: Partial<Record<RadarOpportunityState, number>> = {};
+    for (const r of results) {
+      if (r.ok && r.action) {
+        const s = deriveRadarOpportunityState(r);
+        c[s] = (c[s] ?? 0) + 1;
       }
     }
     return c;
@@ -467,11 +496,11 @@ export default function GuruRadar({
             </div>
           )}
 
-          {/* Summary chips */}
+          {/* Summary chips — v15.2: WAIT split out of BLOCKED. */}
           {results.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {(['GO', 'READY', 'WATCH', 'BLOCKED', 'MANAGE', 'EXIT'] as ActionState[])
-                .filter(s => (counts[s] ?? 0) > 0)
+              {(['GO', 'READY', 'WATCH', 'WAIT', 'BLOCKED', 'MANAGE', 'EXIT'] as RadarOpportunityState[])
+                .filter(s => (displayCounts[s] ?? 0) > 0)
                 .map(s => (
                   <span key={s} style={{
                     fontSize: 9, fontWeight: 700, letterSpacing: '0.12em',
@@ -481,7 +510,7 @@ export default function GuruRadar({
                     background: `${ACTION_COLOR[s]}11`,
                     borderRadius: 3, padding: '3px 8px',
                   }}>
-                    {s}: {counts[s]}
+                    {s}: {displayCounts[s]}
                   </span>
                 ))}
             </div>
@@ -518,7 +547,7 @@ export default function GuruRadar({
           ladderAudit={ladderAudit}
           oppWeather={oppWeather}
           anchoring={anchoring}
-          counts={counts}
+          counts={displayCounts}
         />
 
         {/* Result grid */}
@@ -608,11 +637,16 @@ function RadarCard({
 
   const ai     = result.aiState!;
   const action = result.action!;
-  const accent = ACTION_COLOR[action.actionState];
+  // v15.2: WAIT is a display reskin of BLOCKED for compression
+  // building. Headline and accent follow the display state; the
+  // action ladder underneath is unchanged.
+  const displayState = deriveRadarOpportunityState(result);
+  const accent = ACTION_COLOR[displayState];
   const stColor = stateColor(ai);
   const edge   = edgeLabel(result);
   const clarity = Math.round((ai.confidence ?? 0) * 100);
   const isGo   = action.actionState === 'GO';
+  const isWait = displayState === 'WAIT';
   // v14.5: shared-coherence vs symbol-price split for this asset.
   const ind = deriveSymbolIndividuality(result);
   // v14.6: reasoning layer — why this verdict.
@@ -682,13 +716,23 @@ function RadarCard({
           {ai.stateCode} · {ai.phase}
         </div>
 
-        {/* Action state — the headline */}
+        {/* Action state — the headline. v15.2: BLOCKED reads as WAIT
+            when the field is compressing. The trade-side action is
+            unchanged; this is a presentation reskin. */}
         <div style={{
           fontSize: 18, fontWeight: 800, color: accent,
           letterSpacing: '0.05em', lineHeight: 1.1,
         }}>
-          {action.actionState}
+          {displayState}
         </div>
+        {isWait && (
+          <div style={{
+            fontSize: 10, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em', color: accent, marginTop: -2,
+          }}>
+            {WAIT_SUBTITLE}
+          </div>
+        )}
 
         {/* v14.6: reasoning chips — why this verdict. Confirmations
             for GO/READY/MANAGE, blockers for WATCH/BLOCKED/EXIT.

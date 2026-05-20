@@ -141,6 +141,11 @@ export default function FieldAnalysisPanel(props: FieldAnalysisPanelProps) {
   ];
 
   const pills: { text: string; color?: string }[] = [
+    // v15.2: WAIT shown alongside BLOCKED — separates a compressing
+    // field from a dead one. Suppressed at zero to keep the row tight.
+    ...(((counts.WAIT ?? 0) > 0)
+      ? [{ text: `${counts.WAIT} WAIT`, color: '#7fb8c2' }]
+      : []),
     { text: `${counts.BLOCKED ?? 0} BLOCKED`, color: '#c45a5a' },
     { text: `${counts.READY ?? 0} READY`,     color: 'var(--cyan)' },
     ...(oppTop && oppTop.n > 0
