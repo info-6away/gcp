@@ -928,7 +928,10 @@ function RadarCard({
         {/* v17.4: live match — closest historical read in the ledger.
             Cross-symbol resemblance ("I've seen this before"). No
             outcome shown here — radar has no candle access; Research
-            sidebar carries the forward-return for each match. */}
+            sidebar carries the forward-return for each match.
+            v17.4.2: depth tag (today / this week / older analogue)
+            so the user can tell at a glance whether the resemblance
+            is fresh memory or genuine historical precedent. */}
         {liveMatches.length > 0 && (
           <div style={{
             fontSize: 9, fontFamily: 'var(--font-mono)',
@@ -943,6 +946,15 @@ function RadarCard({
               </b>{' '}
               <span style={{ color: 'var(--fg-2)' }}>
                 {liveMatches[0].similarity}%
+              </span>{' '}
+              <span style={{
+                fontSize: 7, color: liveMatches[0].depth === 'older'
+                  ? '#d4a028' : 'var(--fg-4)',
+                letterSpacing: '0.1em', fontWeight: 700,
+              }}>
+                · {liveMatches[0].depth === 'today'     ? 'TODAY'
+                   : liveMatches[0].depth === 'this-week' ? 'THIS WK'
+                   :                                        'OLDER'}
               </span>
             </div>
             <div style={{

@@ -49,6 +49,9 @@
 import type { AiStateHistoryRecord } from '@/lib/aiStateHistory';
 import type { MarketSymbol } from '@/types/gcp';
 import { familyOf } from '@/lib/marketFamilies';
+import {
+  noveltyAdjustment, clusterKey, HARD_REJECT_MS, type MatchDepth,
+} from '@/lib/matchNovelty';
 
 /** Subset of AiStateHistoryRecord the scorer needs. */
 export type LiveMatchAnchor = Pick<AiStateHistoryRecord,
@@ -59,26 +62,32 @@ export type LiveMatchAnchor = Pick<AiStateHistoryRecord,
 
 export interface LiveMatchBreakdown {
   /** Pre-cap normalized score (0-100). */
-  base:        number;
+  base:           number;
   /** Symbol-family adjustment that landed in raw — +12, -8, or 0. */
-  familyDelta: number;
-  /** Caps that bound the final score, in order — e.g.
-   *  ['family cap 80', 'clarity cap 85']. */
-  capsApplied: string[];
-  /** Final score after caps. */
-  final:       number;
+  familyDelta:    number;
+  /** Caps that bound the post-cap score (e.g. 'state cap 70'). */
+  capsApplied:    string[];
+  /** v17.4.2: temporal penalty applied AFTER caps (≤ 0). */
+  noveltyDelta:   number;
+  /** v17.4.2: temporal-penalty reasons (e.g. 'same-day -15'). */
+  noveltyReasons: string[];
+  /** Final score after caps + novelty. */
+  final:          number;
 }
 
 export interface LiveMatch {
   /** The historical record this match refers to. */
   record:      AiStateHistoryRecord;
-  /** 0-100 similarity score (after caps). */
+  /** 0-100 similarity score (after caps + novelty). */
   similarity:  number;
   /** Which dimensions matched — drives the diagnostic line. */
   matchedOn:   string[];
   /** Index in the source history array — lets callers cross-reference
    *  outcome arrays without re-walking history. */
   historyIdx:  number;
+  /** v17.4.2: historical depth bucket. UI surfaces this as a tag
+   *  ("older analogue" vs "today") so the user reads memory texture. */
+  depth:       MatchDepth;
   /** Auditable scoring breakdown. */
   breakdown:   LiveMatchBreakdown;
 }
@@ -231,7 +240,12 @@ function scorePair(
   return {
     similarity: final,
     matchedOn:  matched,
-    breakdown:  { base, familyDelta, capsApplied, final },
+    breakdown:  {
+      base, familyDelta, capsApplied,
+      noveltyDelta:   0,
+      noveltyReasons: [],
+      final,
+    },
   };
 }
 
@@ -240,15 +254,16 @@ export interface LiveMatchOptions {
   limit?:           number;
   /** Below this similarity (0-100) drop the match (default 50). */
   minScore?:        number;
-  /** Anchor's own scan and any other observation within this many ms
-   *  are excluded (prevents matching against same-scan siblings).
-   *  Default 60_000 — one minute. */
+  /** Hard-reject window — observations within this many ms of the
+   *  anchor are dropped before scoring. v17.4.2 default: 4 hours.
+   *  Same-scan siblings (the v17.4.0 case) are subsumed by this. */
   excludeWithinMs?: number;
   /** Symbol filter — when set, only records matching this symbol are
    *  scored. */
   symbol?:          string;
-  /** Emit one dev-only console line per call describing the top
-   *  match's score breakdown. Default true in dev, false in prod. */
+  /** Emit one dev-only console line per call describing the pipeline
+   *  output (candidates / collapsed / kept / top breakdown). Default
+   *  true in dev, false in prod. */
   debug?:           boolean;
 }
 
@@ -262,30 +277,78 @@ export function findLiveMatches(
 ): LiveMatch[] {
   const limit           = options.limit           ?? 3;
   const minScore        = options.minScore        ?? 50;
-  const excludeWithinMs = options.excludeWithinMs ?? 60_000;
+  const excludeWithinMs = options.excludeWithinMs ?? HARD_REJECT_MS;
   const symbolFilter    = options.symbol;
   const debug           = options.debug ?? isDev();
 
-  const ranked: LiveMatch[] = [];
+  // ── Stage 1: score + hard-reject + novelty penalty ──
+  // Score every in-window record; apply the temporal penalty so recent
+  // observations have to clear a higher bar. Drop anything that falls
+  // below minScore after penalty (a match that's only "interesting"
+  // because it happened 20 minutes ago isn't interesting).
+  const scored: LiveMatch[] = [];
   for (let i = 0; i < history.length; i++) {
     const rec = history[i];
     if (symbolFilter && rec.symbol !== symbolFilter) continue;
     if (Math.abs(rec.timestamp - anchor.timestamp) < excludeWithinMs) continue;
 
     const { similarity, matchedOn, breakdown } = scorePair(anchor, rec);
-    if (similarity < minScore) continue;
-    ranked.push({
-      record: rec, similarity, matchedOn, historyIdx: i, breakdown,
+    const adj   = noveltyAdjustment(rec.timestamp, anchor.timestamp);
+    const final = Math.max(0, similarity + adj.delta);
+    if (final < minScore) continue;
+
+    scored.push({
+      record:     rec,
+      similarity: final,
+      matchedOn,
+      historyIdx: i,
+      depth:      adj.depth,
+      breakdown:  {
+        ...breakdown,
+        noveltyDelta:   adj.delta,
+        noveltyReasons: adj.reasons,
+        final,
+      },
     });
   }
 
-  ranked.sort((a, b) =>
-    b.similarity - a.similarity || b.record.timestamp - a.record.timestamp);
-  const top = ranked.slice(0, limit);
+  // ── Stage 2: cluster collapse ──
+  // Records sharing (day, signature, state, opportunity, phase) are one
+  // event. Keep the strongest member, discard the rest.
+  const clusters = new Map<string, LiveMatch>();
+  let collapsed = 0;
+  for (const m of scored) {
+    const key = clusterKey(m.record);
+    const existing = clusters.get(key);
+    if (!existing) {
+      clusters.set(key, m);
+    } else if (m.similarity > existing.similarity) {
+      clusters.set(key, m);
+      collapsed++;
+    } else {
+      collapsed++;
+    }
+  }
+  const survivors = Array.from(clusters.values());
 
+  // ── Stage 3: rank — similarity desc, then OLDER FIRST as tiebreaker ──
+  // The older-first preference is the deliberate v17.4.2 nudge toward
+  // "memory" over "mirror" — when two candidates score the same, prefer
+  // the one that's farther in the past.
+  survivors.sort((a, b) => {
+    if (b.similarity !== a.similarity) return b.similarity - a.similarity;
+    return a.record.timestamp - b.record.timestamp;
+  });
+  const top = survivors.slice(0, limit);
+
+  // ── Dev log: one line per call summarizing the pipeline ──
   if (debug && top.length > 0) {
     const t = top[0];
     const parts: string[] = [
+      `candidates=${scored.length}`,
+      `collapsed=${collapsed}`,
+      `kept=${survivors.length}`,
+      `top=${t.record.symbol}`,
       `base=${t.breakdown.base}`,
     ];
     if (t.breakdown.familyDelta !== 0) {
@@ -294,12 +357,12 @@ export function findLiveMatches(
     if (t.breakdown.capsApplied.length > 0) {
       parts.push(`caps=[${t.breakdown.capsApplied.join(', ')}]`);
     }
+    if (t.breakdown.noveltyReasons.length > 0) {
+      parts.push(`novelty=[${t.breakdown.noveltyReasons.join(', ')}]`);
+    }
+    parts.push(`depth=${t.depth}`);
     parts.push(`final=${t.breakdown.final}`);
-    console.log(
-      '[LIVE MATCH]',
-      `${anchor.symbol} → ${t.record.symbol}`,
-      ...parts,
-    );
+    console.log('[LIVE MATCH]', anchor.symbol, ...parts);
   }
 
   return top;

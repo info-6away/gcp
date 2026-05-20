@@ -1662,6 +1662,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                           : m.fwdPct >  0.05      ? '#22c55e'
                           : m.fwdPct < -0.05      ? '#ef4444'
                           :                          'var(--fg-3)';
+                        // v17.4.2: depth tag — older analogues stand
+                        // out (amber); recent reads stay muted.
+                        const depthLabel =
+                            m.depth === 'today'     ? 'today'
+                          : m.depth === 'this-week' ? 'this wk'
+                          :                            'older';
+                        const depthColor =
+                            m.depth === 'older' ? '#d4a028' : 'var(--fg-4)';
                         return (
                           <div key={m.record.id} style={{
                             display: 'flex', flexDirection: 'column', gap: 1,
@@ -1674,6 +1682,12 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                               <span style={{ color: 'var(--fg-2)' }}>
                                 {dateStr} <span style={{ color: 'var(--fg-4)' }}>
                                   {m.record.symbol}
+                                </span>{' '}
+                                <span style={{
+                                  fontSize: 7, color: depthColor,
+                                  letterSpacing: '0.1em', fontWeight: 700,
+                                }}>
+                                  · {depthLabel.toUpperCase()}
                                 </span>
                               </span>
                               <span style={{
