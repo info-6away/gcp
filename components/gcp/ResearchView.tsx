@@ -131,24 +131,38 @@ const AI_STATE_MIN_COUNT = 10;
 // Each entry maps a "FROM→TO" key to its column metadata. Only these
 // transitions occupy a column in the BY TRANSITION view; rarer pairs
 // are tallied as "OTHER" so the x-axis stays readable.
-//   Compression cycle  CS→IS, IS→AT, AT→FA, FA→CS  (cyan / green / red / blue-grey)
-//   Recompression      AT→CS, IS→CS                (blue-grey)
-//   Shock ladder       SH→CS, DS→CS, SH→DS         (orange/red)
+//
+// v17.1 — Transition Research Rebuild. Expanded the priority set with
+// three more high-value pairs that complete the success ladder past
+// ignition (CS→AT, AT→SS, SS→CL). Sample-count gate lowered to 1 so
+// even single observations appear with a LOW SampleBadge — the badge
+// communicates uncertainty without hiding the row.
+//
+//   Compression cycle   CS→IS, CS→AT, IS→AT, AT→SS, SS→CL
+//   Failure pivots      AT→FA, FA→CS
+//   Recompression       AT→CS, IS→CS
+//   Shock ladder        SH→CS, DS→CS, SH→DS
 const TRANSITION_META: Record<string, {
   abbr: string; label: string; color: string; x: number;
 }> = {
-  'CS→IS': { abbr: 'CS→IS', label: 'Compression → Ignition',  color: '#4dd9e8', x: 1 },
-  'IS→AT': { abbr: 'IS→AT', label: 'Ignition → Alignment',    color: '#22c55e', x: 2 },
-  'AT→FA': { abbr: 'AT→FA', label: 'Alignment → Failed',      color: '#ef4444', x: 3 },
-  'FA→CS': { abbr: 'FA→CS', label: 'Failed → Compression',    color: '#7F98A3', x: 4 },
-  'AT→CS': { abbr: 'AT→CS', label: 'Alignment → Recompress',  color: '#7F98A3', x: 5 },
-  'IS→CS': { abbr: 'IS→CS', label: 'Ignition → Recompress',   color: '#7F98A3', x: 6 },
-  'SH→CS': { abbr: 'SH→CS', label: 'Shock → Compression',     color: '#fb923c', x: 7 },
-  'DS→CS': { abbr: 'DS→CS', label: 'Discharge → Compression', color: '#fb923c', x: 8 },
-  'SH→DS': { abbr: 'SH→DS', label: 'Shock → Discharge',       color: '#e24b4a', x: 9 },
+  'CS→IS': { abbr: 'CS→IS', label: 'Compression → Ignition',   color: '#4dd9e8', x: 1 },
+  'CS→AT': { abbr: 'CS→AT', label: 'Compression → Alignment',  color: '#2db8b4', x: 2 },
+  'IS→AT': { abbr: 'IS→AT', label: 'Ignition → Alignment',     color: '#22c55e', x: 3 },
+  'AT→SS': { abbr: 'AT→SS', label: 'Alignment → Sync',         color: '#d4a028', x: 4 },
+  'SS→CL': { abbr: 'SS→CL', label: 'Sync → Climax',            color: '#d46428', x: 5 },
+  'AT→FA': { abbr: 'AT→FA', label: 'Alignment → Failed',       color: '#ef4444', x: 6 },
+  'FA→CS': { abbr: 'FA→CS', label: 'Failed → Compression',     color: '#7F98A3', x: 7 },
+  'AT→CS': { abbr: 'AT→CS', label: 'Alignment → Recompress',   color: '#7F98A3', x: 8 },
+  'IS→CS': { abbr: 'IS→CS', label: 'Ignition → Recompress',    color: '#7F98A3', x: 9 },
+  'SH→CS': { abbr: 'SH→CS', label: 'Shock → Compression',      color: '#fb923c', x: 10 },
+  'DS→CS': { abbr: 'DS→CS', label: 'Discharge → Compression',  color: '#fb923c', x: 11 },
+  'SH→DS': { abbr: 'SH→DS', label: 'Shock → Discharge',        color: '#e24b4a', x: 12 },
 };
-const TRANSITION_COLS = 9;
-const TRANSITION_MIN_COUNT = 3;
+const TRANSITION_COLS = 12;
+// v17.1: drop the 3-sample gate. The SampleBadge already conveys
+// LOW/MEDIUM/HIGH reliability, so a single observation can show with
+// a LOW badge instead of being hidden as "Insufficient".
+const TRANSITION_MIN_COUNT = 1;
 
 const FWD_LABEL: Record<number, string> = {
   1: '15m', 2: '30m', 4: '1h', 8: '2h', 16: '4h',
@@ -1571,14 +1585,33 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 </div>
               )}
 
-              {mode === 'transition' && transitionPoints.length > 0 && Object.entries(TRANSITION_META).map(([key, meta]) => {
-                const s = transitionStats[key];
+              {/* v17.1: transitions sorted by reliability descending so
+                  the strongest evidence-backed pairs appear first. Cards
+                  with no observations sink to the bottom (rendered with
+                  reduced opacity as placeholders) so the user knows
+                  which priority pairs are still being collected. */}
+              {mode === 'transition' && transitionPoints.length > 0
+                && Object.entries(TRANSITION_META)
+                  .map(([key, meta]) => ({
+                    key, meta,
+                    stats: transitionStats[key],
+                  }))
+                  .sort((a, b) => {
+                    const an = a.stats?.pts.length ?? 0;
+                    const bn = b.stats?.pts.length ?? 0;
+                    if ((an === 0) !== (bn === 0)) return an === 0 ? 1 : -1;
+                    const ar = a.stats?.reliability ?? 0;
+                    const br = b.stats?.reliability ?? 0;
+                    return br - ar;
+                  })
+                  .map(({ key, meta, stats }) => {
+                const s = stats;
                 if (!s) return null;
                 const n = s.pts.length;
                 if (n === 0) {
                   return (
                     <div key={key} style={{
-                      marginBottom: 8, paddingBottom: 8, opacity: 0.45,
+                      marginBottom: 8, paddingBottom: 8, opacity: 0.4,
                       borderBottom: '1px solid var(--line-0)',
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1591,57 +1624,65 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                     </div>
                   );
                 }
-                const bullPct  = (s.bull / n) * 100;
-                const stableW  = Math.round(s.stability * 100);
+                const winPct  = (s.bull / n) * 100;
+                const stableW = Math.round(s.stability * 100);
+                const avgCol  =
+                    s.avg >  0.05 ? '#22c55e'
+                  : s.avg < -0.05 ? '#ef4444'
+                  :                  'var(--fg-3)';
                 return (
                   <div key={key} style={{
-                    marginBottom: 10, paddingBottom: 10,
+                    marginBottom: 12, paddingBottom: 12,
                     borderBottom: '1px solid var(--line-0)',
-                    opacity: s.insufficient ? 0.65 : 1,
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{meta.abbr}</span>
+                    {/* Header — ABBR + average return */}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      marginBottom: 3, alignItems: 'baseline',
+                    }}>
+                      <span style={{ color: meta.color, fontSize: 11, fontWeight: 700 }}>
+                        {meta.abbr}
+                      </span>
                       <span style={{
-                        fontSize: 11, fontVariantNumeric: 'tabular-nums',
-                        color: s.insufficient ? 'var(--fg-3)'
-                          : s.avg > 0.05 ? '#22c55e' : s.avg < -0.05 ? '#ef4444' : 'var(--fg-3)',
+                        fontSize: 12, fontWeight: 700, color: avgCol,
+                        fontVariantNumeric: 'tabular-nums',
                       }}>
                         {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
                       </span>
                     </div>
-                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 5 }}>
                       {meta.label} · {n} transition{n === 1 ? '' : 's'}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* v17.1: stat row — WIN / CONF / STAB as labelled
+                        mini-stats so the user can compare across cards
+                        without parsing the chip soup. */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, 1fr)',
+                      gap: 4, marginBottom: 6,
+                    }}>
+                      <Stat label="WIN"  value={`${winPct.toFixed(0)}%`}
+                        color={winPct >= 60 ? '#22c55e' : winPct <= 40 ? '#ef4444' : 'var(--fg-2)'} />
+                      <Stat label="CONF" value={`${(s.avgConf * 100).toFixed(0)}%`}
+                        color="var(--fg-2)" />
+                      <Stat label="STAB" value={`${stableW}%`}
+                        color={stableW >= 60 ? '#4dd9e8' : 'var(--fg-2)'} />
+                    </div>
+                    <div style={{
+                      display: 'flex', gap: 6, fontSize: 8,
+                      color: 'var(--fg-4)', marginBottom: 4,
+                      alignItems: 'center',
+                    }}>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
                       <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
-                      <span>{bullPct.toFixed(0)}% bullish</span>
+                      <span>reliability {s.reliability.toFixed(0)}</span>
                       <span style={{ marginLeft: 'auto' }}>
                         <SampleBadge n={n} />
                       </span>
                     </div>
-                    {s.insufficient ? (
-                      <div style={{
-                        marginTop: 4,
-                        fontSize: 8, color: '#d4a028',
-                        letterSpacing: '0.04em',
-                      }}>
-                        Insufficient transition data
-                      </div>
-                    ) : (
-                      <>
-                        <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', background: '#22c55e', width: `${bullPct}%`, borderRadius: 1 }} />
-                        </div>
-                        <div style={{
-                          display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginTop: 4, flexWrap: 'wrap',
-                        }}>
-                          <span>conf {(s.avgConf * 100).toFixed(0)}%</span>
-                          <span>· stability {stableW}%</span>
-                          <span>· reliability {s.reliability.toFixed(0)}</span>
-                        </div>
-                      </>
-                    )}
+                    <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: '#22c55e', width: `${winPct}%`, borderRadius: 1 }} />
+                    </div>
                   </div>
                 );
               })}
@@ -1661,6 +1702,34 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// v17.1: labelled mini-stat used in the transition cards. Sits in a
+// 3-column grid (WIN / CONF / STAB) so the user can compare across
+// cards without parsing chip soup. Centered, monospace, very small —
+// the color is the only thing that pops.
+function Stat({ label, value, color }: {
+  label: string; value: string; color: string;
+}) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '3px 0',
+      background: 'var(--bg-2)',
+      border: '1px solid var(--line-0)',
+      borderRadius: 2,
+    }}>
+      <span style={{
+        fontSize: 7, letterSpacing: '0.14em', color: 'var(--fg-4)',
+        fontFamily: 'IBM Plex Mono, monospace', fontWeight: 700,
+      }}>{label}</span>
+      <span style={{
+        fontSize: 11, fontWeight: 700, color,
+        fontVariantNumeric: 'tabular-nums',
+        fontFamily: 'IBM Plex Mono, monospace',
+      }}>{value}</span>
     </div>
   );
 }
