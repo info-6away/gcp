@@ -9,6 +9,10 @@ import {
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
 import { sampleConfidence, SAMPLE_COLOR } from '@/lib/sampleConfidence';
+import {
+  signatureMatchesFilter, FILTER_LABEL, FILTER_PHRASE,
+  type FieldContextFilter,
+} from '@/lib/fieldSignature';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -189,6 +193,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   // available but are framed as legacy / context.
   const [mode,    setMode]    = useState<ResearchMode>('aistate');
   const [hovered, setHovered] = useState<Hovered | null>(null);
+  // v17.2: field-context filter. 'all' keeps every record; the four
+  // mood filters keep only records whose persisted fieldSignature
+  // matches. Records without a signature (pre-v17.2 / manual Ask Guru)
+  // never match a specific filter — see signatureMatchesFilter.
+  const [contextFilter, setContextFilter] = useState<FieldContextFilter>('all');
 
   const svgContainerRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(720);
@@ -373,6 +382,11 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     };
     for (const rec of aiHistory) {
       if (rec.symbol !== symbol) continue;
+      // v17.2: apply the field-context filter. Records whose persisted
+      // fieldSignature doesn't match the active filter are skipped so
+      // averages reflect the chosen context instead of being washed
+      // out by mixing opportunity-window and defensive-market reads.
+      if (!signatureMatchesFilter(rec.fieldSignature, contextFilter)) continue;
       // Find the first candle at-or-after the record timestamp.
       let entryIdx = -1;
       for (let i = 0; i < candles.length; i++) {
@@ -401,7 +415,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       });
     }
     return { points, pendingByState, totalForSymbol, pendingTotal };
-  }, [aiHistory, candles, candleSymbol, fwdBars, symbol]);
+  }, [aiHistory, candles, candleSymbol, fwdBars, symbol, contextFilter]);
 
   const aiStatePoints = aiStateData.points;
 
@@ -463,9 +477,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!aiHistory.length || !candles.length) return { points, otherCount };
     if (candleSymbol && candleSymbol !== symbol) return { points, otherCount };
 
-    // Filter to current symbol then sort oldest → newest.
+    // Filter to current symbol + context, then sort oldest → newest.
+    // v17.2: the context filter applies BEFORE the transition pair is
+    // identified — a CS→IS transition that happened during a defensive
+    // market is excluded from the OPPORTUNITY filter, exactly as the
+    // user expects ("CS→IS during opportunity windows").
     const ordered = aiHistory
-      .filter(r => r.symbol === symbol)
+      .filter(r => r.symbol === symbol
+                && signatureMatchesFilter(r.fieldSignature, contextFilter))
       .sort((a, b) => a.timestamp - b.timestamp);
     if (ordered.length < 2) return { points, otherCount };
 
@@ -516,7 +535,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       });
     }
     return { points, otherCount };
-  }, [aiHistory, candles, candleSymbol, fwdBars, symbol]);
+  }, [aiHistory, candles, candleSymbol, fwdBars, symbol, contextFilter]);
 
   const transitionPoints = transitionData.points;
 
@@ -812,6 +831,52 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         <span style={{ color: 'var(--fg-4)', fontSize: 9, marginLeft: 8 }}>
           {totalLabel}
         </span>
+      </div>
+
+      {/* v17.2: FIELD CONTEXT filter row. Filters the active research
+          surface by the macro field conditions at scan-time. ALL keeps
+          everything; the four mood filters restrict to records whose
+          persisted fieldSignature matches. Pattern tab is unaffected
+          (it derives from candles/series, not radar history). */}
+      <div style={{
+        padding: '6px 16px',
+        borderBottom: '1px solid var(--line-0)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontSize: 9, flexShrink: 0,
+        background: contextFilter === 'all' ? 'transparent' : 'rgba(77, 217, 232, 0.04)',
+      }}>
+        <span style={{
+          color: 'var(--fg-4)', letterSpacing: '0.14em', fontWeight: 600,
+        }}>
+          FIELD CONTEXT
+        </span>
+        <div style={{ display: 'flex', gap: 1 }}>
+          {(['all', 'opportunity', 'defensive', 'synchronized', 'fragmented'] as FieldContextFilter[])
+            .map(f => (
+              <button key={f}
+                onClick={() => setContextFilter(f)}
+                title={mode === 'pattern' ? 'Pattern tab is not field-context filtered' : undefined}
+                style={{
+                  padding: '2px 8px', fontSize: 9, letterSpacing: '0.08em',
+                  fontFamily: 'var(--font-mono)',
+                  background: contextFilter === f ? 'var(--bg-3)' : 'transparent',
+                  border: `1px solid ${contextFilter === f ? 'var(--cyan)' : 'transparent'}`,
+                  borderRadius: 2,
+                  color: contextFilter === f ? 'var(--cyan)'
+                       : mode === 'pattern' ? 'var(--fg-4)' : 'var(--fg-3)',
+                  cursor: 'pointer',
+                  opacity: mode === 'pattern' && f !== 'all' ? 0.45 : 1,
+                }}
+              >
+                {FILTER_LABEL[f]}
+              </button>
+            ))}
+        </div>
+        {mode === 'pattern' && contextFilter !== 'all' && (
+          <span style={{ color: 'var(--fg-4)', fontStyle: 'italic' }}>
+            (pattern tab ignores context)
+          </span>
+        )}
       </div>
 
       {loading && (
@@ -1298,7 +1363,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                     <b style={{ color: fieldInsight.color }}>{fieldInsight.abbr}</b>{' '}
                     {mode === 'transition' ? 'transitions'
                       : mode === 'pattern' ? 'patterns'
-                      : 'reads'} averaged{' '}
+                      : 'reads'}{' '}
+                    {/* v17.2: filter context phrase. ALL → "globally";
+                        others → "during opportunity windows" etc. */}
+                    <span style={{ color: contextFilter === 'all' ? 'var(--fg-4)' : 'var(--cyan)' }}>
+                      {FILTER_PHRASE[contextFilter]}
+                    </span>{' '}
+                    averaged{' '}
                     <b style={{
                       color: fieldInsight.avg > 0 ? '#22c55e'
                            : fieldInsight.avg < 0 ? '#ef4444'

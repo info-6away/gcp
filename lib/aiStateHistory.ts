@@ -123,6 +123,25 @@ export interface AiStateHistoryRecord {
   // manual Guru calls from radar scans when needed; default 'manual'
   // for backward compatibility with records written pre-v17.
   source?: 'manual_guru' | 'radar_scan';
+
+  // v17.2: field context snapshot. Captured once per radar scan and
+  // attached to every observation from that scan so Research can
+  // slice history by surrounding field conditions (opportunity /
+  // defensive / synchronized / fragmented). Manual single-symbol Ask
+  // Guru calls don't carry one — they only see one symbol, so there
+  // is no "field" to snapshot.
+  fieldSignature?: {
+    mood:              'opportunity' | 'defensive' | 'fragmented' | 'synchronized' | 'neutral';
+    moodTitle:         string;
+    dispersionLevel:   'very_low' | 'low' | 'moderate' | 'high' | 'extreme';
+    agreementPct:      number;
+    dominantAction:    'BLOCKED' | 'WATCH' | 'READY' | 'GO' | 'MIXED';
+    topFamily:         string;
+    topFamilyMood:     string;
+    opportunityBucket: 'far' | 'building' | 'near' | 'imminent' | 'go';
+    anchoring:         number;
+    sampled:           number;
+  };
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -240,6 +259,20 @@ export interface AiStateHistoryInput {
 
   // v17.0: provenance — manual Guru call vs radar scan.
   source?: 'manual_guru' | 'radar_scan';
+
+  // v17.2: field context snapshot — see record type above.
+  fieldSignature?: {
+    mood:              'opportunity' | 'defensive' | 'fragmented' | 'synchronized' | 'neutral';
+    moodTitle:         string;
+    dispersionLevel:   'very_low' | 'low' | 'moderate' | 'high' | 'extreme';
+    agreementPct:      number;
+    dominantAction:    'BLOCKED' | 'WATCH' | 'READY' | 'GO' | 'MIXED';
+    topFamily:         string;
+    topFamilyMood:     string;
+    opportunityBucket: 'far' | 'building' | 'near' | 'imminent' | 'go';
+    anchoring:         number;
+    sampled:           number;
+  };
 }
 
 // Append a single record. Returns the new history. Dedupes against
@@ -269,8 +302,16 @@ export function appendAiStateHistory(input: AiStateHistoryInput): AiStateHistory
   // Dedup ONLY against the most-recent record. The first record
   // always falls through this guard (last is undefined on empty
   // history), guaranteeing the first save lands.
+  //
+  // v17.2: dedup is now ALSO symbol-aware. Pre-v17.2 a multi-symbol
+  // radar scan that happened to produce two consecutive identical
+  // state/phase/direction triples (e.g. BTC and ETH both reading
+  // "CS / Building / Up" in the same scan) would collapse — the second
+  // symbol overwrote the first. Adding the symbol check keeps each
+  // symbol's observation distinct even when the macro read agrees.
   if (last
       && input.timestamp - last.timestamp < DEDUP_WINDOW_MS
+      && last.symbol    === input.symbol
       && last.stateCode === input.stateCode
       && last.phase     === input.phase
       && last.direction === input.direction) {

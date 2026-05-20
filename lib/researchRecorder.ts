@@ -25,6 +25,7 @@ import {
 } from '@/lib/aiStateHistory';
 import { deriveOpportunityDistance } from '@/lib/opportunityDistance';
 import type { RadarResult } from '@/lib/radarScan';
+import type { FieldSignature } from '@/lib/fieldSignature';
 
 const isDev = () =>
   typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
@@ -67,8 +68,12 @@ export function recordRadarScanObservation(args: {
    *  Optional; falls through as 0 when the radar surface doesn't have
    *  it readily. */
   netVariance?: number;
+  /** v17.2: field context snapshot for this scan. Computed once per
+   *  scan and attached to every observation it produces so Research
+   *  can slice history by surrounding conditions. */
+  fieldSignature?: FieldSignature;
 }): void {
-  const { result, timeframe, regime } = args;
+  const { result, timeframe, regime, fieldSignature } = args;
   if (!result.ok || !result.aiState || !result.action) return;
 
   const ai = result.aiState;
@@ -117,6 +122,7 @@ export function recordRadarScanObservation(args: {
     opportunityScore:  opp?.score,
     opportunityStatus: opp?.status,
     source:            'radar_scan',
+    fieldSignature,
   });
 
   if (isDev()) {
