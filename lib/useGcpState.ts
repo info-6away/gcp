@@ -58,6 +58,8 @@ import {
 } from '@/lib/aiAnalysisInterval';
 import { appendAiStateHistory } from '@/lib/aiStateHistory';
 import { deriveActionState } from '@/lib/actionState';
+import { deriveOpportunityDistance } from '@/lib/opportunityDistance';
+import type { MarketSymbol } from '@/types/gcp';
 import { anchorAiState } from '@/lib/aiStateAnchor';
 import { deriveNextState } from '@/lib/stateTransition';
 import { deriveDirectionalPressure } from '@/lib/directionalPressure';
@@ -972,6 +974,29 @@ export function useGcpState(inputs: GcpStateInputs | null): UseGcpStateResult {
                   || a === 'READY'   || a === 'GO'
                 ? a : undefined;
             })(),
+            // v17.0: opportunity bucket persisted so Research can sort
+            // historical records into far/building/near/imminent/go
+            // without re-deriving. priceStructure is absent on the
+            // manual single-symbol path, so the price-confirmation
+            // check soft-passes — same trade-off the live banner makes.
+            ...(() => {
+              // Synthetic RadarResult shape so opportunity distance can
+              // run against the manual classification. priceStructure
+              // is null on this path; deriveOpportunityDistance handles
+              // the missing-price case via a soft-pass on that check.
+              const opp = deriveOpportunityDistance({
+                symbol:    cur.symbol as MarketSymbol,
+                scannedAt: Date.now(),
+                ok:        true,
+                aiState:   finalResp,
+                action:    undefined,
+                priceStructure: null,
+              });
+              return opp
+                ? { opportunityScore: opp.score, opportunityStatus: opp.status }
+                : {};
+            })(),
+            source: 'manual_guru',
           });
         }
       } else {

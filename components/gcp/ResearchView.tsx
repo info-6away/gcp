@@ -8,6 +8,7 @@ import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
+import { sampleConfidence, SAMPLE_COLOR } from '@/lib/sampleConfidence';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -22,14 +23,19 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
   USDCHF: 'USD/CHF',
 };
 
-type ResearchMode = 'regime' | 'pattern' | 'aistate' | 'transition';
+// v17.0: 'regime' tab replaced with 'opportunity'. Regime alone has
+// weak explanatory power on its own; opportunity distance (the radar
+// closeness-to-GO bucket) answers "do NEAR opportunities actually
+// become winners?" which is the question that matters for trading.
+type ResearchMode = 'opportunity' | 'pattern' | 'aistate' | 'transition';
 
-interface RegimePoint {
-  kind:   'regime';
-  regime: string;
-  fwdPct: number;
-  t:      number;
-  nv:     number;
+interface OpportunityPoint {
+  kind:    'opportunity';
+  status:  'far' | 'building' | 'near' | 'imminent' | 'go';
+  score:   number;
+  fwdPct:  number;
+  t:       number;
+  stateCode: string;
 }
 
 interface PatternPoint {
@@ -49,6 +55,11 @@ interface AiStatePoint {
   confidence: number;
   fwdPct:     number;
   t:          number;
+  // v17.0: opportunity bucket persisted on the record (when present).
+  // Older history rows (pre-v17) won't have these — they'll appear in
+  // BY AI STATE but not in BY OPPORTUNITY.
+  opportunityStatus?: 'far' | 'building' | 'near' | 'imminent' | 'go';
+  opportunityScore?:  number;
 }
 
 // v11.32: transitions are state-pair events captured from
@@ -69,16 +80,23 @@ interface TransitionPoint {
   stable:         boolean;
 }
 
-type Hovered = RegimePoint | PatternPoint | AiStatePoint | TransitionPoint;
+type Hovered = OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint;
 
-const REGIME_META: Record<string, { label: string; color: string; x: number }> = {
-  A: { label: 'A · Silence',         color: '#4a72c4', x: 1 },
-  B: { label: 'B · Ignition',        color: '#4dd9e8', x: 2 },
-  C: { label: 'C · Alignment',       color: '#2db8b4', x: 3 },
-  D: { label: 'D · Synchronization', color: '#d4a028', x: 4 },
-  E: { label: 'E · Climax',          color: '#d46428', x: 5 },
-  F: { label: 'F · Shock',           color: '#e24b4a', x: 6 },
+// v17.0: opportunity buckets — far/building/near/imminent/go. Colors
+// mirror the radar's OPP_STATUS_COLOR palette so the same value reads
+// the same way wherever it appears.
+const OPPORTUNITY_META: Record<string, {
+  label: string; abbr: string; color: string; x: number;
+}> = {
+  far:      { label: 'Far',      abbr: 'FAR',  color: '#7F98A3', x: 1 },
+  building: { label: 'Building', abbr: 'BLD',  color: '#d4a028', x: 2 },
+  near:     { label: 'Near',     abbr: 'NEAR', color: '#4dd9e8', x: 3 },
+  imminent: { label: 'Imminent', abbr: 'IMM',  color: '#22c55e', x: 4 },
+  go:       { label: 'Go',       abbr: 'GO',   color: '#22c55e', x: 5 },
 };
+const OPPORTUNITY_COLS = 5;
+const OPPORTUNITY_ORDER: Array<keyof typeof OPPORTUNITY_META> =
+  ['far', 'building', 'near', 'imminent', 'go'];
 
 const PATTERN_META: Record<string, { label: string; abbr: string; color: string; x: number }> = {
   'Alignment Ladder':    { label: 'Alignment Ladder',    abbr: 'AL', color: '#4dd9e8', x: 1 },
@@ -131,15 +149,6 @@ const TRANSITION_META: Record<string, {
 };
 const TRANSITION_COLS = 9;
 const TRANSITION_MIN_COUNT = 3;
-
-function regimeFor(v: number): string {
-  if (v < 50)  return 'A';
-  if (v < 100) return 'B';
-  if (v < 140) return 'C';
-  if (v < 170) return 'D';
-  if (v < 220) return 'E';
-  return 'F';
-}
 
 const FWD_LABEL: Record<number, string> = {
   1: '15m', 2: '30m', 4: '1h', 8: '2h', 16: '4h',
@@ -248,109 +257,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, gcpReady]);
 
-  // ── Regime scatter (one dot per candle) ─────────────────────────────────────
-  // v11.19.3: allow partial forward windows + bar-OPEN entry. The
-  // previous loop ran `i < candles.length - fwdBars` which dropped the
-  // last fwdBars samples entirely; for short candle histories this
-  // could leave each regime with single-digit counts. Now we clamp the
-  // forward index to the last available bar and require at least one
-  // bar of forward window. Entry uses c.o (bar open) per the
-  // "regime taken at bar OPEN" spec; exit is the close fwdBars later.
-  // taggedByRegime / survivedByRegime are exposed via regimeData so
-  // the sidebar can flag "Insufficient data" without re-walking the
-  // candle array.
-  const regimeData = useMemo(() => {
-    const empty = {
-      points: [] as RegimePoint[],
-      taggedByRegime:   { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 } as Record<string, number>,
-      survivedByRegime: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 } as Record<string, number>,
-    };
-    if (!candles.length || !series.length) return empty;
-    // v11.23.4: refuse to compute when the loaded candles belong to a
-    // different symbol than the one the user has selected. Without this
-    // guard, a symbol flip from XAUUSD → BTC would render gold-derived
-    // regime points under the BTC label for one render cycle.
-    if (candleSymbol && candleSymbol !== symbol) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn(`[Research] symbol mismatch — selected ${symbol} but candles ${candleSymbol}`);
-      }
-      return empty;
-    }
-
-    const gcpByTs = new Map<number, { v: number; r: string }>();
-    series.forEach(p => gcpByTs.set(Math.floor(p.t / 1000), { v: p.v, r: p.r ?? regimeFor(p.v) }));
-
-    const taggedByRegime:   Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
-    const survivedByRegime: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
-
-    const points: RegimePoint[] = [];
-    const lastIdx = candles.length - 1;
-    for (let i = 0; i < candles.length; i++) {
-      const c = candles[i];
-      // Need a positive open price to compute a meaningful return.
-      if (!c || c.o <= 0) continue;
-
-      // Regime is read at the bar OPEN — look up GCP at the bar's
-      // timestamp (with up to 5 min slack to handle slightly off-grid
-      // GCP samples).
-      const ts = Math.floor(c.t / 1000);
-      let gcpPt = gcpByTs.get(ts);
-      if (!gcpPt) {
-        for (let d = 60; d <= 300; d += 60) {
-          gcpPt = gcpByTs.get(ts - d) ?? gcpByTs.get(ts + d);
-          if (gcpPt) break;
-        }
-      }
-      if (!gcpPt) continue;
-
-      if (taggedByRegime[gcpPt.r] != null) taggedByRegime[gcpPt.r]++;
-
-      // Allow partial forward windows: clamp the exit index to the
-      // last available candle. The last fwdBars bars get progressively
-      // shorter windows but are still counted, which is what the
-      // "remove over-filtering" spec wants.
-      const fwdIdx = Math.min(i + fwdBars, lastIdx);
-      if (fwdIdx === i) continue;       // need at least 1 forward bar
-      const cFwd = candles[fwdIdx];
-      if (!cFwd || cFwd.c <= 0) continue;
-
-      // Entry at bar OPEN; exit at close of the forward bar.
-      const fwdPct = ((cFwd.c - c.o) / c.o) * 100;
-      points.push({
-        kind:   'regime',
-        regime: gcpPt.r,
-        fwdPct: +fwdPct.toFixed(3),
-        t:      c.t,
-        nv:     gcpPt.v,
-      });
-      if (survivedByRegime[gcpPt.r] != null) survivedByRegime[gcpPt.r]++;
-    }
-
-    if (process.env.NODE_ENV !== 'production') {
-      const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
-      const cFirst = candles[0]?.t ?? 0;
-      const cLast  = candles[candles.length - 1]?.t ?? 0;
-      const gFirst = series[0]?.t ?? 0;
-      const gLast  = series[series.length - 1]?.t ?? 0;
-      const overlapStart = Math.max(cFirst, gFirst);
-      const overlapEnd   = Math.min(cLast, gLast);
-      const overlapMs    = Math.max(0, overlapEnd - overlapStart);
-      const overlapHours = (overlapMs / 3_600_000).toFixed(1);
-      console.log(`[Research] candles ${candles.length} from ${fmt(cFirst)} to ${fmt(cLast)}`);
-      console.log(`[Research] GCP series ${series.length} from ${fmt(gFirst)} to ${fmt(gLast)}`);
-      console.log(`[Research] overlap window: ${overlapHours}h (${fmt(overlapStart)} → ${fmt(overlapEnd)})`);
-      console.log('[Research] tagged per regime:',          taggedByRegime);
-      console.log('[Research] survived forward-return:',     survivedByRegime);
-      const totalSurvived = Object.values(survivedByRegime).reduce((a, b) => a + b, 0);
-      const totalTagged   = Object.values(taggedByRegime).reduce((a, b) => a + b, 0);
-      console.log(`[Research] totals — tagged ${totalTagged}, survived ${totalSurvived}, points ${points.length}`);
-      console.log(`[Research] regime samples: ${points.length}`);
-    }
-
-    return { points, taggedByRegime, survivedByRegime };
-  }, [candles, candleSymbol, symbol, series, fwdBars]);
-
-  const regimePoints = regimeData.points;
+  // ── v17.0: BY OPPORTUNITY — radar-native bucketing ──────────────
+  // Replaces the v11.x "By Regime" tab. Each history record carries
+  // an opportunityStatus (far / building / near / imminent / go) at
+  // write time (v17+); older rows simply don't appear here. Forward
+  // returns are reused from aiStateData so we don't walk candles twice.
+  // The question this tab answers: do NEAR opportunities actually
+  // turn into winners, or is that label just optics?
 
   // ── Pattern scatter (one dot per pattern occurrence) ────────────────────────
   const patternPoints = useMemo<PatternPoint[]>(() => {
@@ -387,30 +300,6 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
   }, [candles, candleSymbol, symbol, series, fwdBars]);
 
   // ── Stats per axis ──────────────────────────────────────────────────────────
-  // v11.19.3: stats include `tagged` (raw per-regime count before
-  // forward-return filtering) and an `insufficient` flag the sidebar
-  // uses to surface "Insufficient data" when the regime has fewer
-  // than 50 samples.
-  const regimeStats = useMemo(() => {
-    const map: Record<string, {
-      pts:           RegimePoint[];
-      tagged:        number;
-      avg:           number;
-      bull:          number;
-      bear:          number;
-      insufficient:  boolean;
-    }> = {};
-    for (const r of 'ABCDEF') {
-      const pts    = regimePoints.filter(p => p.regime === r);
-      const avg    = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
-      const bull   = pts.filter(p => p.fwdPct >  0.05).length;
-      const bear   = pts.filter(p => p.fwdPct < -0.05).length;
-      const tagged = regimeData.taggedByRegime[r] ?? 0;
-      map[r] = { pts, tagged, avg, bull, bear, insufficient: pts.length < 50 };
-    }
-    return map;
-  }, [regimePoints, regimeData]);
-
   const patternStats = useMemo(() => {
     const map: Record<string, { pts: PatternPoint[]; avg: number; bull: number; bear: number }> = {};
     for (const kind of Object.keys(PATTERN_META)) {
@@ -493,6 +382,8 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         confidence: rec.confidence,
         fwdPct:     +fwdPct.toFixed(3),
         t:          rec.timestamp,
+        opportunityStatus: rec.opportunityStatus,
+        opportunityScore:  rec.opportunityScore,
       });
     }
     return { points, pendingByState, totalForSymbol, pendingTotal };
@@ -651,6 +542,123 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return map;
   }, [transitionPoints]);
 
+  // ── v17.0: Opportunity points + stats ────────────────────────────
+  // Derived from aiStatePoints — every aiStatePoint that carries an
+  // opportunityStatus (v17+ writes do; older rows skip) becomes one
+  // dot in the opportunity scatter, keyed by its bucket.
+  const opportunityPoints = useMemo<OpportunityPoint[]>(() => {
+    const out: OpportunityPoint[] = [];
+    for (const p of aiStatePoints) {
+      if (!p.opportunityStatus) continue;
+      out.push({
+        kind:      'opportunity',
+        status:    p.opportunityStatus,
+        score:     p.opportunityScore ?? 0,
+        fwdPct:    p.fwdPct,
+        t:         p.t,
+        stateCode: p.stateCode,
+      });
+    }
+    return out;
+  }, [aiStatePoints]);
+
+  const opportunityStats = useMemo(() => {
+    const map: Record<string, {
+      pts:    OpportunityPoint[];
+      avg:    number;
+      bull:   number;
+      bear:   number;
+      avgScore: number;
+    }> = {};
+    for (const key of OPPORTUNITY_ORDER) {
+      const pts  = opportunityPoints.filter(p => p.status === key);
+      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      const avgScore = pts.length ? pts.reduce((s, p) => s + p.score, 0) / pts.length : 0;
+      map[key] = { pts, avg, bull, bear, avgScore };
+    }
+    return map;
+  }, [opportunityPoints]);
+
+  // ── v17.0: Field Insight ──────────────────────────────────────────
+  // One-sentence headline for the active tab — picks the category with
+  // the strongest edge (|avg| × sample-strength) among those with at
+  // least 10 observations. Anything below medium-confidence is noise
+  // and gets suppressed. Replaces the v11 "No AI state history" slot
+  // with actual evidence-backed copy when evidence exists.
+  const fieldInsight = useMemo<{
+    abbr:    string;
+    label:   string;
+    avg:     number;
+    n:       number;
+    bullPct: number;
+    color:   string;
+  } | null>(() => {
+    type Row = {
+      abbr: string; label: string; avg: number; n: number;
+      bullPct: number; color: string;
+    };
+    const candidates: Row[] = [];
+    if (mode === 'opportunity') {
+      for (const k of OPPORTUNITY_ORDER) {
+        const s = opportunityStats[k]; if (!s) continue;
+        const n = s.pts.length;
+        candidates.push({
+          abbr:   OPPORTUNITY_META[k].abbr,
+          label:  OPPORTUNITY_META[k].label,
+          avg:    s.avg,  n,
+          bullPct: n ? (s.bull / n) * 100 : 0,
+          color:  OPPORTUNITY_META[k].color,
+        });
+      }
+    } else if (mode === 'aistate') {
+      for (const code of Object.keys(AI_STATE_META)) {
+        const s = aiStateStats[code]; if (!s) continue;
+        const n = s.pts.length;
+        candidates.push({
+          abbr:   AI_STATE_META[code].abbr,
+          label:  AI_STATE_META[code].label,
+          avg:    s.avg,  n,
+          bullPct: n ? (s.bull / n) * 100 : 0,
+          color:  AI_STATE_META[code].color,
+        });
+      }
+    } else if (mode === 'transition') {
+      for (const key of Object.keys(TRANSITION_META)) {
+        const s = transitionStats[key]; if (!s) continue;
+        const n = s.pts.length;
+        candidates.push({
+          abbr:   TRANSITION_META[key].abbr,
+          label:  TRANSITION_META[key].label,
+          avg:    s.avg,  n,
+          bullPct: n ? (s.bull / n) * 100 : 0,
+          color:  TRANSITION_META[key].color,
+        });
+      }
+    } else {
+      for (const kind of Object.keys(PATTERN_META)) {
+        const s = patternStats[kind]; if (!s) continue;
+        const n = s.pts.length;
+        candidates.push({
+          abbr:   PATTERN_META[kind].abbr,
+          label:  PATTERN_META[kind].label,
+          avg:    s.avg,  n,
+          bullPct: n ? (s.bull / n) * 100 : 0,
+          color:  PATTERN_META[kind].color,
+        });
+      }
+    }
+    // Insufficient evidence — anything below MEDIUM is noise.
+    const eligible = candidates.filter(c => c.n >= 10);
+    if (eligible.length === 0) return null;
+    // Score = |edge| weighted by sample strength (saturates at 30).
+    eligible.sort((a, b) =>
+      Math.abs(b.avg) * Math.min(b.n / 30, 1)
+      - Math.abs(a.avg) * Math.min(a.n / 30, 1));
+    return eligible[0];
+  }, [mode, opportunityStats, aiStateStats, transitionStats, patternStats]);
+
   // ── Geometry ────────────────────────────────────────────────────────────────
   // v11.25.3: side paddings equalised so the plot area sits visually
   // centered inside the main research panel (the right summary sidebar
@@ -669,20 +677,15 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     PAD.t + (1 - (Math.max(Y_MIN, Math.min(Y_MAX, pct)) - Y_MIN) / (Y_MAX - Y_MIN)) * IH;
 
   const cols =
-    mode === 'regime'     ? 6 :
-    mode === 'pattern'    ? PATTERN_COLS :
-    mode === 'transition' ? TRANSITION_COLS :
-                            AI_STATE_COLS;
-  const colMeta =
-    mode === 'regime'     ? REGIME_META :
-    mode === 'pattern'    ? PATTERN_META :
-    mode === 'transition' ? TRANSITION_META :
-                            AI_STATE_META;
+    mode === 'opportunity' ? OPPORTUNITY_COLS :
+    mode === 'pattern'     ? PATTERN_COLS :
+    mode === 'transition'  ? TRANSITION_COLS :
+                             AI_STATE_COLS;
 
-  const xOfRegime = (regime: string) => {
-    const meta = REGIME_META[regime];
+  const xOfOpportunity = (status: string) => {
+    const meta = OPPORTUNITY_META[status];
     if (!meta) return PAD.l;
-    return PAD.l + ((meta.x - 0.5) / 6) * IW;
+    return PAD.l + ((meta.x - 0.5) / OPPORTUNITY_COLS) * IW;
   };
   const xOfPattern = (kind: string) => {
     const meta = PATTERN_META[kind];
@@ -699,23 +702,23 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / TRANSITION_COLS) * IW;
   };
-  type AnyPoint = RegimePoint | PatternPoint | AiStatePoint | TransitionPoint;
+  type AnyPoint = OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint;
   const xOfPoint = (pt: AnyPoint): number =>
-    pt.kind === 'regime'     ? xOfRegime(pt.regime)
-  : pt.kind === 'pattern'    ? xOfPattern(pt.pattern)
-  : pt.kind === 'transition' ? xOfTransition(pt.transitionKey)
-  :                            xOfAiState(pt.stateCode);
+    pt.kind === 'opportunity' ? xOfOpportunity(pt.status)
+  : pt.kind === 'pattern'     ? xOfPattern(pt.pattern)
+  : pt.kind === 'transition'  ? xOfTransition(pt.transitionKey)
+  :                             xOfAiState(pt.stateCode);
 
   const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / cols) * 0.35;
 
   const visiblePoints: AnyPoint[] =
-    mode === 'regime'     ? regimePoints     :
-    mode === 'pattern'    ? patternPoints    :
-    mode === 'transition' ? transitionPoints :
-                            aiStatePoints;
+    mode === 'opportunity' ? opportunityPoints :
+    mode === 'pattern'     ? patternPoints     :
+    mode === 'transition'  ? transitionPoints  :
+                             aiStatePoints;
   const totalLabel =
-    mode === 'regime'     ? `${regimePoints.length} bars`           :
-    mode === 'pattern'    ? `${patternPoints.length} occurrences`   :
+    mode === 'opportunity' ? `${opportunityPoints.length} reads`         :
+    mode === 'pattern'     ? `${patternPoints.length} occurrences`       :
     mode === 'transition' ? (
       transitionData.otherCount > 0
         ? `${transitionPoints.length} priority · ${transitionData.otherCount} other`
@@ -742,16 +745,16 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-2)' }}>
-          {mode === 'regime'     ? 'GCP Regime → Price'         :
-           mode === 'pattern'    ? 'GCP Pattern → Forward Price' :
-           mode === 'transition' ? 'State Transition → Forward Price' :
-                                   'AI State → Forward Price'}
+          {mode === 'opportunity' ? 'Opportunity Bucket → Forward Price' :
+           mode === 'pattern'     ? 'GCP Pattern → Forward Price'         :
+           mode === 'transition'  ? 'State Transition → Forward Price'    :
+                                    'AI State → Forward Price'}
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{symbol}</span>
 
         <div style={{ display: 'flex', gap: 1, marginLeft: 12 }}>
-          {(['aistate', 'transition', 'pattern', 'regime'] as ResearchMode[]).map(m => (
+          {(['aistate', 'transition', 'pattern', 'opportunity'] as ResearchMode[]).map(m => (
             <button key={m}
               onClick={() => { setMode(m); setHovered(null); }}
               style={{
@@ -764,10 +767,10 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 cursor: 'pointer',
               }}
             >
-              {m === 'regime'     ? 'BY REGIME'     :
-               m === 'pattern'    ? 'BY PATTERN'    :
-               m === 'transition' ? 'BY TRANSITION' :
-                                    'BY AI STATE'}
+              {m === 'opportunity' ? 'BY OPPORTUNITY' :
+               m === 'pattern'     ? 'BY PATTERN'     :
+               m === 'transition'  ? 'BY TRANSITION'  :
+                                     'BY AI STATE'}
             </button>
           ))}
         </div>
@@ -821,7 +824,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
               Guru / state-driven system and may not reflect what the
               user actually sees on the dashboard. AI State view is the
               canonical validation surface. */}
-          {(mode === 'pattern' || mode === 'regime') && (
+          {mode === 'pattern' && (
             <div style={{
               padding: '8px 16px',
               borderBottom: '1px solid var(--line-0)',
@@ -832,7 +835,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
             }}>
               <span style={{ fontSize: 11 }}>⚠</span>
               <span>
-                {mode === 'pattern' ? 'Pattern' : 'Regime'}-based research is legacy and may not reflect current system behavior. Use{' '}
+                Pattern-based research is legacy and may not reflect current system behavior. Use{' '}
                 <button
                   onClick={() => { setMode('aistate'); setHovered(null); }}
                   style={{
@@ -856,15 +859,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
             flexShrink: 0,
           }}>
             <span style={{ color: 'var(--fg-0)', fontWeight: 600 }}>How to read this: </span>
-            {mode === 'regime' && (
+            {mode === 'opportunity' && (
               <>
-                Each dot = one 15 m price bar, colored by whether price went{' '}
+                Each dot = one radar / Guru read, colored by whether price went{' '}
                 <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
                 <span style={{ color: '#ef4444' }}>down ↓</span> over the next {FWD_LABEL[fwdBars]}.
-                X-axis is the GCP regime active when the bar opened; the horizontal line per column
-                is the average move in that regime.{' '}
+                X-axis is the opportunity bucket (closeness to a GO) at the time of the read.{' '}
                 <span style={{ color: '#d4a028' }}>
-                  D regime trending positive = GCP synchronization tends to precede upward price moves.
+                  Validates the radar: do NEAR / IMMINENT reads actually outperform FAR ones?
                 </span>
               </>
             )}
@@ -963,7 +965,12 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   </g>
                 ))}
 
-                {Object.entries(colMeta).map(([k, meta]) => {
+                {Object.entries(
+                  mode === 'opportunity' ? OPPORTUNITY_META :
+                  mode === 'pattern'     ? PATTERN_META     :
+                  mode === 'transition'  ? TRANSITION_META  :
+                                           AI_STATE_META
+                ).map(([k, meta]) => {
                   const cx = PAD.l + ((meta.x - 0.5) / cols) * IW;
                   const bw = IW / cols;
                   return (
@@ -991,13 +998,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   );
                 })}
 
-                {mode === 'regime' && Object.entries(regimeStats).map(([r, s]) => {
+                {mode === 'opportunity' && Object.entries(opportunityStats).map(([k, s]) => {
                   if (s.pts.length < 3) return null;
-                  const cx  = xOfRegime(r);
+                  const cx  = xOfOpportunity(k);
                   const y   = yOf(s.avg);
-                  const col = REGIME_META[r]?.color ?? '#fff';
+                  const col = OPPORTUNITY_META[k]?.color ?? '#fff';
                   return (
-                    <g key={r}>
+                    <g key={k}>
                       <line x1={cx - 20} x2={cx + 20} y1={y} y2={y} stroke={col} strokeWidth={2} />
                       <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
                         fontFamily="IBM Plex Mono, monospace">
@@ -1055,25 +1062,25 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   );
                 })}
 
-                {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => (
-                  <g key={r}>
+                {mode === 'opportunity' && Object.entries(OPPORTUNITY_META).map(([k, meta]) => (
+                  <g key={k}>
                     <text
-                      x={PAD.l + ((meta.x - 0.5) / 6) * IW}
+                      x={xOfOpportunity(k)}
                       y={H - PAD.b + 16}
                       textAnchor="middle"
-                      fontSize={9} fill={meta.color}
+                      fontSize={10} fill={meta.color} fontWeight={600}
                       fontFamily="IBM Plex Mono, monospace"
                     >
-                      {r}
+                      {meta.abbr}
                     </text>
                     <text
-                      x={PAD.l + ((meta.x - 0.5) / 6) * IW}
+                      x={xOfOpportunity(k)}
                       y={H - PAD.b + 28}
                       textAnchor="middle"
-                      fontSize={8} fill="#2a2f37"
+                      fontSize={7} fill="#2a2f37"
                       fontFamily="IBM Plex Mono, monospace"
                     >
-                      {meta.label.split('·')[1]?.trim()}
+                      {meta.label}
                     </text>
                   </g>
                 ))}
@@ -1165,16 +1172,16 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   borderRadius: 3, padding: '6px 10px',
                   fontSize: 9, fontFamily: 'var(--font-mono)',
                 }}>
-                  {hovered.kind === 'regime' && (
+                  {hovered.kind === 'opportunity' && (
                     <>
-                      <div style={{ color: REGIME_META[hovered.regime]?.color, marginBottom: 3 }}>
-                        {REGIME_META[hovered.regime]?.label}
+                      <div style={{ color: OPPORTUNITY_META[hovered.status]?.color, marginBottom: 3 }}>
+                        {OPPORTUNITY_META[hovered.status]?.label} · {hovered.stateCode}
                       </div>
                       <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
                         {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
                       </div>
                       <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
-                        NV {hovered.nv.toFixed(1)}
+                        opp score {hovered.score}%
                       </div>
                       <div style={{ color: 'var(--fg-4)' }}>
                         {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
@@ -1246,64 +1253,123 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 fontSize: 8, letterSpacing: '0.12em',
                 color: 'var(--fg-4)', marginBottom: 12,
               }}>
-                {mode === 'regime'     ? 'REGIME SUMMARY'     :
-                 mode === 'pattern'    ? 'PATTERN SUMMARY'    :
-                 mode === 'transition' ? 'TRANSITION SUMMARY' :
-                                         'AI STATE SUMMARY'}
+                {mode === 'opportunity' ? 'OPPORTUNITY SUMMARY' :
+                 mode === 'pattern'     ? 'PATTERN SUMMARY'     :
+                 mode === 'transition'  ? 'TRANSITION SUMMARY'  :
+                                          'AI STATE SUMMARY'}
               </div>
 
-              {mode === 'regime' && Object.entries(REGIME_META).map(([r, meta]) => {
-                const s = regimeStats[r];
+              {/* v17.0: FIELD INSIGHT — surfaces the strongest evidence-
+                  backed finding for the current tab. Only renders when
+                  at least one category has n ≥ 10 (medium sample) so
+                  we don't quote anecdote as insight. */}
+              {fieldInsight && (
+                <div style={{
+                  marginBottom: 14, padding: '10px 12px',
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-1)',
+                  borderLeft: `2px solid ${fieldInsight.color}`,
+                  borderRadius: 3,
+                }}>
+                  <div style={{
+                    fontSize: 8, letterSpacing: '0.16em', fontWeight: 700,
+                    color: 'var(--fg-4)', marginBottom: 6,
+                  }}>
+                    FIELD INSIGHT
+                  </div>
+                  <div style={{
+                    fontSize: 10, color: 'var(--fg-1)', lineHeight: 1.5,
+                  }}>
+                    Historically{' '}
+                    <b style={{ color: fieldInsight.color }}>{fieldInsight.abbr}</b>{' '}
+                    {mode === 'transition' ? 'transitions'
+                      : mode === 'pattern' ? 'patterns'
+                      : 'reads'} averaged{' '}
+                    <b style={{
+                      color: fieldInsight.avg > 0 ? '#22c55e'
+                           : fieldInsight.avg < 0 ? '#ef4444'
+                           : 'var(--fg-3)',
+                    }}>
+                      {fieldInsight.avg > 0 ? '+' : ''}{fieldInsight.avg.toFixed(2)}%
+                    </b>{' '}
+                    over {FWD_LABEL[fwdBars]} ({fieldInsight.bullPct.toFixed(0)}% positive,
+                    n={fieldInsight.n}).
+                  </div>
+                </div>
+              )}
+
+              {mode === 'opportunity' && opportunityPoints.length === 0 && (
+                <div style={{
+                  padding: '14px 12px',
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-1)',
+                  borderRadius: 4,
+                  fontSize: 10, color: '#7F98A3', lineHeight: 1.55,
+                }}>
+                  <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
+                    No opportunity history yet.
+                  </div>
+                  Run a radar scan or Ask Guru to collect reads — opportunity buckets are persisted on every classification.
+                </div>
+              )}
+
+              {mode === 'opportunity' && opportunityPoints.length > 0
+                && OPPORTUNITY_ORDER.map((k) => {
+                const meta = OPPORTUNITY_META[k];
+                const s    = opportunityStats[k];
                 if (!s) return null;
-                const bullPct = s.pts.length ? (s.bull / s.pts.length * 100) : 0;
+                const total = s.pts.length;
+                const bullPct = total ? (s.bull / total * 100) : 0;
+                const sc = sampleConfidence(total);
                 return (
-                  <div key={r} style={{
+                  <div key={k} style={{
                     marginBottom: 12, paddingBottom: 12,
                     borderBottom: '1px solid var(--line-0)',
-                    opacity: s.insufficient ? 0.55 : 1,
+                    opacity: total === 0 ? 0.45 : 1,
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>{r}</span>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      marginBottom: 4, alignItems: 'baseline',
+                    }}>
+                      <span style={{ color: meta.color, fontSize: 10, fontWeight: 600 }}>
+                        {meta.abbr}
+                      </span>
                       <span style={{
-                        fontSize: 10, fontVariantNumeric: 'tabular-nums',
-                        color: s.insufficient
-                          ? 'var(--fg-3)'
-                          : s.avg > 0.02 ? '#22c55e' : s.avg < -0.02 ? '#ef4444' : 'var(--fg-3)',
+                        fontSize: 11, fontVariantNumeric: 'tabular-nums',
+                        color: total === 0
+                          ? 'var(--fg-4)'
+                          : s.avg > 0.05 ? '#22c55e'
+                          : s.avg < -0.05 ? '#ef4444'
+                          : 'var(--fg-3)',
                       }}>
-                        {s.pts.length === 0 ? '—' : `${s.avg > 0 ? '+' : ''}${s.avg.toFixed(2)}%`}
+                        {total === 0 ? '—' : `${s.avg > 0 ? '+' : ''}${s.avg.toFixed(2)}%`}
                       </span>
                     </div>
-                    <div style={{
-                      display: 'flex', gap: 6,
-                      fontSize: 8, color: 'var(--fg-4)',
-                      flexWrap: 'wrap',
-                    }}>
-                      <span>{s.pts.length} samples</span>
-                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
-                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
-                      <span>{s.pts.length ? `${bullPct.toFixed(0)}% bull` : '—'}</span>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
+                      {meta.label} · {total} reads
+                      {total > 0 && ` · avg score ${s.avgScore.toFixed(0)}%`}
                     </div>
-                    {/* v11.19.3: dev sees the tagged count too, so the
-                        gap between "tagged" and "survived" is visible
-                        when a regime has bars but they all fail the
-                        forward-window filter. */}
-                    {s.tagged !== s.pts.length && (
-                      <div style={{ fontSize: 8, color: 'var(--fg-4)', marginTop: 2 }}>
-                        {s.tagged} tagged · {s.pts.length} with forward return
+                    {total > 0 && (
+                      <div style={{ display: 'flex', gap: 6, fontSize: 8, marginBottom: 4 }}>
+                        <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                        <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                        <span style={{ color: 'var(--fg-4)' }}>
+                          {bullPct.toFixed(0)}% bull
+                        </span>
+                        <span style={{
+                          fontSize: 7, fontWeight: 700, letterSpacing: '0.1em',
+                          padding: '0 4px', borderRadius: 2,
+                          color: SAMPLE_COLOR[sc],
+                          border: `1px solid ${SAMPLE_COLOR[sc]}55`,
+                          background: `${SAMPLE_COLOR[sc]}11`,
+                          marginLeft: 'auto',
+                        }}>{sc}</span>
                       </div>
                     )}
-                    {s.insufficient ? (
-                      <div style={{
-                        marginTop: 4,
-                        fontSize: 8, color: '#d4a028',
-                        letterSpacing: '0.04em',
-                      }}>
-                        Insufficient data
-                      </div>
-                    ) : (
+                    {total > 0 && (
                       <div style={{
                         height: 3, background: '#ef4444',
-                        borderRadius: 1, marginTop: 4, overflow: 'hidden',
+                        borderRadius: 1, overflow: 'hidden',
                       }}>
                         <div style={{
                           height: '100%', background: '#22c55e',
@@ -1351,10 +1417,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                     <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
                       {meta.label} · {s.pts.length} occurrences
                     </div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, alignItems: 'center' }}>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
                       <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
                       <span>{bullPct.toFixed(0)}% bullish</span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <SampleBadge n={s.pts.length} />
+                      </span>
                     </div>
                     <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden' }}>
                       <div style={{ height: '100%', background: '#22c55e', width: `${bullPct}%`, borderRadius: 1 }} />
@@ -1379,7 +1448,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
                     No AI State history yet.
                   </div>
-                  Run AI Analysis from the Dashboard to start collecting outcomes.
+                  Click <b>Ask Guru</b> or run a <b>radar scan</b> — both feed this surface (v17+).
                 </div>
               )}
 
@@ -1449,10 +1518,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       {meta.label} · {s.pts.length} analyses
                       {s.pending > 0 && ` · ${s.pending} pending`}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
                       <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
                       <span>{bullPct.toFixed(0)}% bullish</span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <SampleBadge n={s.pts.length} />
+                      </span>
                     </div>
                     <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', flexWrap: 'wrap' }}>
                       <span>conf {(s.avgConf * 100).toFixed(0)}%</span>
@@ -1540,10 +1612,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                     <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 3 }}>
                       {meta.label} · {n} transition{n === 1 ? '' : 's'}
                     </div>
-                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 6, fontSize: 8, color: 'var(--fg-4)', marginBottom: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                       <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
                       <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
                       <span>{bullPct.toFixed(0)}% bullish</span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <SampleBadge n={n} />
+                      </span>
                     </div>
                     {s.insufficient ? (
                       <div style={{
@@ -1577,15 +1652,32 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
               }}>
                 Avg line = mean price change.
                 Bull/bear bar = % of{' '}
-                {mode === 'regime'     ? 'bars' :
-                 mode === 'pattern'    ? 'occurrences' :
-                 mode === 'transition' ? 'transitions' :
-                                         'analyses'} with positive outcome.
+                {mode === 'opportunity' ? 'reads' :
+                 mode === 'pattern'     ? 'occurrences' :
+                 mode === 'transition'  ? 'transitions' :
+                                          'analyses'} with positive outcome.
               </div>
             </div>
           </div>
         </>
       )}
     </div>
+  );
+}
+
+// v17.0: tiny reliability chip used across every Research card.
+// Reads are LOW (< 10), MEDIUM (10-29), HIGH (30+) — anything labelled
+// LOW should be treated as anecdote, not evidence.
+function SampleBadge({ n }: { n: number }) {
+  const sc = sampleConfidence(n);
+  return (
+    <span style={{
+      fontSize: 7, fontWeight: 700, letterSpacing: '0.1em',
+      padding: '0 4px', borderRadius: 2,
+      color: SAMPLE_COLOR[sc],
+      border: `1px solid ${SAMPLE_COLOR[sc]}55`,
+      background: `${SAMPLE_COLOR[sc]}11`,
+      fontFamily: 'IBM Plex Mono, monospace',
+    }}>{sc}</span>
   );
 }

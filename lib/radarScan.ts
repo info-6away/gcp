@@ -72,6 +72,9 @@ export interface RadarResult {
   action?:         ActionStateRead;
   /** Price-structure confirmation read (only when ok). */
   priceStructure?: PriceStructureRead | null;
+  /** v17.0: last close at scan time. Exposed so the research recorder
+   *  can persist priceAtAnalysis into the unified history. */
+  priceAtAnalysis?: number;
 }
 
 export interface RadarScanProgress {
@@ -311,6 +314,7 @@ async function scanSymbol(
     aiState: finalResp,
     action,
     priceStructure,
+    priceAtAnalysis: lastClose,
   };
 }
 

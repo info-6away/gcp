@@ -112,6 +112,17 @@ export interface AiStateHistoryRecord {
   // (WATCH → READY → GO). Position-aware MANAGE/EXIT NOT stored —
   // those are computed live on the Trade banner only.
   actionState?: 'BLOCKED' | 'WATCH' | 'READY' | 'GO';
+
+  // v17.0: opportunity distance at classification time. Persisted so
+  // Research can bucket history into far/building/near/imminent/go
+  // without re-deriving from candles. Older records won't have these.
+  opportunityScore?:  number;
+  opportunityStatus?: 'far' | 'building' | 'near' | 'imminent' | 'go';
+
+  // v17.0: which surface produced this record. Lets Research filter
+  // manual Guru calls from radar scans when needed; default 'manual'
+  // for backward compatibility with records written pre-v17.
+  source?: 'manual_guru' | 'radar_scan';
 }
 
 export function loadAiStateHistory(): AiStateHistoryRecord[] {
@@ -221,6 +232,14 @@ export interface AiStateHistoryInput {
   // with hasOpenPosition=false). Lets the history surface the
   // BLOCKED → WATCH → READY → GO progression.
   actionState?: 'BLOCKED' | 'WATCH' | 'READY' | 'GO';
+
+  // v17.0: opportunity score + bucket persisted at write-time so
+  // Research can bucket history without re-deriving.
+  opportunityScore?:  number;
+  opportunityStatus?: 'far' | 'building' | 'near' | 'imminent' | 'go';
+
+  // v17.0: provenance — manual Guru call vs radar scan.
+  source?: 'manual_guru' | 'radar_scan';
 }
 
 // Append a single record. Returns the new history. Dedupes against

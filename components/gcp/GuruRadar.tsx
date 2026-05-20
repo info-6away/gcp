@@ -19,6 +19,8 @@ import {
   scanRadar, type RadarResult, type RadarScanProgress,
 } from '@/lib/radarScan';
 import { setRadarResult } from '@/lib/radarResultStore';
+import { recordRadarScanObservation } from '@/lib/researchRecorder';
+import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 // v15.1: the field-diagnostic derivations are still computed here and
 // passed to FieldAnalysisPanel; only the helpers + the two types
 // GuruRadar itself names are imported (the panel owns the rest).
@@ -208,6 +210,16 @@ export default function GuruRadar({
           // v14.0.1: cache each result so opening it in Trade
           // hydrates instantly instead of showing NO READ YET.
           setRadarResult(r.symbol, r);
+          // v17.0: persist every successful radar scan into research
+          // memory so the Research view validates RADAR output too,
+          // not just manual Ask Guru calls.
+          if (r.ok && aiStateInputs) {
+            recordRadarScanObservation({
+              result:      r,
+              timeframe:   AI_ANALYSIS_TF,
+              regime:      aiStateInputs.regime?.code ?? '—',
+            });
+          }
         },
       );
     } finally {
