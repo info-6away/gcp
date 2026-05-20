@@ -54,6 +54,9 @@ import {
   deriveRadarOpportunityState, WAIT_COLOR, WAIT_SUBTITLE,
   type RadarOpportunityState,
 } from '@/lib/radarOpportunityState';
+import {
+  deriveTemporalDrift, driftFrameFromRadarResult,
+} from '@/lib/temporalDrift';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 import FieldAnalysisPanel from '@/components/gcp/FieldAnalysisPanel';
@@ -167,6 +170,12 @@ export default function GuruRadar({
   const [progress,  setProgress]  = useState<RadarScanProgress | null>(null);
   const [expanded,  setExpanded]  = useState<MarketSymbol | null>(null);
   const [now,       setNow]       = useState(() => Date.now());
+  // v16.1: prior-scan results per symbol — populated when a new scan
+  // STARTS, so each RadarCard can compare the live read to the read
+  // from the previous scan. Session-only (matches radarResultStore).
+  const [priorResults, setPriorResults] = useState<Map<MarketSymbol, RadarResult>>(
+    () => new Map(),
+  );
 
   // 20s tick so "last scan age" stays current. Cheap; no Engine cost.
   useEffect(() => {
@@ -176,6 +185,16 @@ export default function GuruRadar({
 
   const handleScan = useCallback(async () => {
     if (scanning || !aiStateInputs) return;
+    // v16.1: snapshot the just-completed scan as the new "prior"
+    // before clearing — gives every RadarCard a comparison frame
+    // once the next scan finishes.
+    setPriorResults(prev => {
+      const next = new Map(prev);
+      for (const r of results) {
+        if (r.ok) next.set(r.symbol, r);
+      }
+      return next;
+    });
     setScanning(true);
     setResults([]);
     setExpanded(null);
@@ -196,7 +215,7 @@ export default function GuruRadar({
       setProgress(null);
       setNow(Date.now());
     }
-  }, [scanning, aiStateInputs]);
+  }, [scanning, aiStateInputs, results]);
 
   const sorted = useMemo(() => sortResults(results), [results]);
 
@@ -561,6 +580,7 @@ export default function GuruRadar({
               <RadarCard
                 key={r.symbol}
                 result={r}
+                priorResult={priorResults.get(r.symbol) ?? null}
                 now={now}
                 isCurrent={r.symbol === currentSymbol}
                 expanded={expanded === r.symbol}
@@ -601,10 +621,13 @@ const OPP_STATUS_COLOR: Record<OpportunityStatus, string> = {
 // ── Result card ─────────────────────────────────────────────────────
 
 function RadarCard({
-  result, now, isCurrent, expanded, onToggle, onOpenTrade, patternSeq,
+  result, priorResult, now, isCurrent, expanded, onToggle, onOpenTrade, patternSeq,
   dominantAction,
 }: {
   result:         RadarResult;
+  /** v16.1: previous scan's result for this symbol (session-only).
+   *  Null when this is the first scan since the session opened. */
+  priorResult:    RadarResult | null;
   now:            number;
   isCurrent:      boolean;
   expanded:       boolean;
@@ -657,6 +680,14 @@ function RadarCard({
   const session = deriveSessionContext(result.symbol, now);
   // v14.10: opportunity distance — how close to READY/GO.
   const opp = deriveOpportunityDistance(result);
+  // v16.1: temporal drift — compare this scan to the previous scan
+  // for this symbol. Null when no prior exists (first scan of the
+  // session, or this symbol was missing from the prior scan).
+  const drift = (() => {
+    const cur = driftFrameFromRadarResult(result);
+    const prv = priorResult ? driftFrameFromRadarResult(priorResult) : null;
+    return cur ? deriveTemporalDrift(cur, prv) : null;
+  })();
   const showConfirms =
     action.actionState === 'GO' || action.actionState === 'READY'
     || action.actionState === 'MANAGE';
@@ -778,6 +809,23 @@ function RadarCard({
               }}>
                 closest · {opp.nearestBlocker}
               </span>
+            )}
+          </div>
+        )}
+
+        {/* v16.1: temporal trend — how this read moved versus the
+            previous scan. Only renders once a prior exists. */}
+        {drift && (
+          <div style={{
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.04em',
+          }}>
+            <span style={{ color: 'var(--fg-3)' }}>trend · </span>
+            <b style={{ color: drift.color }}>
+              {drift.arrow} {drift.tag}
+            </b>
+            {drift.summary && (
+              <span style={{ color: 'var(--fg-4)' }}> · {drift.summary}</span>
             )}
           </div>
         )}

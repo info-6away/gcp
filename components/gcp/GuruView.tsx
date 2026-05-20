@@ -38,6 +38,9 @@ import {
 } from '@/lib/aiStateHistory';
 import { deriveStateStory, deriveEvolutionTag } from '@/lib/stateStory';
 import {
+  deriveTemporalDrift, driftFrameFromHistoryRecord,
+} from '@/lib/temporalDrift';
+import {
   deriveReadEvolution, derivePersistenceSummary,
   type PersistenceSummary,
 } from '@/lib/readEvolution';
@@ -2732,6 +2735,15 @@ function GuruHistory({
               : actionNow === 'READY'   ? '#4dd9e8'
               : actionNow === 'WATCH'   ? '#d4a028'
               :                            '#c45a5a';
+            // v16.1: temporal drift tag — same-direction summary of
+            // how this read moved versus the previous one. Skips
+            // when no older row exists (oldest history entry).
+            const drift = olderR
+              ? deriveTemporalDrift(
+                  driftFrameFromHistoryRecord(r),
+                  driftFrameFromHistoryRecord(olderR),
+                )
+              : null;
             return (
               <div key={r.id} style={{ display: 'flex', flexDirection: 'column' }}>
                 {/* v13.3: each row is now a button-styled clickable.
@@ -2827,6 +2839,26 @@ function GuruHistory({
                         fontFamily: 'var(--font-mono)',
                       }}>
                         {actionPrev} → {actionNow}
+                      </span>
+                    )}
+                    {/* v16.1: drift tag — improving / weakening /
+                        stable / rotating, derived from the current
+                        row vs the next-older row. */}
+                    {drift && (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700,
+                        letterSpacing: '0.14em', color: drift.color,
+                        padding: '1px 5px',
+                        border: `1px solid ${drift.color === 'var(--fg-3)'
+                          ? 'var(--line-2)' : drift.color}55`,
+                        borderRadius: 2,
+                        background: drift.color === 'var(--fg-3)'
+                          ? 'transparent' : `${drift.color}11`,
+                        alignSelf: 'flex-start',
+                        whiteSpace: 'nowrap',
+                        fontFamily: 'var(--font-mono)',
+                      }}>
+                        {drift.arrow} {drift.tag}
                       </span>
                     )}
                   </div>

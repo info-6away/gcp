@@ -72,6 +72,10 @@ import {
 import { useViewMode, type ViewMode } from '@/lib/viewMode';
 import { deriveDirectionalEdge } from '@/lib/directionalEdge';
 import { deriveActionState } from '@/lib/actionState';
+import {
+  deriveTemporalDrift, driftFrameFromHistoryRecord,
+  deriveEnvVsThesis, THESIS_COLOR,
+} from '@/lib/temporalDrift';
 import { getRadarResult, clearRadarResult } from '@/lib/radarResultStore';
 import {
   derivePriceStructureConfirmation,
@@ -1914,6 +1918,129 @@ function ActionStateBanner({
 
 const COLOR_GO_GLOW = '#22c55e';
 
+// ── v16.1: ENVIRONMENT vs POSITION THESIS banner ─────────────────
+//
+// The ActionStateBanner above shows ONE state. With an open position
+// that state collapses to MANAGE/EXIT — useful, but it hides whether
+// the surrounding environment is improving or deteriorating. When
+// they disagree (field building while the open position thesis is
+// invalidated, or thesis still intact while the field is degrading)
+// this banner surfaces the gap. Pure presentation — the action
+// ladder, trade math, and pressure calculations are unchanged.
+
+function EnvVsThesisBanner({
+  aiState, hasOpenPosition, history, priceStructure,
+}: {
+  aiState:         GcpStateResponse | null;
+  hasOpenPosition: boolean;
+  history:         AiStateHistoryRecord[];
+  priceStructure:  PriceStructureRead | null;
+}) {
+  if (!aiState || !hasOpenPosition) return null;
+
+  // Environment-only read — the action ladder run as if no position
+  // were open. This is the WATCH/READY/GO/BLOCKED Radar would show.
+  const envAction = deriveActionState({
+    aiState, history, priceStructure,
+    hasOpenPosition: false,
+  });
+  // Position-aware read — the existing live action (MANAGE/EXIT
+  // when a position is open).
+  const positionAction = deriveActionState({
+    aiState, history, priceStructure,
+    hasOpenPosition: true,
+  });
+
+  // Drift between this read and the prior history row.
+  const drift =
+    history.length >= 2
+      ? deriveTemporalDrift(
+          driftFrameFromHistoryRecord(history[0]),
+          driftFrameFromHistoryRecord(history[1]),
+        )
+      : null;
+
+  const evt = deriveEnvVsThesis({
+    envAction:       envAction.actionState,
+    positionAction:  positionAction.actionState,
+    hasOpenPosition,
+    fieldDrift:      drift?.fieldDrift,
+  });
+  if (!evt.conflict || !evt.banner || !evt.thesisState) return null;
+
+  const envColor =
+      evt.envState === 'GO'    ? '#22c55e'
+    : evt.envState === 'READY' ? '#4dd9e8'
+    : evt.envState === 'WATCH' ? '#d4a028'
+    :                            'var(--fg-3)';
+  const thesisColor = THESIS_COLOR[evt.thesisState];
+
+  return (
+    <div style={{
+      background: 'var(--bg-1)',
+      border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${thesisColor}`,
+      borderRadius: 'var(--r-md)',
+      padding: '10px 14px',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'baseline',
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            ENVIRONMENT READ
+          </span>
+          <span style={{
+            fontSize: 14, fontWeight: 700, letterSpacing: '0.05em',
+            color: envColor,
+          }}>
+            {evt.envState}
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <span style={{
+            fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontFamily: 'var(--font-mono)', fontWeight: 600,
+          }}>
+            POSITION THESIS
+          </span>
+          <span style={{
+            fontSize: 14, fontWeight: 700, letterSpacing: '0.05em',
+            color: thesisColor,
+          }}>
+            {evt.thesisState}
+          </span>
+        </div>
+        {drift && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{
+              fontSize: 8, letterSpacing: '0.18em', color: 'var(--fg-4)',
+              fontFamily: 'var(--font-mono)', fontWeight: 600,
+            }}>
+              TREND
+            </span>
+            <span style={{
+              fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+              color: drift.color,
+            }}>
+              {drift.arrow} {drift.tag}
+            </span>
+          </div>
+        )}
+      </div>
+      <span style={{
+        fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.45,
+      }}>
+        {evt.banner}
+      </span>
+    </div>
+  );
+}
+
 // ── DIRECTIONAL EDGE card — SIMPLE-mode summary (no raw %).
 //    Reads as "UP · MOD — Bullish trend intact · skew +14".
 //    Detailed LONG/SHORT bar stays in ANALYST/RESEARCH via PressureGauge.
@@ -2534,6 +2661,17 @@ function TradePanelImpl({
             invalidators ≤ 1, confidence stable/rising, no decay) must
             all hold before it fires. */}
         <ActionStateBanner
+          aiState={aiState}
+          hasOpenPosition={!!acct.open}
+          history={symbolRecords}
+          priceStructure={priceStructure}
+        />
+        {/* v16.1: env-vs-thesis conflict banner — only renders when
+            the position-aware action and the environment-only action
+            disagree (e.g. field building while the open trade is
+            invalidated). Sits below the main banner so the canonical
+            action stays the headline. */}
+        <EnvVsThesisBanner
           aiState={aiState}
           hasOpenPosition={!!acct.open}
           history={symbolRecords}
