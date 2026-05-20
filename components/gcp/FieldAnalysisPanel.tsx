@@ -29,6 +29,7 @@ import type { ActionLadderAudit } from '@/lib/actionLadderAudit';
 import type { OpportunityWeather, OpportunityStatus } from '@/lib/opportunityDistance';
 import type { FieldParticipation, LiquidityLevel } from '@/lib/sessionContext';
 import type { SymbolIndividuality } from '@/lib/symbolIndividuality';
+import type { FieldAnchoring } from '@/lib/classificationInfluence';
 
 export interface DominanceSummary {
   avgField: number;
@@ -47,6 +48,7 @@ interface FieldAnalysisPanelProps {
   recurrence:       FieldRecurrence | null;
   ladderAudit:      ActionLadderAudit | null;
   oppWeather:       OpportunityWeather | null;
+  anchoring:        FieldAnchoring | null;
   counts:           Partial<Record<string, number>>;
 }
 
@@ -99,7 +101,8 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 export default function FieldAnalysisPanel(props: FieldAnalysisPanelProps) {
   const {
     participation, dispersion, dominance, mood, diagnosis,
-    families, familyDivergence, recurrence, ladderAudit, oppWeather, counts,
+    families, familyDivergence, recurrence, ladderAudit, oppWeather,
+    anchoring, counts,
   } = props;
 
   const [open, setOpen] = useState<Set<SectionId>>(() => new Set<SectionId>(['overview']));
@@ -129,6 +132,12 @@ export default function FieldAnalysisPanel(props: FieldAnalysisPanelProps) {
       value: recurrence
         ? (recurrence.matches > 0 ? `Seen ${recurrence.matches}×` : `${recurrence.totalScans} scans`)
         : '—' },
+    { label: 'Anchoring',
+      value: anchoring ? `${anchoring.avgFieldInfluence}% field` : '—',
+      color: anchoring
+        ? (anchoring.avgFieldInfluence >= 75 ? '#d4a028'
+         : anchoring.avgFieldInfluence >= 58 ? 'var(--fg-1)' : 'var(--green)')
+        : undefined },
   ];
 
   const pills: { text: string; color?: string }[] = [
@@ -201,7 +210,7 @@ export default function FieldAnalysisPanel(props: FieldAnalysisPanelProps) {
           expanded={open.has(s.id)}
           onToggle={() => toggle(s.id)}
         >
-          {s.id === 'overview'    && <OverviewBody    dispersion={dispersion} mood={mood} diagnosis={diagnosis} dominance={dominance} />}
+          {s.id === 'overview'    && <OverviewBody    dispersion={dispersion} mood={mood} diagnosis={diagnosis} dominance={dominance} anchoring={anchoring} />}
           {s.id === 'families'    && <FamiliesBody    families={families} divergence={familyDivergence} />}
           {s.id === 'opportunity' && <OpportunityBody w={oppWeather} />}
           {s.id === 'ladder'      && <LadderBody      a={ladderAudit} />}
@@ -268,13 +277,18 @@ const rowStyle: React.CSSProperties = {
 };
 
 function OverviewBody({
-  dispersion, mood, diagnosis, dominance,
+  dispersion, mood, diagnosis, dominance, anchoring,
 }: {
   dispersion: FieldDispersion | null; mood: FieldMood | null;
   diagnosis: FieldDiagnosis | null;
   dominance: DominanceSummary | null;
+  anchoring: FieldAnchoring | null;
 }) {
   if (!dispersion) return <Empty text="Scan to populate the field overview." />;
+  const anchorColor = anchoring
+    ? (anchoring.avgFieldInfluence >= 75 ? '#d4a028'
+     : anchoring.avgFieldInfluence >= 58 ? 'var(--fg-1)' : 'var(--green)')
+    : 'var(--fg-1)';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={rowStyle}>
@@ -312,6 +326,22 @@ function OverviewBody({
           {getSymbolMeta(dominance.highest.symbol).id} {dominance.highest.ind.individuality}%
           {' '}· lowest{' '}
           {getSymbolMeta(dominance.lowest.symbol).id} {dominance.lowest.ind.individuality}%
+        </div>
+      )}
+      {anchoring && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 2,
+          borderTop: `1px solid ${SUBTLE}`, paddingTop: 6, marginTop: 1,
+        }}>
+          <div style={rowStyle}>
+            <span style={{ color: 'var(--fg-4)' }}>Field anchoring · </span>
+            <b style={{ color: anchorColor }}>{anchoring.avgFieldInfluence}% field</b>
+            {' '}/ {100 - anchoring.avgFieldInfluence}% symbol
+            {' '}· est. confidence {anchoring.avgConfidence}%
+          </div>
+          <div style={{ ...rowStyle, color: 'var(--fg-2)', fontStyle: 'italic' }}>
+            {anchoring.interpretation}
+          </div>
         </div>
       )}
     </div>

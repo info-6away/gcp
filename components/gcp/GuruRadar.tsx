@@ -49,6 +49,7 @@ import {
 import {
   deriveFamilyParticipation, deriveFamilyDivergence,
 } from '@/lib/marketFamilies';
+import { deriveFieldAnchoring } from '@/lib/classificationInfluence';
 import type { ActionState } from '@/lib/actionState';
 import { PageHeader } from '@/components/gcp/Chrome';
 import FieldAnalysisPanel from '@/components/gcp/FieldAnalysisPanel';
@@ -237,6 +238,9 @@ export default function GuruRadar({
   const families = useMemo(() => deriveFamilyParticipation(results), [results]);
   const familyDivergence = useMemo(
     () => deriveFamilyDivergence(families), [families]);
+
+  // v16.0: classification source audit — is the read field-anchored?
+  const anchoring = useMemo(() => deriveFieldAnchoring(results), [results]);
 
   // v14.7: market participation — which sessions are live right now.
   // Time-derived, scan-independent; recomputes on the 20s tick.
@@ -513,6 +517,7 @@ export default function GuruRadar({
           recurrence={recurrence}
           ladderAudit={ladderAudit}
           oppWeather={oppWeather}
+          anchoring={anchoring}
           counts={counts}
         />
 
