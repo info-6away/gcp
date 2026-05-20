@@ -13,6 +13,9 @@ import {
   signatureMatchesFilter, FILTER_LABEL, FILTER_PHRASE,
   type FieldContextFilter,
 } from '@/lib/fieldSignature';
+import {
+  FAMILY_LABEL, FAMILY_ORDER, familyOf, type MarketFamily,
+} from '@/lib/marketFamilies';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -31,7 +34,10 @@ const TD_SYMBOLS: Record<MarketSymbol, string> = {
 // weak explanatory power on its own; opportunity distance (the radar
 // closeness-to-GO bucket) answers "do NEAR opportunities actually
 // become winners?" which is the question that matters for trading.
-type ResearchMode = 'opportunity' | 'pattern' | 'aistate' | 'transition';
+// v17.3: 'family' tab added. Coherence-rotation analytics — what
+// happens to each symbol when a given family is leading the field.
+type ResearchMode =
+  'opportunity' | 'pattern' | 'aistate' | 'transition' | 'family';
 
 interface OpportunityPoint {
   kind:    'opportunity';
@@ -40,6 +46,26 @@ interface OpportunityPoint {
   fwdPct:  number;
   t:       number;
   stateCode: string;
+}
+
+// v17.3: one dot per radar observation that carries a fieldSignature.
+// X-axis = which family was leading the field at scan time. Color =
+// up / down. Sidebar slices each leading-family bucket further by the
+// observation's OWN symbol so the user can read "When metals lead,
+// gold averages +0.4% but BTC averages -0.2%".
+interface FamilyPoint {
+  kind:        'family';
+  /** Which family was leading the field at the time of this read. */
+  leadFamily:  MarketFamily;
+  /** Top family's mood at scan time. */
+  leadMood:    string;
+  /** Symbol this observation belongs to. */
+  symbol:      MarketSymbol;
+  /** That symbol's own family — drives the per-symbol breakdown. */
+  symbolFamily: MarketFamily;
+  fwdPct:      number;
+  t:           number;
+  stateCode:   string;
 }
 
 interface PatternPoint {
@@ -84,7 +110,8 @@ interface TransitionPoint {
   stable:         boolean;
 }
 
-type Hovered = OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint;
+type Hovered =
+  OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint | FamilyPoint;
 
 // v17.0: opportunity buckets — far/building/near/imminent/go. Colors
 // mirror the radar's OPP_STATUS_COLOR palette so the same value reads
@@ -101,6 +128,19 @@ const OPPORTUNITY_META: Record<string, {
 const OPPORTUNITY_COLS = 5;
 const OPPORTUNITY_ORDER: Array<keyof typeof OPPORTUNITY_META> =
   ['far', 'building', 'near', 'imminent', 'go'];
+
+// v17.3: family-leadership columns. X-axis = which family was leading
+// the field when the observation was captured. Colors echo the radar
+// palette so a quick glance maps across surfaces.
+const FAMILY_META: Record<MarketFamily, {
+  label: string; abbr: string; color: string; x: number;
+}> = {
+  metals: { label: 'Metals',    abbr: 'METALS', color: '#d4a028', x: 1 },
+  crypto: { label: 'Crypto',    abbr: 'CRYPTO', color: '#22c55e', x: 2 },
+  fx:     { label: 'Dollar FX', abbr: 'FX',     color: '#4dd9e8', x: 3 },
+  risk:   { label: 'Risk',      abbr: 'RISK',   color: '#fb923c', x: 4 },
+};
+const FAMILY_COLS = 4;
 
 const PATTERN_META: Record<string, { label: string; abbr: string; color: string; x: number }> = {
   'Alignment Ladder':    { label: 'Alignment Ladder',    abbr: 'AL', color: '#4dd9e8', x: 1 },
@@ -575,6 +615,114 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     return map;
   }, [transitionPoints]);
 
+  // ── v17.3: Family-leadership points + stats ──────────────────────
+  // For every aiHistory record that carries a fieldSignature (v17.2+),
+  // compute its forward return and tag it with which family was
+  // LEADING the field at scan time. The scatter then answers:
+  // "When metals lead, what tends to happen to each symbol?"
+  //
+  // Note: filtered by symbol === current symbol per the global
+  // convention. Use the SYMBOL FILTER toggle to see cross-symbol
+  // texture; the sidebar still aggregates across all symbols (joined
+  // separately so the per-symbol breakdown is meaningful even when
+  // the user is sitting on a specific asset).
+  const familyData = useMemo(() => {
+    const symbolPoints: FamilyPoint[]    = [];   // current symbol only
+    const allPoints:    FamilyPoint[]    = [];   // every symbol (sidebar)
+    if (!aiHistory.length || !candles.length) return { symbolPoints, allPoints };
+    if (candleSymbol && candleSymbol !== symbol) return { symbolPoints, allPoints };
+
+    const lastIdx = candles.length - 1;
+    for (const rec of aiHistory) {
+      // v17.3: needs a field signature to know which family was leading.
+      const sig = rec.fieldSignature;
+      if (!sig) continue;
+      if (!signatureMatchesFilter(sig, contextFilter)) continue;
+      const leadFamily = sig.topFamily as MarketFamily;
+      if (!FAMILY_META[leadFamily]) continue;
+
+      // Forward-return computation. Mirrors aiStateData except we want
+      // observations from EVERY symbol (not just current) so the
+      // sidebar can show "When metals lead: gold +0.4%, BTC -0.2%".
+      // For the scatter we only show the current symbol's dots —
+      // looking at one asset at a time keeps the chart readable.
+      let entryIdx = -1;
+      // The current-symbol candle stream only covers the current
+      // symbol. Other symbols' forward returns would need separate
+      // candle fetches — out of scope here. So aggregate-side dots
+      // for non-current symbols are dropped, and the sidebar carries
+      // only current-symbol data too. Same trade-off as aiStateData.
+      if (rec.symbol !== symbol) continue;
+      for (let k = 0; k < candles.length; k++) {
+        if (candles[k].t >= rec.timestamp) { entryIdx = k; break; }
+      }
+      if (entryIdx === -1) continue;
+      const entry = candles[entryIdx];
+      const entryPrice = entry.o > 0 ? entry.o : entry.c;
+      if (entryPrice <= 0) continue;
+      const exitIdx = Math.min(entryIdx + fwdBars, lastIdx);
+      if (exitIdx === entryIdx) continue;
+      const exit = candles[exitIdx];
+      if (!exit || exit.c <= 0) continue;
+      const fwdPct = ((exit.c - entryPrice) / entryPrice) * 100;
+      const point: FamilyPoint = {
+        kind:        'family',
+        leadFamily,
+        leadMood:    sig.topFamilyMood,
+        symbol:      rec.symbol as MarketSymbol,
+        symbolFamily: familyOf(rec.symbol as MarketSymbol),
+        fwdPct:      +fwdPct.toFixed(3),
+        t:           rec.timestamp,
+        stateCode:   rec.stateCode,
+      };
+      symbolPoints.push(point);
+      allPoints.push(point);
+    }
+    return { symbolPoints, allPoints };
+  }, [aiHistory, candles, candleSymbol, fwdBars, symbol, contextFilter]);
+
+  const familyPoints = familyData.symbolPoints;
+
+  // Per-leading-family aggregate + symbol breakdown for the sidebar.
+  const familyStats = useMemo(() => {
+    const map: Record<MarketFamily, {
+      pts:    FamilyPoint[];
+      avg:    number;
+      bull:   number;
+      bear:   number;
+      /** Per-symbol drilldown — symbol → { n, avg } sorted by |avg|. */
+      bySymbol: Array<{ symbol: MarketSymbol; n: number; avg: number }>;
+    }> = {
+      metals: { pts: [], avg: 0, bull: 0, bear: 0, bySymbol: [] },
+      crypto: { pts: [], avg: 0, bull: 0, bear: 0, bySymbol: [] },
+      fx:     { pts: [], avg: 0, bull: 0, bear: 0, bySymbol: [] },
+      risk:   { pts: [], avg: 0, bull: 0, bear: 0, bySymbol: [] },
+    };
+    for (const fam of FAMILY_ORDER) {
+      const pts  = familyData.symbolPoints.filter(p => p.leadFamily === fam);
+      const avg  = pts.length ? pts.reduce((s, p) => s + p.fwdPct, 0) / pts.length : 0;
+      const bull = pts.filter(p => p.fwdPct >  0.05).length;
+      const bear = pts.filter(p => p.fwdPct < -0.05).length;
+      // Per-symbol aggregate within this leading-family bucket.
+      const bySym: Record<string, { n: number; sum: number }> = {};
+      for (const p of pts) {
+        const k = p.symbol;
+        if (!bySym[k]) bySym[k] = { n: 0, sum: 0 };
+        bySym[k].n += 1;
+        bySym[k].sum += p.fwdPct;
+      }
+      const bySymbol = Object.entries(bySym)
+        .map(([sym, v]) => ({
+          symbol: sym as MarketSymbol,
+          n:      v.n,
+          avg:    +(v.sum / v.n).toFixed(3),
+        }))
+        .sort((a, b) => Math.abs(b.avg) - Math.abs(a.avg));
+      map[fam] = { pts, avg, bull, bear, bySymbol };
+    }
+    return map;
+  }, [familyData]);
+
   // ── v17.0: Opportunity points + stats ────────────────────────────
   // Derived from aiStatePoints — every aiStatePoint that carries an
   // opportunityStatus (v17+ writes do; older rows skip) becomes one
@@ -669,6 +817,18 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
           color:  TRANSITION_META[key].color,
         });
       }
+    } else if (mode === 'family') {
+      for (const fam of FAMILY_ORDER) {
+        const s = familyStats[fam]; if (!s) continue;
+        const n = s.pts.length;
+        candidates.push({
+          abbr:   FAMILY_META[fam].abbr + ' lead',
+          label:  `${FAMILY_LABEL[fam]} leading`,
+          avg:    s.avg,  n,
+          bullPct: n ? (s.bull / n) * 100 : 0,
+          color:  FAMILY_META[fam].color,
+        });
+      }
     } else {
       for (const kind of Object.keys(PATTERN_META)) {
         const s = patternStats[kind]; if (!s) continue;
@@ -690,7 +850,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
       Math.abs(b.avg) * Math.min(b.n / 30, 1)
       - Math.abs(a.avg) * Math.min(a.n / 30, 1));
     return eligible[0];
-  }, [mode, opportunityStats, aiStateStats, transitionStats, patternStats]);
+  }, [mode, opportunityStats, aiStateStats, transitionStats, patternStats, familyStats]);
 
   // ── Geometry ────────────────────────────────────────────────────────────────
   // v11.25.3: side paddings equalised so the plot area sits visually
@@ -713,12 +873,18 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     mode === 'opportunity' ? OPPORTUNITY_COLS :
     mode === 'pattern'     ? PATTERN_COLS :
     mode === 'transition'  ? TRANSITION_COLS :
+    mode === 'family'      ? FAMILY_COLS :
                              AI_STATE_COLS;
 
   const xOfOpportunity = (status: string) => {
     const meta = OPPORTUNITY_META[status];
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / OPPORTUNITY_COLS) * IW;
+  };
+  const xOfFamily = (family: MarketFamily) => {
+    const meta = FAMILY_META[family];
+    if (!meta) return PAD.l;
+    return PAD.l + ((meta.x - 0.5) / FAMILY_COLS) * IW;
   };
   const xOfPattern = (kind: string) => {
     const meta = PATTERN_META[kind];
@@ -735,11 +901,13 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!meta) return PAD.l;
     return PAD.l + ((meta.x - 0.5) / TRANSITION_COLS) * IW;
   };
-  type AnyPoint = OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint;
+  type AnyPoint =
+    OpportunityPoint | PatternPoint | AiStatePoint | TransitionPoint | FamilyPoint;
   const xOfPoint = (pt: AnyPoint): number =>
     pt.kind === 'opportunity' ? xOfOpportunity(pt.status)
   : pt.kind === 'pattern'     ? xOfPattern(pt.pattern)
   : pt.kind === 'transition'  ? xOfTransition(pt.transitionKey)
+  : pt.kind === 'family'      ? xOfFamily(pt.leadFamily)
   :                             xOfAiState(pt.stateCode);
 
   const jitter = (i: number) => (Math.sin(i * 9301 + 49297) * 0.5) * (IW / cols) * 0.35;
@@ -748,10 +916,12 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     mode === 'opportunity' ? opportunityPoints :
     mode === 'pattern'     ? patternPoints     :
     mode === 'transition'  ? transitionPoints  :
+    mode === 'family'      ? familyPoints     :
                              aiStatePoints;
   const totalLabel =
     mode === 'opportunity' ? `${opportunityPoints.length} reads`         :
     mode === 'pattern'     ? `${patternPoints.length} occurrences`       :
+    mode === 'family'      ? `${familyPoints.length} reads`              :
     mode === 'transition' ? (
       transitionData.otherCount > 0
         ? `${transitionPoints.length} priority · ${transitionData.otherCount} other`
@@ -781,13 +951,14 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
           {mode === 'opportunity' ? 'Opportunity Bucket → Forward Price' :
            mode === 'pattern'     ? 'GCP Pattern → Forward Price'         :
            mode === 'transition'  ? 'State Transition → Forward Price'    :
+           mode === 'family'      ? 'Family Leadership → Forward Price'   :
                                     'AI State → Forward Price'}
         </span>
         <span style={{ color: 'var(--fg-3)' }}>·</span>
         <span style={{ color: 'var(--fg-3)' }}>{symbol}</span>
 
         <div style={{ display: 'flex', gap: 1, marginLeft: 12 }}>
-          {(['aistate', 'transition', 'pattern', 'opportunity'] as ResearchMode[]).map(m => (
+          {(['aistate', 'transition', 'opportunity', 'family', 'pattern'] as ResearchMode[]).map(m => (
             <button key={m}
               onClick={() => { setMode(m); setHovered(null); }}
               style={{
@@ -803,6 +974,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
               {m === 'opportunity' ? 'BY OPPORTUNITY' :
                m === 'pattern'     ? 'BY PATTERN'     :
                m === 'transition'  ? 'BY TRANSITION'  :
+               m === 'family'      ? 'BY FAMILY'      :
                                      'BY AI STATE'}
             </button>
           ))}
@@ -949,6 +1121,17 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 </span>
               </>
             )}
+            {mode === 'family' && (
+              <>
+                Each dot = one radar read for <b>{symbol}</b>, colored by whether price went{' '}
+                <span style={{ color: '#22c55e' }}>up ↑</span> or{' '}
+                <span style={{ color: '#ef4444' }}>down ↓</span> over the next {FWD_LABEL[fwdBars]}.
+                X-axis is which family was LEADING the coherence field at the time of the read.{' '}
+                <span style={{ color: '#d4a028' }}>
+                  Coherence rotation: when metals lead, does this symbol benefit or fade?
+                </span>
+              </>
+            )}
             {mode === 'pattern' && (
               <>
                 Each dot = one pattern occurrence, colored by whether price went{' '}
@@ -1048,6 +1231,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   mode === 'opportunity' ? OPPORTUNITY_META :
                   mode === 'pattern'     ? PATTERN_META     :
                   mode === 'transition'  ? TRANSITION_META  :
+                  mode === 'family'      ? FAMILY_META      :
                                            AI_STATE_META
                 ).map(([k, meta]) => {
                   const cx = PAD.l + ((meta.x - 0.5) / cols) * IW;
@@ -1117,6 +1301,23 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   return (
                     <g key={code}>
                       <line x1={cx - 16} x2={cx + 16} y1={y} y2={y} stroke={col} strokeWidth={2} />
+                      <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
+                        fontFamily="IBM Plex Mono, monospace">
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {mode === 'family' && Object.entries(familyStats).map(([k, s]) => {
+                  if (s.pts.length < 3) return null;
+                  const fam = k as MarketFamily;
+                  const cx  = xOfFamily(fam);
+                  const y   = yOf(s.avg);
+                  const col = FAMILY_META[fam].color;
+                  return (
+                    <g key={k}>
+                      <line x1={cx - 20} x2={cx + 20} y1={y} y2={y} stroke={col} strokeWidth={2} />
                       <text x={cx} y={y - 6} textAnchor="middle" fontSize={8} fill={col}
                         fontFamily="IBM Plex Mono, monospace">
                         {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
@@ -1224,6 +1425,29 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                   </g>
                 ))}
 
+                {mode === 'family' && Object.entries(FAMILY_META).map(([k, meta]) => (
+                  <g key={k}>
+                    <text
+                      x={xOfFamily(k as MarketFamily)}
+                      y={H - PAD.b + 16}
+                      textAnchor="middle"
+                      fontSize={10} fill={meta.color} fontWeight={600}
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      {meta.abbr}
+                    </text>
+                    <text
+                      x={xOfFamily(k as MarketFamily)}
+                      y={H - PAD.b + 28}
+                      textAnchor="middle"
+                      fontSize={8} fill="#2a2f37"
+                      fontFamily="IBM Plex Mono, monospace"
+                    >
+                      leading
+                    </text>
+                  </g>
+                ))}
+
                 <text
                   x={14} y={PAD.t + IH / 2}
                   textAnchor="middle" fontSize={8} fill="#464c56"
@@ -1302,6 +1526,22 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                       </div>
                     </>
                   )}
+                  {hovered.kind === 'family' && (
+                    <>
+                      <div style={{ color: FAMILY_META[hovered.leadFamily].color, marginBottom: 3 }}>
+                        {FAMILY_LABEL[hovered.leadFamily]} leading · {hovered.symbol}
+                      </div>
+                      <div style={{ color: hovered.fwdPct > 0 ? '#22c55e' : '#ef4444' }}>
+                        {hovered.fwdPct > 0 ? '+' : ''}{hovered.fwdPct.toFixed(3)}%
+                      </div>
+                      <div style={{ color: 'var(--fg-4)', marginTop: 2 }}>
+                        {hovered.stateCode} · mood {hovered.leadMood}
+                      </div>
+                      <div style={{ color: 'var(--fg-4)' }}>
+                        {new Date(hovered.t).toLocaleDateString()} {new Date(hovered.t).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}
+                      </div>
+                    </>
+                  )}
                   {hovered.kind === 'transition' && (
                     <>
                       <div style={{ color: TRANSITION_META[hovered.transitionKey]?.color ?? 'var(--fg-1)', marginBottom: 3 }}>
@@ -1335,6 +1575,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 {mode === 'opportunity' ? 'OPPORTUNITY SUMMARY' :
                  mode === 'pattern'     ? 'PATTERN SUMMARY'     :
                  mode === 'transition'  ? 'TRANSITION SUMMARY'  :
+                 mode === 'family'      ? 'FAMILY LEADERSHIP'   :
                                           'AI STATE SUMMARY'}
               </div>
 
@@ -1758,6 +1999,117 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 );
               })}
 
+              {/* v17.3: Family Leadership cards. One per leading
+                  family, each with a per-symbol breakdown showing how
+                  individual assets behaved during that family's lead.
+                  Empty state appears when no observations carry a
+                  fieldSignature yet (v17.2+ scans only). */}
+              {mode === 'family' && familyPoints.length === 0 && (
+                <div style={{
+                  padding: '14px 12px',
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--line-1)',
+                  borderRadius: 4,
+                  fontSize: 10, color: '#7F98A3', lineHeight: 1.55,
+                }}>
+                  <div style={{ color: 'var(--fg-1)', fontWeight: 600, marginBottom: 6, fontSize: 11 }}>
+                    No family-context history yet.
+                  </div>
+                  Family Leadership uses the field signature stored on
+                  every radar scan (v17.2+). Run a scan to start
+                  collecting — older records without a signature don't
+                  appear here.
+                </div>
+              )}
+
+              {mode === 'family' && familyPoints.length > 0
+                && FAMILY_ORDER
+                  .filter(fam => familyStats[fam].pts.length > 0)
+                  .sort((a, b) => familyStats[b].pts.length - familyStats[a].pts.length)
+                  .map(fam => {
+                const meta = FAMILY_META[fam];
+                const s    = familyStats[fam];
+                const n    = s.pts.length;
+                const winPct = n ? (s.bull / n) * 100 : 0;
+                const avgCol =
+                    s.avg >  0.05 ? '#22c55e'
+                  : s.avg < -0.05 ? '#ef4444'
+                  :                  'var(--fg-3)';
+                return (
+                  <div key={fam} style={{
+                    marginBottom: 14, paddingBottom: 12,
+                    borderBottom: '1px solid var(--line-0)',
+                  }}>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      marginBottom: 3, alignItems: 'baseline',
+                    }}>
+                      <span style={{ color: meta.color, fontSize: 11, fontWeight: 700 }}>
+                        {meta.abbr} leading
+                      </span>
+                      <span style={{
+                        fontSize: 12, fontWeight: 700, color: avgCol,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {s.avg > 0 ? '+' : ''}{s.avg.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 8, color: 'var(--fg-4)', marginBottom: 5 }}>
+                      {n} read{n === 1 ? '' : 's'} for {symbol} · {winPct.toFixed(0)}% bullish
+                    </div>
+                    <div style={{
+                      display: 'flex', gap: 6, fontSize: 8,
+                      color: 'var(--fg-4)', marginBottom: 6,
+                      alignItems: 'center',
+                    }}>
+                      <span style={{ color: '#22c55e' }}>{s.bull}↑</span>
+                      <span style={{ color: '#ef4444' }}>{s.bear}↓</span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <SampleBadge n={n} />
+                      </span>
+                    </div>
+                    <div style={{ height: 3, background: '#ef4444', borderRadius: 1, overflow: 'hidden', marginBottom: 8 }}>
+                      <div style={{ height: '100%', background: '#22c55e', width: `${winPct}%`, borderRadius: 1 }} />
+                    </div>
+                    {/* Per-symbol breakdown — "When metals lead: gold +0.4%,
+                        silver +0.7%, BTC -0.2%". Listed in order of
+                        |avg| so the biggest movers (positive or
+                        negative) show first. Filtered to the current
+                        symbol's family-mates would be cleaner but the
+                        spec wants ALL symbols visible. */}
+                    {s.bySymbol.length > 0 && (
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 2,
+                        marginTop: 2,
+                      }}>
+                        {s.bySymbol.slice(0, 5).map(row => (
+                          <div key={row.symbol} style={{
+                            display: 'flex', justifyContent: 'space-between',
+                            fontSize: 9, fontFamily: 'IBM Plex Mono, monospace',
+                            color: 'var(--fg-3)',
+                          }}>
+                            <span>
+                              {row.symbol}
+                              <span style={{ color: 'var(--fg-4)', marginLeft: 4 }}>
+                                ×{row.n}
+                              </span>
+                            </span>
+                            <span style={{
+                              color: row.avg > 0.05 ? '#22c55e'
+                                   : row.avg < -0.05 ? '#ef4444'
+                                   : 'var(--fg-3)',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}>
+                              {row.avg > 0 ? '+' : ''}{row.avg.toFixed(2)}%
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
               <div style={{
                 fontSize: 8, color: 'var(--fg-4)',
                 lineHeight: 1.5, marginTop: 8,
@@ -1767,6 +2119,7 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                 {mode === 'opportunity' ? 'reads' :
                  mode === 'pattern'     ? 'occurrences' :
                  mode === 'transition'  ? 'transitions' :
+                 mode === 'family'      ? 'reads' :
                                           'analyses'} with positive outcome.
               </div>
             </div>

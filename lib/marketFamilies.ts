@@ -30,7 +30,7 @@ export const FAMILY_LABEL: Record<MarketFamily, string> = {
   risk:   'Risk',
 };
 
-const FAMILY_ORDER: MarketFamily[] = ['metals', 'crypto', 'fx', 'risk'];
+export const FAMILY_ORDER: MarketFamily[] = ['metals', 'crypto', 'fx', 'risk'];
 
 export function familyOf(symbol: MarketSymbol): MarketFamily {
   return SYMBOL_FAMILY[symbol];
