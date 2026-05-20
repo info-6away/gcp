@@ -20,7 +20,19 @@ import {
 } from '@/lib/radarScan';
 import { setRadarResult } from '@/lib/radarResultStore';
 import { recordRadarScanObservation } from '@/lib/researchRecorder';
-import { deriveFieldSignature } from '@/lib/fieldSignature';
+import {
+  deriveFieldSignature,
+  // Aliased to avoid colliding with fieldMemory's same-named type used
+  // by the v14.8 recurrence layer above.
+  type FieldSignature as ResearchFieldSignature,
+} from '@/lib/fieldSignature';
+import {
+  findLiveMatches, type LiveMatchAnchor, type LiveMatch,
+} from '@/lib/liveMatch';
+import {
+  AI_HISTORY_LS_KEY, loadAiStateHistory,
+  type AiStateHistoryRecord,
+} from '@/lib/aiStateHistory';
 import { AI_ANALYSIS_TF } from '@/lib/aiTimeframe';
 // v15.1: the field-diagnostic derivations are still computed here and
 // passed to FieldAnalysisPanel; only the helpers + the two types
@@ -180,6 +192,19 @@ export default function GuruRadar({
     () => new Map(),
   );
 
+  // v17.4: research history loaded for live-match lookups. Kept in
+  // sync via the storage event the recorder dispatches, so a fresh
+  // scan's persisted observations immediately become matchable.
+  const [aiHistory, setAiHistory] = useState<AiStateHistoryRecord[]>([]);
+  useEffect(() => {
+    setAiHistory(loadAiStateHistory());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === AI_HISTORY_LS_KEY) setAiHistory(loadAiStateHistory());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // 20s tick so "last scan age" stays current. Cheap; no Engine cost.
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 20_000);
@@ -317,6 +342,14 @@ export default function GuruRadar({
 
   // v16.0: classification source audit — is the read field-anchored?
   const anchoring = useMemo(() => deriveFieldAnchoring(results), [results]);
+
+  // v17.4: live field signature derived from the current scan, used
+  // as the field-context input for live-match lookups against the
+  // research ledger. Persisted at scan-end by the recorder (same
+  // derivation, computed once there) — this in-flight derivation lets
+  // every card display a match while the scan is still active.
+  const liveFieldSignature = useMemo<ResearchFieldSignature | null>(
+    () => deriveFieldSignature(results), [results]);
 
   // v14.7: market participation — which sessions are live right now.
   // Time-derived, scan-independent; recomputes on the 20s tick.
@@ -618,6 +651,8 @@ export default function GuruRadar({
                 onOpenTrade={() => onPick(r.symbol)}
                 patternSeq={aiStateInputs?.patternStory?.seq ?? null}
                 dominantAction={dispersion?.dominantAction ?? null}
+                aiHistory={aiHistory}
+                liveFieldSignature={liveFieldSignature}
               />
             ))}
           </div>
@@ -650,7 +685,7 @@ const OPP_STATUS_COLOR: Record<OpportunityStatus, string> = {
 
 function RadarCard({
   result, priorResult, now, isCurrent, expanded, onToggle, onOpenTrade, patternSeq,
-  dominantAction,
+  dominantAction, aiHistory, liveFieldSignature,
 }: {
   result:         RadarResult;
   /** v16.1: previous scan's result for this symbol (session-only).
@@ -664,6 +699,10 @@ function RadarCard({
   patternSeq:     string[] | null;
   /** Most common action state across the scan, for the Δ field line. */
   dominantAction: string | null;
+  /** v17.4: research ledger for live-match lookups. */
+  aiHistory:          AiStateHistoryRecord[];
+  /** v17.4: live field signature derived from the current scan. */
+  liveFieldSignature: ResearchFieldSignature | null;
 }) {
   const meta = getSymbolMeta(result.symbol);
 
@@ -715,6 +754,34 @@ function RadarCard({
     const cur = driftFrameFromRadarResult(result);
     const prv = priorResult ? driftFrameFromRadarResult(priorResult) : null;
     return cur ? deriveTemporalDrift(cur, prv) : null;
+  })();
+
+  // v17.4: live match — find historically similar reads in the
+  // research ledger. Cross-symbol by design (matching XAUUSD to a
+  // BTC observation surfaces "I've seen this shape before"). Anchor
+  // built from the live result + the in-flight scan signature; same
+  // signature the recorder will persist at scan end. Outcomes are
+  // NOT rendered on the radar card — the radar has no candle access
+  // for forward-return computation. Research sidebar shows outcomes.
+  const liveMatches: LiveMatch[] = (() => {
+    if (!aiHistory.length || !result.ok || !result.aiState) return [];
+    const ai  = result.aiState;
+    const opp = deriveOpportunityDistance(result);
+    const anchor: LiveMatchAnchor = {
+      symbol:            result.symbol,
+      stateCode:         ai.stateCode,
+      phase:             ai.phase,
+      direction:         ai.direction,
+      confidence:        ai.confidence,
+      longPressure:      ai.longPressure,
+      shortPressure:     ai.shortPressure,
+      pressureBand:      ai.pressureBand,
+      opportunityScore:  opp?.score,
+      opportunityStatus: opp?.status,
+      fieldSignature:    liveFieldSignature ?? undefined,
+      timestamp:         result.scannedAt,
+    };
+    return findLiveMatches(anchor, aiHistory, { limit: 2, minScore: 55 });
   })();
   const showConfirms =
     action.actionState === 'GO' || action.actionState === 'READY'
@@ -854,6 +921,42 @@ function RadarCard({
             </b>
             {drift.summary && (
               <span style={{ color: 'var(--fg-4)' }}> · {drift.summary}</span>
+            )}
+          </div>
+        )}
+
+        {/* v17.4: live match — closest historical read in the ledger.
+            Cross-symbol resemblance ("I've seen this before"). No
+            outcome shown here — radar has no candle access; Research
+            sidebar carries the forward-return for each match. */}
+        {liveMatches.length > 0 && (
+          <div style={{
+            fontSize: 9, fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.04em', lineHeight: 1.4,
+          }}>
+            <div>
+              <span style={{ color: 'var(--fg-3)' }}>resembles · </span>
+              <b style={{ color: 'var(--cyan)' }}>
+                {new Date(liveMatches[0].record.timestamp)
+                  .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
+                {liveMatches[0].record.symbol}
+              </b>{' '}
+              <span style={{ color: 'var(--fg-2)' }}>
+                {liveMatches[0].similarity}%
+              </span>
+            </div>
+            <div style={{
+              fontSize: 8, color: 'var(--fg-4)', letterSpacing: '0.03em',
+            }}>
+              matched on · {liveMatches[0].matchedOn.slice(0, 4).join(' · ')}
+            </div>
+            {liveMatches[1] && (
+              <div style={{ fontSize: 8, color: 'var(--fg-4)' }}>
+                also ·{' '}
+                {new Date(liveMatches[1].record.timestamp)
+                  .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
+                {liveMatches[1].record.symbol} · {liveMatches[1].similarity}%
+              </div>
             )}
           </div>
         )}

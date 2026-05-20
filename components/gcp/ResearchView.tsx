@@ -16,6 +16,7 @@ import {
 import {
   FAMILY_LABEL, FAMILY_ORDER, familyOf, type MarketFamily,
 } from '@/lib/marketFamilies';
+import { findLiveMatches, type LiveMatch } from '@/lib/liveMatch';
 
 const TD_SYMBOLS: Record<MarketSymbol, string> = {
   XAUUSD: 'XAU/USD',
@@ -761,6 +762,44 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     }
     return map;
   }, [opportunityPoints]);
+
+  // ── v17.4: Current resemblance ────────────────────────────────────
+  // The active symbol's most-recent ledger entry is the anchor; we
+  // hunt the rest of history (any symbol) for the closest matches and
+  // attach forward returns from aiStatePoints when available. This is
+  // the bridge from "what is happening right now" to "what happened
+  // last time the system saw a read like this".
+  const liveResemblance = useMemo(() => {
+    if (aiHistory.length === 0) return null;
+    // Most-recent record for the current symbol.
+    let anchor: AiStateHistoryRecord | null = null;
+    for (let i = aiHistory.length - 1; i >= 0; i--) {
+      if (aiHistory[i].symbol === symbol) { anchor = aiHistory[i]; break; }
+    }
+    if (!anchor) return null;
+
+    const matches = findLiveMatches(anchor, aiHistory, {
+      limit:    3,
+      minScore: 50,
+      // Anchor is itself in history — exclude same-scan siblings only.
+      excludeWithinMs: 60_000,
+    });
+    if (matches.length === 0) return { anchor, matches: [] as Array<LiveMatch & { fwdPct?: number }> };
+
+    // Cross-reference each match against aiStatePoints (which carries
+    // computed fwdPct) by exact timestamp. aiStatePoints is current-
+    // symbol only — matches on OTHER symbols simply won't have an
+    // outcome attached here; v17.5 will widen this with multi-symbol
+    // candle fetch.
+    const tsToFwd = new Map<number, number>();
+    for (const p of aiStatePoints) tsToFwd.set(p.t, p.fwdPct);
+
+    const enriched = matches.map(m => ({
+      ...m,
+      fwdPct: tsToFwd.get(m.record.timestamp),
+    }));
+    return { anchor, matches: enriched };
+  }, [aiHistory, aiStatePoints, symbol]);
 
   // ── v17.0: Field Insight ──────────────────────────────────────────
   // One-sentence headline for the active tab — picks the category with
@@ -1578,6 +1617,109 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
                  mode === 'family'      ? 'FAMILY LEADERSHIP'   :
                                           'AI STATE SUMMARY'}
               </div>
+
+              {/* v17.4: CURRENT RESEMBLANCE — the active symbol's
+                  most-recent read vs. the rest of history. Outcomes
+                  attach only for current-symbol matches today; cross-
+                  symbol outcomes are coming with v17.5's multi-symbol
+                  candle fetch. */}
+              {liveResemblance && liveResemblance.matches.length > 0 && (() => {
+                const withOutcome = liveResemblance.matches.filter(m => m.fwdPct != null);
+                const avgOutcome = withOutcome.length
+                  ? withOutcome.reduce((s, m) => s + (m.fwdPct ?? 0), 0) / withOutcome.length
+                  : null;
+                return (
+                  <div style={{
+                    marginBottom: 14, padding: '10px 12px',
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--line-1)',
+                    borderLeft: '2px solid var(--cyan)',
+                    borderRadius: 3,
+                  }}>
+                    <div style={{
+                      fontSize: 8, letterSpacing: '0.16em', fontWeight: 700,
+                      color: 'var(--fg-4)', marginBottom: 6,
+                    }}>
+                      CURRENT RESEMBLANCE
+                    </div>
+                    <div style={{ fontSize: 9, color: 'var(--fg-3)', marginBottom: 6 }}>
+                      {symbol} ·{' '}
+                      <b style={{ color: 'var(--fg-1)' }}>
+                        {liveResemblance.anchor.stateCode}
+                      </b>{' '}
+                      · {liveResemblance.anchor.phase} ·{' '}
+                      {(liveResemblance.anchor.confidence * 100).toFixed(0)}% clarity
+                    </div>
+                    <div style={{
+                      display: 'flex', flexDirection: 'column', gap: 4,
+                    }}>
+                      {liveResemblance.matches.map((m) => {
+                        const d = new Date(m.record.timestamp);
+                        const dateStr = d.toLocaleDateString(undefined,
+                          { month: 'short', day: 'numeric' });
+                        const fwdColor =
+                            m.fwdPct == null      ? 'var(--fg-4)'
+                          : m.fwdPct >  0.05      ? '#22c55e'
+                          : m.fwdPct < -0.05      ? '#ef4444'
+                          :                          'var(--fg-3)';
+                        return (
+                          <div key={m.record.id} style={{
+                            display: 'flex', flexDirection: 'column', gap: 1,
+                            fontFamily: 'IBM Plex Mono, monospace', fontSize: 9,
+                          }}>
+                            <div style={{
+                              display: 'flex', justifyContent: 'space-between',
+                              alignItems: 'baseline',
+                            }}>
+                              <span style={{ color: 'var(--fg-2)' }}>
+                                {dateStr} <span style={{ color: 'var(--fg-4)' }}>
+                                  {m.record.symbol}
+                                </span>
+                              </span>
+                              <span style={{
+                                color: 'var(--cyan)', fontWeight: 700,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}>{m.similarity}%</span>
+                            </div>
+                            <div style={{
+                              display: 'flex', justifyContent: 'space-between',
+                              fontSize: 8, color: 'var(--fg-4)',
+                            }}>
+                              <span>{m.matchedOn.slice(0, 3).join(' · ')}</span>
+                              <span style={{
+                                color: fwdColor,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}>
+                                {m.fwdPct == null ? 'n/a'
+                                  : `${m.fwdPct > 0 ? '+' : ''}${m.fwdPct.toFixed(2)}%`}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {avgOutcome != null && (
+                      <div style={{
+                        fontSize: 9, color: 'var(--fg-3)', marginTop: 6,
+                        paddingTop: 6, borderTop: '1px solid var(--line-0)',
+                      }}>
+                        Avg outcome{' '}
+                        <b style={{
+                          color: avgOutcome > 0.05 ? '#22c55e'
+                               : avgOutcome < -0.05 ? '#ef4444'
+                               : 'var(--fg-2)',
+                          fontVariantNumeric: 'tabular-nums',
+                        }}>
+                          {avgOutcome > 0 ? '+' : ''}{avgOutcome.toFixed(2)}%
+                        </b>{' '}
+                        <span style={{ color: 'var(--fg-4)' }}>
+                          (n={withOutcome.length})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* v17.0: FIELD INSIGHT — surfaces the strongest evidence-
                   backed finding for the current tab. Only renders when
