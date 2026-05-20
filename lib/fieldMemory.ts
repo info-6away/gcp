@@ -74,6 +74,10 @@ export interface FieldRecurrence {
   /** Closest match similarity, 0-100. */
   similarity:       number;
   closestMatch:     FieldMemoryRecord | null;
+  /** v17.4.3: oldest matched analogue. Lets the Memory stat surface
+   *  "oldest <date>" so the user can read whether the field's been
+   *  here once last week or fifty times over months. */
+  oldestMatch:      FieldMemoryRecord | null;
   /** Short summaries of what the field resolved into after matches. */
   priorOutcomes:    string[];
   /** Mean hours from a matched scan to its first action change. */
@@ -109,7 +113,7 @@ export function deriveFieldRecurrence(
   history: FieldMemoryRecord[],
 ): FieldRecurrence {
   const empty: FieldRecurrence = {
-    matches: 0, similarity: 0, closestMatch: null,
+    matches: 0, similarity: 0, closestMatch: null, oldestMatch: null,
     priorOutcomes: [], averageDuration: null,
     commonTransition: null, totalScans: history.length,
   };
@@ -160,10 +164,16 @@ export function deriveFieldRecurrence(
   const commonTransition = Object.entries(transitions)
     .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
+  // v17.4.3: oldest analogue — matched records sorted oldest-first.
+  // `sorted` is already ascending by timestamp; matched preserves
+  // that order, so the first element is the oldest.
+  const oldestMatch = matched.length > 0 ? matched[0].r : null;
+
   return {
     matches:      matched.length,
     similarity:   Math.round(closest.sim * 100),
     closestMatch: closest.r,
+    oldestMatch,
     priorOutcomes,
     averageDuration,
     commonTransition,

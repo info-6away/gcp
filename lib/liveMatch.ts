@@ -270,6 +270,52 @@ export interface LiveMatchOptions {
 const isDev = () =>
   typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
 
+// v17.4.3: depth-bucket selector. Spec quotas — at most 1 today,
+// at most 1 this-week, up to 2 older. Fills in depth order, then
+// backfills empty slots from the older bucket first (the older
+// preference is structural — older analogues get reserved slots
+// they wouldn't earn on raw similarity alone). Input must be
+// pre-sorted by similarity desc.
+function selectByDepthBuckets(
+  matches: LiveMatch[],
+  limit:   number,
+): LiveMatch[] {
+  if (limit <= 0 || matches.length === 0) return [];
+
+  const buckets: Record<MatchDepth, LiveMatch[]> = {
+    today:       [],
+    'this-week': [],
+    older:       [],
+  };
+  for (const m of matches) buckets[m.depth].push(m);
+
+  const targets: Record<MatchDepth, number> = {
+    today:       1,
+    'this-week': 1,
+    older:       2,
+  };
+  const order: MatchDepth[] = ['today', 'this-week', 'older'];
+
+  const out: LiveMatch[] = [];
+  // Phase 1: fill each bucket up to its target, in depth order.
+  for (const d of order) {
+    if (out.length >= limit) break;
+    const take = Math.min(targets[d], limit - out.length, buckets[d].length);
+    if (take > 0) {
+      out.push(...buckets[d].slice(0, take));
+      buckets[d] = buckets[d].slice(take);
+    }
+  }
+  // Phase 2: backfill empty slots — older bucket first, then week,
+  // then today. Keeps the older preference even when a bucket is
+  // missing observations.
+  if (out.length < limit) {
+    const backfill = [...buckets.older, ...buckets['this-week'], ...buckets.today];
+    out.push(...backfill.slice(0, limit - out.length));
+  }
+  return out;
+}
+
 export function findLiveMatches(
   anchor:  LiveMatchAnchor,
   history: AiStateHistoryRecord[],
@@ -339,7 +385,15 @@ export function findLiveMatches(
     if (b.similarity !== a.similarity) return b.similarity - a.similarity;
     return a.record.timestamp - b.record.timestamp;
   });
-  const top = survivors.slice(0, limit);
+  // ── Stage 4: depth-bucket reservation (v17.4.3) ──
+  // Without this, the top-N is just "highest scores wins", and a
+  // morning full of fresh scans can crowd out the genuinely
+  // informative older analogues. Quotas (1 today / 1 week / 2 older)
+  // guarantee texture: at most one same-day record, at most one
+  // this-week record, and as many older analogues as the limit allows.
+  // Buckets are filled in depth order so the final list reads
+  // today → this-week → older → older.
+  const top = selectByDepthBuckets(survivors, limit);
 
   // ── Dev log: one line per call summarizing the pipeline ──
   if (debug && top.length > 0) {

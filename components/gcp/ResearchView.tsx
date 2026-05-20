@@ -779,9 +779,15 @@ export default function ResearchView({ series, symbol }: ResearchViewProps) {
     if (!anchor) return null;
 
     const matches = findLiveMatches(anchor, aiHistory, {
-      limit:    3,
+      // v17.4.3: limit=4 to show the full depth diversity
+      // (1 today / 1 this-week / 2 older). Smaller numbers crowd out
+      // the older analogues that carry the most information.
+      limit:    4,
       minScore: 50,
       // Anchor is itself in history — exclude same-scan siblings only.
+      // Keep the looser 60s window here (Research is the place to see
+      // EVERY analogue including yesterday's); the radar uses the
+      // stricter 4h default to suppress mirror reflections.
       excludeWithinMs: 60_000,
     });
     if (matches.length === 0) return { anchor, matches: [] as Array<LiveMatch & { fwdPct?: number }> };

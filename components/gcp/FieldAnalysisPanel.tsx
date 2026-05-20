@@ -129,9 +129,31 @@ export default function FieldAnalysisPanel(props: FieldAnalysisPanelProps) {
       value: leadFamily ? `${FAMILY_LABEL[leadFamily.family]} ${leadFamily.mood}` : '—',
       color: leadFamily ? FAMILY_MOOD_COLOR[leadFamily.mood] : undefined },
     { label: 'Memory',
+      // v17.4.3: "Seen 6x" used to conflate "6 scans in 2 hours" with
+      // "6 distinct historical analogues" — very different things.
+      // Now: depth label (SHALLOW / GROWING / DEEP) + scan count +
+      // analogue count + oldest analogue's date. Reads as memory
+      // texture instead of one ambiguous number.
       value: recurrence
-        ? (recurrence.matches > 0 ? `Seen ${recurrence.matches}×` : `${recurrence.totalScans} scans`)
-        : '—' },
+        ? (() => {
+            const depth =
+                recurrence.totalScans < 5  ? 'SHALLOW'
+              : recurrence.totalScans < 30 ? 'GROWING'
+              :                              'DEEP';
+            const head = `${depth} · ${recurrence.totalScans} scan${recurrence.totalScans === 1 ? '' : 's'}`;
+            if (recurrence.matches === 0) return head;
+            const oldest = recurrence.oldestMatch
+              ? ` · oldest ${new Date(recurrence.oldestMatch.timestamp)
+                  .toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+              : '';
+            return `${head} · ${recurrence.matches} analogue${recurrence.matches === 1 ? '' : 's'}${oldest}`;
+          })()
+        : '—',
+      color: recurrence
+        ? (recurrence.totalScans < 5  ? 'var(--fg-3)'
+         : recurrence.totalScans < 30 ? 'var(--fg-1)'
+         :                              '#22c55e')
+        : undefined },
     { label: 'Anchoring',
       value: anchoring ? `${anchoring.avgFieldInfluence}% field` : '—',
       color: anchoring
