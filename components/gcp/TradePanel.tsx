@@ -11,10 +11,14 @@
 //         ANALYST / RESEARCH → EXECUTE / PLAN / JOURNAL. Layout
 //         restructured into a 4-zone terminal: top strip (AI read +
 //         trigger status), body (chart left / order+position right),
-//         bottom journal. JOURNAL mode collapses the body and lets
-//         the history table fill the frame. No new trading
-//         intelligence yet — chart and trigger are foundation slots
-//         for the next two phases.
+//         bottom journal. Chart and trigger were placeholder slots.
+// v18.3:  Trigger Engine live. <TriggerStrip> replaces the trigger
+//         placeholder with activation / invalidation conditions
+//         derived from the current Guru read; PLAN mode swaps the
+//         chart for a full <TriggerPanel> with the
+//         ENVIRONMENT → TRIGGER → EXECUTION progression visual. No
+//         Engine, payload or scoring changes — pure downstream
+//         relabel of the existing read into conditional form.
 //
 //   ┌───────────────────────────────────────────────────────────────┐
 //   │ Header  TRADE · SYMBOL · MODE · ASK GURU · balance · reset     │
@@ -88,6 +92,12 @@ import {
 import {
   AiReadStrip, EnvVsThesisBanner,
 } from '@/components/gcp/intelligence/IntelligenceCards';
+// v18.3: Trigger Engine — converts the Guru read into actionable
+// activation conditions for the Trade terminal.
+import {
+  deriveTriggerState, activeStage, STAGE_LABEL,
+  type TriggerState,
+} from '@/lib/triggerEngine';
 
 interface Props {
   symbol:        MarketSymbol;
@@ -1098,36 +1108,250 @@ function SectionShell({
   );
 }
 
-// ── v18.2: Trigger status strip placeholder ──────────────────────
+// ── v18.3: Trigger Engine surfaces ────────────────────────────────
 //
-// Sits next to <AiReadStrip> in the top row. v18.3's Trigger Engine
-// will populate it with the active conditional ("Activate long if
-// price breaks 4512 and NV slope > +0.3") and the invalidation gate.
-// For v18.2 it's an honest "not configured" affordance — no fake
-// content; just a hook for the next phase.
+// Two presentations of the same derivation:
+//   TriggerStrip — compact one-shape summary for the EXECUTE top row.
+//                  Headline stance + status + 2-3 activation lines +
+//                  one invalidation line.
+//   TriggerPanel — expanded PLAN-mode panel. All activation +
+//                  invalidation conditions, stage progression visual,
+//                  and a one-line reason.
+//
+// Both share the same TriggerState shape; no Engine, payload or
+// scoring change — just a relabel of the existing Guru read into
+// trade-actionable conditions.
 
-function TriggerStatusStrip({ aiState }: { aiState: GcpStateResponse | null }) {
+function TriggerStrip({
+  trigger,
+}: {
+  trigger: TriggerState;
+}) {
+  const accent = trigger.color;
   return (
     <div style={{
       padding: '8px 14px',
       background: 'var(--bg-1)', border: '1px solid var(--line-1)',
-      borderLeft: '3px solid var(--line-2)',
+      borderLeft: `3px solid ${accent}`,
       borderRadius: 'var(--r-md)',
-      display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
-      fontFamily: 'var(--font-mono)',
+      display: 'flex', flexDirection: 'column', gap: 4,
+      fontFamily: 'var(--font-mono)', minWidth: 0,
     }}>
-      <span style={{
-        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
-        fontWeight: 600,
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 10,
       }}>
-        TRIGGER
-      </span>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontWeight: 600,
+        }}>
+          TRIGGER
+        </span>
+        <span style={{
+          fontSize: 12, fontWeight: 700, letterSpacing: '0.06em',
+          color: accent,
+        }}>
+          {trigger.status.toUpperCase()}
+        </span>
+        <span style={{
+          fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.04em',
+          marginLeft: 'auto',
+        }}>
+          {trigger.stance}
+        </span>
+      </div>
+      {trigger.activation.length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 1,
+          fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.4,
+        }}>
+          <span style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.14em' }}>
+            ACTIVATE
+          </span>
+          {trigger.activation.slice(0, 3).map((c, i) => (
+            <span key={i} style={{
+              color: c.met === true  ? '#22c55e'
+                   : c.met === false ? 'var(--fg-3)'
+                   :                   'var(--fg-2)',
+            }}>
+              {c.met === true ? '✓' : c.met === false ? '·' : '·'} {c.text}
+            </span>
+          ))}
+        </div>
+      )}
+      {trigger.invalidation.length > 0 && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 1,
+          fontSize: 10, color: 'var(--fg-2)', lineHeight: 1.4,
+        }}>
+          <span style={{ color: 'var(--fg-4)', fontSize: 8, letterSpacing: '0.14em' }}>
+            INVALIDATION
+          </span>
+          {trigger.invalidation.slice(0, 2).map((c, i) => (
+            <span key={i} style={{
+              color: c.met === true ? '#c45a5a' : 'var(--fg-3)',
+            }}>
+              · {c.text}
+            </span>
+          ))}
+        </div>
+      )}
       <span style={{
-        fontSize: 11, color: aiState ? 'var(--fg-3)' : 'var(--fg-4)',
-        letterSpacing: '0.04em',
+        fontSize: 9, color: 'var(--fg-4)', fontStyle: 'italic',
+        marginTop: 2,
       }}>
-        {aiState ? 'No trigger set — coming in v18.3' : 'Awaiting Guru read'}
+        {trigger.triggerReason}
       </span>
+    </div>
+  );
+}
+
+// ── v18.3: PLAN-mode expanded trigger panel ──────────────────────
+// Sits in place of the chart placeholder when the user is in PLAN
+// mode. Shows the full activation / invalidation lists plus the
+// ENVIRONMENT → TRIGGER → EXECUTION stage progression so the
+// operator can read the whole conditional at a glance.
+
+function TriggerPanel({ trigger }: { trigger: TriggerState }) {
+  const stage = activeStage(trigger.status);
+  return (
+    <div style={{
+      background: 'var(--bg-1)', border: '1px solid var(--line-1)',
+      borderLeft: `3px solid ${trigger.color}`,
+      borderRadius: 'var(--r-md)',
+      padding: '14px 16px',
+      display: 'flex', flexDirection: 'column', gap: 14,
+      fontFamily: 'var(--font-mono)',
+      minHeight: 360,
+    }}>
+      {/* Header — headline status */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 2,
+      }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontWeight: 600,
+        }}>
+          TRIGGER · {trigger.triggerType.toUpperCase()}
+        </span>
+        <span style={{
+          fontSize: 28, fontWeight: 800, letterSpacing: '0.05em',
+          color: trigger.color, lineHeight: 1.1,
+        }}>
+          {trigger.status.toUpperCase()}
+        </span>
+        <span style={{
+          fontSize: 12, color: 'var(--fg-1)', letterSpacing: '0.04em',
+          marginTop: 4,
+        }}>
+          {trigger.triggerText}
+        </span>
+      </div>
+
+      {/* Stage progression: ENVIRONMENT → TRIGGER → EXECUTION */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        flexWrap: 'wrap',
+      }}>
+        {(['environment', 'trigger', 'execution'] as const).map((s, i, arr) => {
+          const active   = s === stage;
+          const past     = arr.indexOf(stage) > i;
+          const color    = active ? trigger.color
+                          : past   ? 'var(--fg-2)'
+                          :          'var(--fg-4)';
+          const opacity  = active ? 1 : past ? 0.85 : 0.55;
+          return (
+            <span key={s} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.14em',
+                color, opacity,
+                padding: '4px 8px',
+                border: `1px solid ${color}${active ? '99' : '33'}`,
+                background: active ? `${color}11` : 'transparent',
+                borderRadius: 2,
+              }}>
+                {STAGE_LABEL[s]}
+              </span>
+              {i < arr.length - 1 && (
+                <span style={{ color: 'var(--fg-4)' }}>↓</span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Activation conditions */}
+      {trigger.activation.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{
+            fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+            fontWeight: 600,
+          }}>
+            ACTIVATION
+          </span>
+          {trigger.activation.map((c, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5,
+            }}>
+              <span style={{
+                color: c.met === true  ? '#22c55e'
+                     : c.met === false ? 'var(--fg-4)'
+                     :                   'var(--fg-4)',
+                fontWeight: 700,
+              }}>
+                {c.met === true ? '✓' : '·'}
+              </span>
+              <span style={{
+                color: c.met === false ? 'var(--fg-3)' : 'var(--fg-1)',
+              }}>
+                {c.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Invalidation conditions */}
+      {trigger.invalidation.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{
+            fontSize: 9, letterSpacing: '0.18em', color: '#c45a5a',
+            fontWeight: 600,
+          }}>
+            INVALIDATION
+          </span>
+          {trigger.invalidation.map((c, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'baseline', gap: 8,
+              fontSize: 12, color: 'var(--fg-1)', lineHeight: 1.5,
+            }}>
+              <span style={{
+                color: c.met === true ? '#c45a5a' : 'var(--fg-4)',
+                fontWeight: 700,
+              }}>
+                {c.met === true ? '⚠' : '·'}
+              </span>
+              <span style={{
+                color: c.met === true ? '#c45a5a' : 'var(--fg-2)',
+              }}>
+                {c.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reason */}
+      <div style={{
+        marginTop: 'auto',
+        fontSize: 11, color: 'var(--fg-3)',
+        fontStyle: 'italic', lineHeight: 1.5,
+        paddingTop: 8, borderTop: '1px solid var(--line-0)',
+      }}>
+        {trigger.triggerReason}
+      </div>
     </div>
   );
 }
@@ -1230,6 +1454,7 @@ function TradePanelImpl({
   // order section.
   const [viewMode, setViewMode] = useViewMode();
   const isJournal = viewMode === 'JOURNAL';
+  const isPlan    = viewMode === 'PLAN';
   // v13.0: AI state history for State Flow ribbon + Historical Analog.
   const [records, setRecords] = useState<AiStateHistoryRecord[]>([]);
   useEffect(() => {
@@ -1317,6 +1542,15 @@ function TradePanelImpl({
   const alignmentForActive = useMemo(
     () => acct.open ? deriveTradeAlignment(acct.open.side, aiState) : 'unknown' as Alignment,
     [acct.open, aiState],
+  );
+
+  // v18.3: trigger state — converts the current Guru read into
+  // actionable activation / invalidation conditions. Pure downstream
+  // derivation; recomputes on each price tick so "Price > 4512" lights
+  // up the instant the condition is satisfied.
+  const triggerState: TriggerState = useMemo(
+    () => deriveTriggerState({ aiState, priceStructure, currentPrice, symbol }),
+    [aiState, priceStructure, currentPrice, symbol],
   );
 
   const handleOpen = () => {
@@ -1452,7 +1686,7 @@ function TradePanelImpl({
             history={symbolRecords}
             priceStructure={priceStructure}
           />
-          <TriggerStatusStrip aiState={aiState} />
+          <TriggerStrip trigger={triggerState} />
         </div>
 
         {/* Conflict alert — only renders during an env-vs-thesis
@@ -1472,11 +1706,12 @@ function TradePanelImpl({
             display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12,
             minHeight: 0,
           }}>
-            {/* LEFT — chart / market view */}
-            <ChartPlaceholder
-              symbol={symbol}
-              currentPrice={currentPrice}
-            />
+            {/* LEFT — chart / market view (EXECUTE) or trigger plan
+                (PLAN). JOURNAL doesn't render this row at all. */}
+            {isPlan
+              ? <TriggerPanel trigger={triggerState} />
+              : <ChartPlaceholder symbol={symbol} currentPrice={currentPrice} />
+            }
 
             {/* RIGHT — order + position controls. Stacked. */}
             <div style={{
