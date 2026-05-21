@@ -62,6 +62,20 @@ import {
 } from '@/lib/pressureSemantics';
 import AiStateCard from './AiStateCard';
 import { PageHeader } from './Chrome';
+// v18.0: intelligence cards moved here from TradePanel. Guru becomes
+// the AI / environment intelligence center; Trade becomes a clean
+// execution terminal.
+import {
+  EnvironmentThesisCard,
+  DirectionalPressureCard,
+  MarketContextCard,
+  ActionStateBanner,
+  EnvVsThesisBanner,
+  DirectionalEdgeCard,
+  ThesisStabilityCard,
+  StateFlowRibbon,
+  HistoricalAnalogCard,
+} from '@/components/gcp/intelligence/IntelligenceCards';
 
 interface GuruViewProps {
   symbol:             MarketSymbol;
@@ -3020,6 +3034,84 @@ export default function GuruView(props: GuruViewProps) {
         {/* v13.8 SECTION B — State Evolution. Last 5 anchored states
             as horizontal chips with arrows + current highlighted. */}
         <StateEvolution records={symbolRecords} currentState={props.aiState} />
+
+        {/* v18.0 — Intelligence cluster.
+            All cards extracted from TradePanel into
+            components/gcp/intelligence/IntelligenceCards.tsx. Guru
+            becomes the AI / environment intelligence center; Trade
+            keeps only the compact AI READ strip.
+
+            goldTrend defaults to 'unknown' because the Guru surface
+            doesn't load candles — the card degrades gracefully and
+            shows "Gold unknown". priceStructure passes null for the
+            same reason (action ladder soft-passes when missing). */}
+        <style>{`
+          @media (max-width: 720px) {
+            .guru-intel .gi-hero-row,
+            .guru-intel .gi-meso-row,
+            .guru-intel .gi-decision-row {
+              grid-template-columns: 1fr !important;
+            }
+          }
+        `}</style>
+        <div className="guru-intel" style={{
+          display: 'flex', flexDirection: 'column', gap: 12,
+        }}>
+          {/* Top — Environment Thesis (60%) + Directional Pressure
+              + Market Context (40% stacked). DirectionalPressureCard
+              embeds the STANCE / MODE / EXECUTION block, so the
+              "right side: Stance" spec slot is covered. */}
+          <div className="gi-hero-row" style={{
+            display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12,
+          }}>
+            <EnvironmentThesisCard
+              aiState={props.aiState}
+              regime={props.regime ?? null}
+              netVariance={props.netVariance ?? null}
+              goldTrend="unknown"
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <DirectionalPressureCard aiState={props.aiState} />
+              <MarketContextCard aiState={props.aiState} />
+            </div>
+          </div>
+
+          {/* Middle — Action State banner (full width), then the
+              two-up decision strip. Guru renders these in their
+              environment-only flavor (hasOpenPosition=false) because
+              Guru has no position context; Trade keeps the position-
+              aware version on its own surface. */}
+          <ActionStateBanner
+            aiState={props.aiState}
+            hasOpenPosition={false}
+            history={symbolRecords}
+            priceStructure={null}
+          />
+          <EnvVsThesisBanner
+            aiState={props.aiState}
+            hasOpenPosition={false}
+            history={symbolRecords}
+            priceStructure={null}
+          />
+          <div className="gi-decision-row" style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
+          }}>
+            <DirectionalEdgeCard aiState={props.aiState} />
+            <ThesisStabilityCard aiState={props.aiState} />
+          </div>
+
+          {/* Bottom — State Flow + Historical Analog meso row. */}
+          <div className="gi-meso-row" style={{
+            display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12,
+          }}>
+            <StateFlowRibbon records={symbolRecords} currentState={props.aiState} />
+            <HistoricalAnalogCard
+              records={records}
+              symbol={props.symbol}
+              aiState={props.aiState}
+            />
+          </div>
+        </div>
 
         {/* v13.8 — State Story banner. Deterministic narrative from
             the last 8 anchored records ("CS persisted for 4 reads →

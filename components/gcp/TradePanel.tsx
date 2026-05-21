@@ -89,6 +89,12 @@ import {
   AI_HISTORY_LS_KEY, loadAiStateHistory,
   type AiStateHistoryRecord,
 } from '@/lib/aiStateHistory';
+// v18.0: Trade no longer carries the heavy Guru intelligence cards;
+// those moved to GuruView. Trade keeps a compact AI READ strip so the
+// operator stays aware of the AI context without parsing a full
+// narrative thesis. EnvVsThesisBanner stays inline below — it only
+// renders on conflict and is execution-critical for open positions.
+import { AiReadStrip } from '@/components/gcp/intelligence/IntelligenceCards';
 
 interface Props {
   symbol:        MarketSymbol;
@@ -2624,92 +2630,26 @@ function TradePanelImpl({
           }
         `}</style>
 
-        {/* Hero row: Thesis (60%) + Pressure gauge (40%). In SIMPLE
-            mode the PressureGauge collapses into the 4-meter strip
-            below; in ANALYST / RESEARCH the full LONG/SHORT detail
-            stays on screen. v13.6 — design handoff. */}
-        <div className="ti-hero-row" style={{
-          display: 'grid',
-          gridTemplateColumns: showAnalyst ? '3fr 2fr' : '1fr',
-          gap: 12,
-        }}>
-          <ThesisHero
-            aiState={aiState}
-            regime={regime}
-            netVariance={netVariance}
-            goldTrend={goldTrend}
-            hydratedFromRadar={hydratedFromRadar}
-            radarScannedAt={radarResult?.scannedAt ?? null}
-          />
-          {showAnalyst && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <PressureGauge aiState={aiState} />
-              {/* v13.4: MARKET CONTEXT lives directly under the pressure
-                  gauge — same column, separate card. Visually clear that
-                  structure / momentum are a different category from
-                  pressure direction. */}
-              <MarketContextCard aiState={aiState} />
-            </div>
-          )}
-        </div>
-
-        {/* v13.9.0: ACTION STATE banner — escalation ladder
-            (BLOCKED / WATCH / READY / GO / MANAGE / EXIT). Replaces
-            the v13.7 ENTRY STATUS banner. GO is intentionally rare;
-            strict requirements (state ∈ {IS,AT,SS}, not Late, clarity
-            ≥ threshold, edge ≥ moderate, structure aligned,
-            invalidators ≤ 1, confidence stable/rising, no decay) must
-            all hold before it fires. */}
-        <ActionStateBanner
+        {/* v18.0: AI READ strip — compact one-line summary for the
+            execution surface. The full Environment Thesis, Pressure
+            gauge, Market Context, Action State banner, Directional
+            Edge, Thesis Stability, State Flow and Historical Analog
+            have all moved to GuruView; Trade now stays focused on
+            execution. EnvVsThesisBanner below remains because it
+            only renders during an env-vs-thesis CONFLICT on an open
+            position — a critical execution alert, not a narrative. */}
+        <AiReadStrip
           aiState={aiState}
           hasOpenPosition={!!acct.open}
           history={symbolRecords}
           priceStructure={priceStructure}
         />
-        {/* v16.1: env-vs-thesis conflict banner — only renders when
-            the position-aware action and the environment-only action
-            disagree (e.g. field building while the open trade is
-            invalidated). Sits below the main banner so the canonical
-            action stays the headline. */}
         <EnvVsThesisBanner
           aiState={aiState}
           hasOpenPosition={!!acct.open}
           history={symbolRecords}
           priceStructure={priceStructure}
         />
-
-        {/* v13.7: Decision strip — Directional Edge + Thesis Stability.
-            Always visible across all modes; SIMPLE relies on these
-            two cards to communicate "which way" + "how stable" without
-            the full LONG/SHORT gauge. */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
-        }}>
-          <DirectionalEdgeCard aiState={aiState} />
-          <ThesisStabilityCard aiState={aiState} />
-        </div>
-
-        {/* Meso row: State Flow + Historical Analog. v13.7 removed
-            the duplicate EnvironmentRiskCard — the meter strip's
-            ENVIRONMENT label already communicates the same value;
-            having the same chip twice on screen was the "duplicate
-            transitional" bug. ANALYST + RESEARCH only. */}
-        {showAnalyst && (
-          <div className="ti-meso-row" style={{
-            display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12,
-          }}>
-            <StateFlowRibbon records={symbolRecords} currentState={aiState} />
-            <HistoricalAnalogCard records={records} symbol={symbol} aiState={aiState} />
-          </div>
-        )}
-
-        {/* v13.6: RESEARCH-only raw-metrics card. Renders the same
-            fields the SDK actually returned (clarity, pressure, dom
-            score, transition, inheritance, model meta) so the user
-            can audit a classification without opening the dev
-            console. No fake values; rows skip themselves when the
-            underlying field is absent. */}
-        {showResearch && <RawMetricsCard aiState={aiState} />}
 
         {/* Action + Monitor row. Pre-v13 these were stacked inside a
             three-column grid alongside a Guru context column; that
