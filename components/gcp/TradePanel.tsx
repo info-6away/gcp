@@ -6,26 +6,34 @@
 //         compact <AiReadStrip>, the conflict-only EnvVsThesisBanner,
 //         the entry panel, the position monitor, the active-position
 //         card and the trade history table.
-// v18.1:  Dead inline definitions of the moved cards removed (this
-//         commit). The Trade page is back to a tight execution-only
-//         surface — the operator sees the read at a glance, then acts.
+// v18.1:  Dead inline definitions of the moved cards removed.
+// v18.2:  Trade Terminal foundation. Mode rails renamed SIMPLE /
+//         ANALYST / RESEARCH → EXECUTE / PLAN / JOURNAL. Layout
+//         restructured into a 4-zone terminal: top strip (AI read +
+//         trigger status), body (chart left / order+position right),
+//         bottom journal. JOURNAL mode collapses the body and lets
+//         the history table fill the frame. No new trading
+//         intelligence yet — chart and trigger are foundation slots
+//         for the next two phases.
 //
 //   ┌───────────────────────────────────────────────────────────────┐
-//   │ Header  TRADE · SYMBOL · balance · reset · MODE                │
+//   │ Header  TRADE · SYMBOL · MODE · ASK GURU · balance · reset     │
 //   ├───────────────────────────────────────────────────────────────┤
-//   │ AI READ strip  (compact one-liner from intelligence/)          │
-//   │ EnvVsThesisBanner (only when env-vs-thesis CONFLICT)           │
+//   │ AI READ strip               │ TRIGGER status (v18.3 placeholder)│
+//   │ EnvVsThesisBanner (only when env-vs-thesis CONFLICT)            │
 //   ├───────────────────────────────────────────────────────────────┤
-//   │ EntryPanel              │  PositionMonitor + ActivePosition    │
+//   │ CHART placeholder           │ Entry panel                       │
+//   │ (OHLC · GCP overlay ·       │ Position monitor                  │
+//   │  markers — coming v18.x)    │ Active position                   │
 //   ├───────────────────────────────────────────────────────────────┤
-//   │ Trade history (ANALYST / RESEARCH modes)                       │
+//   │ Trade history / journal                                         │
 //   └───────────────────────────────────────────────────────────────┘
 //
 // Reuses lib/demoAccount.ts for persistence + PnL math, lib/guruStance
 // for the stance block (still used inside EntryPanel), lib/guruAlignment
 // for the alignment chip, lib/stateTransition for the NEXT overlay, and
 // lib/executionIntelligence for thesis-integrity on the position
-// monitor. No new Engine calls. No chart.
+// monitor. No new Engine calls.
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { MarketSymbol, Pattern, Timeframe } from '@/types/gcp';
@@ -946,17 +954,20 @@ function PositionMonitorBlock({
   );
 }
 
-// ── VIEW-MODE TOGGLE — SIMPLE / ANALYST / RESEARCH ───────────────
-// Progressive disclosure rails kept around so the Trade header still
-// glances in 3 s. v18.2 will repurpose these as EXECUTE / PLAN /
-// JOURNAL; v18.1 keeps the existing labels to scope this commit to
-// dead-code cleanup only.
+// ── MODE TOGGLE — EXECUTE / PLAN / JOURNAL (v18.2) ───────────────
+// Trade Terminal foundation. The three rails carry different layouts:
+//   EXECUTE — chart left, order + position right, history compact below
+//   PLAN    — same shell, reserved for v18.3's Trigger Engine surfaces
+//   JOURNAL — history expanded to fill the body
+//
+// The render below conditions section sizes on `mode`, not on
+// per-section booleans — keeps the layout state in one place.
 
 function ViewModeToggle({ mode, onChange }: {
   mode:     ViewMode;
   onChange: (m: ViewMode) => void;
 }) {
-  const modes: ViewMode[] = ['SIMPLE', 'ANALYST', 'RESEARCH'];
+  const modes: ViewMode[] = ['EXECUTE', 'PLAN', 'JOURNAL'];
   return (
     <div style={{
       display: 'inline-flex', gap: 2,
@@ -1087,6 +1098,96 @@ function SectionShell({
   );
 }
 
+// ── v18.2: Trigger status strip placeholder ──────────────────────
+//
+// Sits next to <AiReadStrip> in the top row. v18.3's Trigger Engine
+// will populate it with the active conditional ("Activate long if
+// price breaks 4512 and NV slope > +0.3") and the invalidation gate.
+// For v18.2 it's an honest "not configured" affordance — no fake
+// content; just a hook for the next phase.
+
+function TriggerStatusStrip({ aiState }: { aiState: GcpStateResponse | null }) {
+  return (
+    <div style={{
+      padding: '8px 14px',
+      background: 'var(--bg-1)', border: '1px solid var(--line-1)',
+      borderLeft: '3px solid var(--line-2)',
+      borderRadius: 'var(--r-md)',
+      display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
+      fontFamily: 'var(--font-mono)',
+    }}>
+      <span style={{
+        fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+        fontWeight: 600,
+      }}>
+        TRIGGER
+      </span>
+      <span style={{
+        fontSize: 11, color: aiState ? 'var(--fg-3)' : 'var(--fg-4)',
+        letterSpacing: '0.04em',
+      }}>
+        {aiState ? 'No trigger set — coming in v18.3' : 'Awaiting Guru read'}
+      </span>
+    </div>
+  );
+}
+
+// ── v18.2: Chart placeholder ─────────────────────────────────────
+//
+// Trade Terminal left column. Real OHLC + GCP overlay + state markers
+// land in a later phase ("not full TradingView; foundation"). v18.2
+// gives the slot the right shape (aspect ratio + symbol/price header)
+// so the rest of the layout reads correctly today.
+
+function ChartPlaceholder({
+  symbol, currentPrice,
+}: {
+  symbol:       MarketSymbol;
+  currentPrice: number | null;
+}) {
+  return (
+    <div style={{
+      background: 'var(--bg-1)', border: '1px solid var(--line-1)',
+      borderRadius: 'var(--r-md)', overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
+      minHeight: 360,
+    }}>
+      <div style={{
+        padding: '8px 14px', borderBottom: '1px solid var(--line-1)',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        fontFamily: 'var(--font-mono)',
+      }}>
+        <span style={{
+          fontSize: 9, letterSpacing: '0.18em', color: 'var(--fg-4)',
+          fontWeight: 600,
+        }}>
+          CHART · {symbol}
+        </span>
+        <span style={{
+          fontSize: 12, color: 'var(--fg-1)', fontWeight: 700,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {currentPrice != null ? formatPrice(currentPrice, symbol) : '—'}
+        </span>
+      </div>
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', gap: 6,
+        color: 'var(--fg-4)', fontFamily: 'var(--font-mono)',
+        fontSize: 10, letterSpacing: '0.06em', lineHeight: 1.6, textAlign: 'center',
+        padding: 24,
+      }}>
+        <span style={{ color: 'var(--fg-3)' }}>
+          OHLC · GCP overlay · state markers · replay markers
+        </span>
+        <span style={{ fontSize: 9 }}>
+          Foundation slot — chart implementation lands in a later v18.x.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Main panel
 // ─────────────────────────────────────────────────────────────────
@@ -1123,14 +1224,12 @@ function TradePanelImpl({
   const [stopLoss, setStopLoss]         = useState<string>('');
   const [takeProfit, setTakeProfit]     = useState<string>('');
   const [, setTick]                     = useState(0);
-  // v13.6: view mode (SIMPLE / ANALYST / RESEARCH) with localStorage
-  // persistence + cross-tab sync. Default is ANALYST so existing
-  // users see the same density they did pre-v13.6; SIMPLE strips the
-  // meso row + market context for a calmer decision surface; RESEARCH
-  // adds a raw-metrics card.
+  // v18.2: trade mode (EXECUTE / PLAN / JOURNAL) with localStorage
+  // persistence + cross-tab sync. EXECUTE is default; JOURNAL expands
+  // the history table to fill the body and collapses the chart /
+  // order section.
   const [viewMode, setViewMode] = useViewMode();
-  const showAnalyst  = viewMode === 'ANALYST'  || viewMode === 'RESEARCH';
-  const showResearch = viewMode === 'RESEARCH';
+  const isJournal = viewMode === 'JOURNAL';
   // v13.0: AI state history for State Flow ribbon + Historical Analog.
   const [records, setRecords] = useState<AiStateHistoryRecord[]>([]);
   useEffect(() => {
@@ -1324,38 +1423,40 @@ function TradePanelImpl({
         </div>
       </div>
 
-      {/* v13.0: vertical execution intelligence stack, then a 2-col
-          action+monitor block, then history. The wrapper class is
-          read by the mobile SettingsScreen wrapper to collapse the
-          two-column row into a single column on phones. */}
-      <div className="trade-intelligence" style={{
+      {/* v18.2: Trade Terminal layout — top strip (AI read + trigger
+          status), 2-col body (chart left / order+position right),
+          bottom journal. JOURNAL mode collapses the body and gives
+          the history table the whole frame.
+          The terminal class is consumed by mobile to collapse the
+          2-col body into a single column on phones. */}
+      <div className="trade-terminal" style={{
         flex: 1, overflow: 'auto', padding: 14,
         display: 'flex', flexDirection: 'column', gap: 12,
       }}>
         <style>{`
           @media (max-width: 720px) {
-            .trade-intelligence .ti-hero-row,
-            .trade-intelligence .ti-meso-row,
-            .trade-intelligence .ti-action-row {
+            .trade-terminal .tt-top-row,
+            .trade-terminal .tt-body-row {
               grid-template-columns: 1fr !important;
             }
           }
         `}</style>
 
-        {/* v18.0: AI READ strip — compact one-line summary for the
-            execution surface. The full Environment Thesis, Pressure
-            gauge, Market Context, Action State banner, Directional
-            Edge, Thesis Stability, State Flow and Historical Analog
-            have all moved to GuruView; Trade now stays focused on
-            execution. EnvVsThesisBanner below remains because it
-            only renders during an env-vs-thesis CONFLICT on an open
-            position — a critical execution alert, not a narrative. */}
-        <AiReadStrip
-          aiState={aiState}
-          hasOpenPosition={!!acct.open}
-          history={symbolRecords}
-          priceStructure={priceStructure}
-        />
+        {/* TOP — compact AI read + trigger status, side by side. */}
+        <div className="tt-top-row" style={{
+          display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 12,
+        }}>
+          <AiReadStrip
+            aiState={aiState}
+            hasOpenPosition={!!acct.open}
+            history={symbolRecords}
+            priceStructure={priceStructure}
+          />
+          <TriggerStatusStrip aiState={aiState} />
+        </div>
+
+        {/* Conflict alert — only renders during an env-vs-thesis
+            conflict on an open position. Execution-critical. */}
         <EnvVsThesisBanner
           aiState={aiState}
           hasOpenPosition={!!acct.open}
@@ -1363,51 +1464,62 @@ function TradePanelImpl({
           priceStructure={priceStructure}
         />
 
-        {/* Action + Monitor row. Pre-v13 these were stacked inside a
-            three-column grid alongside a Guru context column; that
-            column has been folded into ThesisHero / PressureGauge /
-            EnvironmentRiskCard above. */}
-        <div className="ti-action-row" style={{
-          display: 'grid', gridTemplateColumns: '300px 1fr', gap: 12,
-        }}>
-          <div>
-            <EntryPanel
+        {/* BODY — EXECUTE / PLAN show chart left + order+position
+            right; JOURNAL collapses the body so the bottom history
+            takes the whole frame. */}
+        {!isJournal && (
+          <div className="tt-body-row" style={{
+            display: 'grid', gridTemplateColumns: '1fr 340px', gap: 12,
+            minHeight: 0,
+          }}>
+            {/* LEFT — chart / market view */}
+            <ChartPlaceholder
               symbol={symbol}
               currentPrice={currentPrice}
-              side={side}              setSide={setSide}
-              size={size}              setSize={setSize}
-              entryType={entryType}    setEntryType={setEntryType}
-              limitPrice={limitPrice}  setLimitPrice={setLimitPrice}
-              stopLoss={stopLoss}      setStopLoss={setStopLoss}
-              takeProfit={takeProfit}  setTakeProfit={setTakeProfit}
-              onOpen={handleOpen}
-              hasOpen={!!acct.open}
-              alignment={alignmentForSide}
             />
-            {currentPrice == null && (
-              <div style={{
-                fontSize: 9, color: 'var(--fg-4)', marginTop: 6,
-              }}>
-                Waiting for live price…
-              </div>
-            )}
-          </div>
-          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <PositionMonitorBlock acct={acct} aiState={aiState} />
-            <ActivePositionCard
-              acct={acct}
-              symbol={symbol}
-              currentPrice={currentPrice}
-              alignment={alignmentForActive}
-              onClose={handleClose}
-            />
-          </div>
-        </div>
 
-        {/* v13.6: history table sits under Analyst / Research. SIMPLE
-            keeps the surface focused on the live decision — past
-            trades drop into deeper modes. */}
-        {showAnalyst && <HistoryTable acct={acct} symbol={symbol} />}
+            {/* RIGHT — order + position controls. Stacked. */}
+            <div style={{
+              minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12,
+            }}>
+              <EntryPanel
+                symbol={symbol}
+                currentPrice={currentPrice}
+                side={side}              setSide={setSide}
+                size={size}              setSize={setSize}
+                entryType={entryType}    setEntryType={setEntryType}
+                limitPrice={limitPrice}  setLimitPrice={setLimitPrice}
+                stopLoss={stopLoss}      setStopLoss={setStopLoss}
+                takeProfit={takeProfit}  setTakeProfit={setTakeProfit}
+                onOpen={handleOpen}
+                hasOpen={!!acct.open}
+                alignment={alignmentForSide}
+              />
+              {currentPrice == null && (
+                <div style={{
+                  fontSize: 9, color: 'var(--fg-4)',
+                }}>
+                  Waiting for live price…
+                </div>
+              )}
+              <PositionMonitorBlock acct={acct} aiState={aiState} />
+              <ActivePositionCard
+                acct={acct}
+                symbol={symbol}
+                currentPrice={currentPrice}
+                alignment={alignmentForActive}
+                onClose={handleClose}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* BOTTOM — journal / trade history. Always present; JOURNAL
+            mode promotes it to fill the body (with body collapsed
+            above), EXECUTE / PLAN keep it compact below. v18.x will
+            expand JOURNAL with annotations, replay markers, P/L
+            attribution by AI state etc. */}
+        <HistoryTable acct={acct} symbol={symbol} />
       </div>
     </div>
   );

@@ -1,31 +1,32 @@
 'use client';
 
-// v13.6: Trade view-mode state + persistence.
+// v18.2: Trade-mode rails renamed to match the new Trade Terminal IA.
 //
-// SIMPLE   — Hero + Stance + 4-meter strip + Position/Action only.
-//            "What environment is this and should I act?" in <3s.
+//   EXECUTE — active trading focus: chart + order panel + position
+//             monitor. The default mode; reads the AI strip, acts.
+//   PLAN    — same surfaces as EXECUTE today, but reserved for the
+//             v18.3 Trigger Engine: chart + setup conditions + the
+//             "activate long if X breaks, invalidate if Y loses"
+//             builder.
+//   JOURNAL — trade history expanded to fill the body. Used to
+//             review prior decisions and outcomes.
 //
-// ANALYST  — Everything in SIMPLE, plus the existing intelligence
-//            row (Env Risk · State Flow · Historical Analog) +
-//            Pressure gauge with full LONG/SHORT detail + Market
-//            Context (structure / momentum / trend integrity).
-//
-// RESEARCH — Everything in ANALYST, plus a raw-metrics card with
-//            the underlying coherence-field numbers (PSS, slope,
-//            curvature, CED, oscillation, regime).
-//
-// v13.7: default flipped from ANALYST → SIMPLE. New users see a
-// 3-second decision surface first; ANALYST / RESEARCH stay one
-// click away. Existing users who explicitly picked a mode get
-// their choice respected (localStorage value wins).
+// Prior to v18.2 the same toggle carried density labels (SIMPLE /
+// ANALYST / RESEARCH) inherited from v13.6's progressive-disclosure
+// design. v18.0 already moved the heavy intelligence to GuruView, so
+// the old density rails no longer described Trade's behavior. The
+// rename + new LS key intentionally drops stale values from earlier
+// users — defaulting to EXECUTE is the right thing on first load.
 
 import { useEffect, useState } from 'react';
 
-export type ViewMode = 'SIMPLE' | 'ANALYST' | 'RESEARCH';
+export type ViewMode = 'EXECUTE' | 'PLAN' | 'JOURNAL';
 
-const VIEW_MODE_LS_KEY  = 'gcpro-trade-view-mode';
-const VALID_MODES       = new Set<ViewMode>(['SIMPLE', 'ANALYST', 'RESEARCH']);
-const DEFAULT_VIEW_MODE: ViewMode = 'SIMPLE';
+// v18.2: new LS key. Old key ('gcpro-trade-view-mode') is intentionally
+// abandoned so SIMPLE / ANALYST / RESEARCH values don't bleed through.
+const VIEW_MODE_LS_KEY  = 'gcpro-trade-mode';
+const VALID_MODES       = new Set<ViewMode>(['EXECUTE', 'PLAN', 'JOURNAL']);
+const DEFAULT_VIEW_MODE: ViewMode = 'EXECUTE';
 
 export function loadViewMode(): ViewMode {
   if (typeof window === 'undefined') return DEFAULT_VIEW_MODE;
@@ -44,13 +45,11 @@ export function saveViewMode(mode: ViewMode): void {
 
 /**
  * useViewMode — hook for components that need the current mode + a
- * setter that also persists. Mirrors the chartTF pattern.
+ * setter that also persists. Cross-tab sync via storage events.
  */
 export function useViewMode(): [ViewMode, (m: ViewMode) => void] {
   const [mode, setMode] = useState<ViewMode>(() => loadViewMode());
 
-  // Cross-tab sync — if the user flips the mode in one tab, others
-  // pick it up via the storage event.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== VIEW_MODE_LS_KEY) return;
